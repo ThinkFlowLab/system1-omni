@@ -186,17 +186,29 @@ impl Model {
         let blas = Blas::new(&cuda)?;
         let source = Weights::open(&checkpoint.join("model.safetensors"))?;
         let mut weights = HashMap::new();
+        let verify_weights = std::env::var_os("LAYA_VERIFY_WEIGHTS").is_some();
+        let upload = |name: &str, data: &[u8]| -> Result<Buffer> {
+            let buffer = cuda
+                .upload(data)
+                .with_context(|| format!("upload {name}"))?;
+            if verify_weights {
+                ensure!(
+                    buffer
+                        .read(data.len())
+                        .with_context(|| format!("read back {name}"))?
+                        == data,
+                    "resident weight bytes mismatch: {name}"
+                );
+            }
+            Ok(buffer)
+        };
         let mut add = |name: &str, shape: &[usize], dtype: &str| -> Result<()> {
             let data = match dtype {
                 "f32" => bytes32(&source.f32(name, shape)?),
                 "f16" => bytes16(&source.f16(name, shape)?),
                 _ => bytes16(&source.bf16(name, shape)?),
             };
-            weights.insert(
-                name.to_owned(),
-                cuda.upload(&data)
-                    .with_context(|| format!("upload {name}"))?,
-            );
+            weights.insert(name.to_owned(), upload(name, &data)?);
             Ok(())
         };
         add(
@@ -257,15 +269,22 @@ impl Model {
             add(&format!("{p}.bias"), &[n], "bf16")?;
         }
         for n in [D, 3 * D, 4 * D] {
-            weights.insert(format!("zeros.{n}"), cuda.upload(&vec![0; n * 4])?);
+            let key = format!("zeros.{n}");
+            weights.insert(key.clone(), upload(&key, &vec![0; n * 4])?);
         }
         for kind in ["full", "local"] {
             for part in ["cos", "sin"] {
                 let key = format!("rope_{kind}_{part}");
                 let data = fs::read(bundle.join(format!("{key}.f32")))?;
                 ensure!(data.len() == 512 * 32 * 4, "invalid rotary table size");
-                weights.insert(key, cuda.upload(&data)?);
+                weights.insert(key.clone(), upload(&key, &data)?);
             }
+        }
+        if verify_weights {
+            eprintln!(
+                "LAYA_VERIFY_WEIGHTS verified {} resident buffers",
+                weights.len()
+            );
         }
         Ok(Self {
             config,

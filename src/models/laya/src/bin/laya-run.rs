@@ -28,19 +28,30 @@ fn main() -> anyhow::Result<()> {
     for line in io::stdin().lock().lines() {
         let line = line?;
         let start = Instant::now();
-        let result = (|| -> anyhow::Result<_> {
+        let prepared = (|| -> anyhow::Result<_> {
             let request: Request = serde_json::from_str(&line)?;
-            let batch = pre.prepare(&request)?;
-            let (logits, actions) = model.infer(&batch)?;
-            if std::env::var_os("LAYA_RAW_LOGITS").is_some() {
-                eprintln!("raw_logits={logits:?} raw_actions={actions:?}");
-            }
-            decision::decode(&batch, &model.config.agent, &logits, &actions)
+            pre.prepare(&request)
         })();
-        match result {
-            Ok(value) => println!("{}", serde_json::to_string(&value)?),
-            Err(e) => println!("{}", serde_json::json!({"error":format!("{e:#}")})),
+        let batch = match prepared {
+            Ok(batch) => batch,
+            Err(e) => {
+                println!("{}", serde_json::json!({"error":format!("{e:#}")}));
+                eprintln!(
+                    "engine_wall_ms={:.6}",
+                    start.elapsed().as_secs_f64() * 1000.0
+                );
+                continue;
+            }
+        };
+        // Only client input errors are recoverable. A native failure may poison
+        // the CUDA context, so never submit another request after infer fails.
+        let (logits, actions) = model.infer(&batch).context("native inference failed")?;
+        if std::env::var_os("LAYA_RAW_LOGITS").is_some() {
+            eprintln!("raw_logits={logits:?} raw_actions={actions:?}");
         }
+        let value = decision::decode(&batch, &model.config.agent, &logits, &actions)
+            .context("native output decoding failed")?;
+        println!("{}", serde_json::to_string(&value)?);
         eprintln!(
             "engine_wall_ms={:.6}",
             start.elapsed().as_secs_f64() * 1000.0
