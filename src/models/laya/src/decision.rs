@@ -41,6 +41,8 @@ pub fn decode(
         } else {
             "11+"
         };
+        // Laya 0.3.20 Agent clamps config temperatures at load via common.py's
+        // clamp_temperature ([0.5, 5.0]), including the shipped choice:11+ ~0.1006.
         let temp = cfg
             .temperature_by_options
             .get(&format!("{}:{bucket}", q.kind))
