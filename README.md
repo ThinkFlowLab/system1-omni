@@ -2,7 +2,7 @@
 
 A community-maintained inference engine for prefill-only System1-Omni models, designed around a Rust frontend, model-owned execution, and high-performance CUDA and Metal backends.
 
-The Rust frontend forwards requests to a separately running model worker. In-repository model engines and GPU backends are not implemented yet.
+The Rust frontend can proxy requests to a separately running model worker. The native English Laya engine runs in Rust with a CUDA backend on Hopper sm_90a; see the [native recipe](recipe/laya/native/README.md).
 
 ## Run the frontend
 
@@ -47,17 +47,17 @@ Implementation code lives under `src/`; recipes and documentation stay at the re
 | [`recipe/`](recipe/) | Model setup instructions, launch commands, configuration examples, and example requests. |
 | [`docs/`](docs/) | Project documentation and architecture assets. |
 
-The frontend is a Cargo workspace member. Model and backend directories currently document planned work; they do not prescribe process boundaries.
+The frontend, Laya model and CUDA backend are Cargo workspace members. The Metal backend remains planned.
 
 ## Supported models
 
-LAYA can run as an external Python worker for text requests. Its in-repository model engine is still planned:
+LAYA supports text requests through a native Rust/CUDA engine or an external Python worker:
 
 | Model | Status |
 | --- | --- |
-| LAYA | [External worker](recipe/laya/README.md); model engine planned |
+| LAYA | [Native English engine on Hopper sm_90a](recipe/laya/native/README.md); [external worker](recipe/laya/README.md) |
 
-CUDA and Metal coverage will be documented per model as implementations are added and validated.
+The native CUDA engine targets the frozen Laya 0.3.20 English checkpoint. Metal support is not implemented.
 
 ## Stay Tuned with Us
 
