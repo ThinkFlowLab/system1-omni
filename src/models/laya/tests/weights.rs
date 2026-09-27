@@ -9,8 +9,19 @@ fn every_weight_conversion_matches_torch() {
     assert_eq!(rows.len(), 206, "oracle must cover the frozen checkpoint");
     let mut names = std::collections::HashSet::new();
     let weights = Weights::open(&checkpoint.join("model.safetensors")).unwrap();
+    let inventory = omni_laya::weights::runtime_tensors();
+    weights
+        .validate_names(inventory.iter().map(|t| t.name.as_str()))
+        .unwrap();
+    let runtime_names: std::collections::HashSet<_> =
+        inventory.iter().map(|t| t.name.as_str()).collect();
+    assert_eq!(runtime_names.len(), rows.len());
     for row in rows {
         let name = row["name"].as_str().unwrap();
+        assert!(
+            runtime_names.contains(name),
+            "unaccounted checkpoint tensor: {name}"
+        );
         assert!(
             names.insert(name.to_owned()),
             "duplicate oracle tensor: {name}"
@@ -44,4 +55,37 @@ fn every_weight_conversion_matches_torch() {
             );
         }
     }
+}
+
+#[test]
+#[ignore = "requires LAYA_CHECKPOINT; CPU only"]
+fn runtime_inventory_covers_legacy_temperature() {
+    let checkpoint = std::path::PathBuf::from(std::env::var_os("LAYA_CHECKPOINT").unwrap());
+    let weights = Weights::open(&checkpoint.join("model.safetensors")).unwrap();
+    let inventory = omni_laya::weights::runtime_tensors();
+    weights
+        .validate_names(inventory.iter().map(|t| t.name.as_str()))
+        .unwrap();
+    assert!(
+        weights
+            .validate_names(
+                inventory
+                    .iter()
+                    .filter(|t| t.name != "temperature")
+                    .map(|t| t.name.as_str())
+            )
+            .is_err()
+    );
+    assert!(
+        weights
+            .validate_names(inventory.iter().map(|t| t.name.as_str()).chain(["unknown"]))
+            .is_err()
+    );
+    let legacy = weights.f32("temperature", &[3]).unwrap();
+    assert_eq!(legacy, [1.0, 1.0, 1.0]);
+    let config = omni_laya::config::Config::load(&checkpoint).unwrap();
+    assert_ne!(
+        legacy, config.agent.temperature,
+        "legacy buffer is not the fitted calibration source"
+    );
 }

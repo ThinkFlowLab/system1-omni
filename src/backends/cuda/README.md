@@ -1,7 +1,7 @@
 # CUDA backend
 
-Planned home for high-performance NVIDIA GPU operations and kernel integration. Implement the operations required by the first model, with hardware-specific optimizations where needed.
+Native CUDA backend for the English Laya engine, with generated BF16 kernels, selected RoPE, runtime ownership and bounded CUDA Graph caching.
 
 Model orchestration, batching policy, state management, and kernel selection remain with the model engine. CUDA and Metal implementations do not need identical internal structures or a universal tensor abstraction.
 
-Status: planned; no CUDA implementation or validated hardware coverage yet.
+The initial target is Hopper sm_90a. See [build and validation instructions](../../../recipe/laya/native/README.md) and [source attribution](THIRD_PARTY.md). Other architectures are unsupported.
