@@ -41,10 +41,10 @@ pub fn validate_bundle(checkpoint: &Path, bundle: &Path) -> Result<()> {
             && build["arch"] == "sm_90a",
         "unsupported CUDA bundle"
     );
-    let check = |path: std::path::PathBuf, expected: &serde_json::Value| -> Result<()> {
+    let check = |path: std::path::PathBuf, expected: Option<&str>| -> Result<()> {
         let hash = sha256_file(&path)?;
         ensure!(
-            expected.as_str() == Some(hash.as_str()),
+            expected == Some(hash.as_str()),
             "bundle hash mismatch: {}",
             path.display()
         );
@@ -56,10 +56,7 @@ pub fn validate_bundle(checkpoint: &Path, bundle: &Path) -> Result<()> {
             .with_context(|| {
                 format!("missing checkpoint hash for {name}; regenerate tables.json")
             })?;
-        check(
-            checkpoint.join(name),
-            &serde_json::Value::String(expected.into()),
-        )?;
+        check(checkpoint.join(name), Some(expected))?;
     }
     for name in [
         "rope_full_cos.f32",
@@ -67,9 +64,12 @@ pub fn validate_bundle(checkpoint: &Path, bundle: &Path) -> Result<()> {
         "rope_local_cos.f32",
         "rope_local_sin.f32",
     ] {
-        check(bundle.join(name), &tables["tables"][name])?;
+        check(bundle.join(name), tables["tables"][name].as_str())?;
     }
-    check(bundle.join("liblaya_cuda.so"), &build["library_sha256"])?;
+    check(
+        bundle.join("liblaya_cuda.so"),
+        build["library_sha256"].as_str(),
+    )?;
     Ok(())
 }
 

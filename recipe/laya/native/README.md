@@ -17,7 +17,7 @@ python src/backends/cuda/tools/export_tables.py "$CHECKPOINT" "$BUNDLE"
 cargo build --release --locked -p omni-laya --features serve
 ```
 
-Deployment needs `target/release/omni-laya`, the checkpoint (config, tokenizer and safetensors), the bundle, and compatible CUDA/cuBLAS libraries. No Python environment is needed to start the server. Bundle/table hashes and checkpoint configuration hashes are checked at startup.
+Deployment needs `target/release/omni-laya`, the checkpoint (config, tokenizer and safetensors), the bundle, and compatible CUDA/cuBLAS libraries. No Python environment is needed to start the server. Before loading CUDA, startup verifies bundle/table hashes and the hashes of both checkpoint configs, `model.safetensors`, `tokenizer/tokenizer.json` and `tokenizer/tokenizer_config.json`. Large files are hashed incrementally. Regenerate `tables.json` with `export_tables.py` when upgrading older bundles that only recorded config hashes; missing artifact hashes are rejected.
 
 ```sh
 target/release/omni-laya "$CHECKPOINT" "$BUNDLE" 127.0.0.1:8080
