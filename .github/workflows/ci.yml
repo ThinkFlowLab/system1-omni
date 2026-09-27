@@ -23,8 +23,8 @@ jobs:
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy
-        run: cargo clippy --workspace --locked --all-targets -- -D warnings
+        run: cargo clippy --workspace --locked --all-targets --all-features -- -D warnings
       - name: Test
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --locked --all-features
       - name: Build
-        run: cargo build --workspace --release --locked
+        run: cargo build --workspace --release --locked --all-features
