@@ -125,9 +125,31 @@ mod tests {
                     json!(format!("{:x}", Sha256::digest(b"table"))),
                 );
             }
-            fs::write(bundle.join("tables.json"), serde_json::to_vec(&json!({"abi":1,"laya":"0.3.20","hidden_size":1024,"head_dim":64,"max_len":512,"tables":tables,"checkpoint_sha256":hashes})).unwrap()).unwrap();
+            let table_manifest = json!({
+                "abi": 1,
+                "laya": "0.3.20",
+                "hidden_size": 1024,
+                "head_dim": 64,
+                "max_len": 512,
+                "tables": tables,
+                "checkpoint_sha256": hashes,
+            });
+            fs::write(
+                bundle.join("tables.json"),
+                serde_json::to_vec(&table_manifest).unwrap(),
+            )
+            .unwrap();
             fs::write(bundle.join("liblaya_cuda.so"), b"not loaded in CPU test").unwrap();
-            fs::write(bundle.join("build-manifest.json"), serde_json::to_vec(&json!({"abi":1,"arch":"sm_90a","library_sha256":format!("{:x}",Sha256::digest(b"not loaded in CPU test"))})).unwrap()).unwrap();
+            let build_manifest = json!({
+                "abi": 1,
+                "arch": "sm_90a",
+                "library_sha256": format!("{:x}", Sha256::digest(b"not loaded in CPU test")),
+            });
+            fs::write(
+                bundle.join("build-manifest.json"),
+                serde_json::to_vec(&build_manifest).unwrap(),
+            )
+            .unwrap();
             Self {
                 root,
                 checkpoint,

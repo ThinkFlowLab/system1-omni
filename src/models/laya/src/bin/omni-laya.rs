@@ -22,7 +22,10 @@ async fn main() -> anyhow::Result<()> {
                 let mut term =
                     tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
                         .expect("install SIGTERM handler");
-                tokio::select! {_ =tokio::signal::ctrl_c()=>{},_=term.recv()=>{}}
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {},
+                    _ = term.recv() => {},
+                }
             }
             #[cfg(not(unix))]
             let _ = tokio::signal::ctrl_c().await;

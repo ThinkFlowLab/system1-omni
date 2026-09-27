@@ -64,7 +64,12 @@ pub fn decode(
             (1.0 - f64::from(ent) / (k as f64).ln()).clamp(0.0, 1.0)
         };
         let act = round4(f64::from(softmax(action)[0]));
-        let mut answer = json!({"type":q.kind,"confidence":round4(confidence),"answer_confidence":round4(f64::from(p[winner])),"action":{"act_probability":act}});
+        let mut answer = json!({
+            "type": q.kind,
+            "confidence": round4(confidence),
+            "answer_confidence": round4(f64::from(p[winner])),
+            "action": {"act_probability": act}
+        });
         if q.kind == "noul" {
             answer["noul"] = json!(round4(f64::from(p[1])));
             answer["confidence"] = json!(round4(f64::from(p[1]).max(1.0 - f64::from(p[1]))));
@@ -102,7 +107,16 @@ pub fn decode(
         }
         answers.insert(q.id.clone(), answer);
     }
-    Ok(
-        json!({"model":"laya-rl-agent","answers":answers,"usage":{"input_tokens":batch.usage,"output_tokens":0},"routing":{"model":"english","repo":"convaiinnovations/laya","reason":"explicit model='english'","detection":null,"workflow":null}}),
-    )
+    Ok(json!({
+        "model": "laya-rl-agent",
+        "answers": answers,
+        "usage": {"input_tokens": batch.usage, "output_tokens": 0},
+        "routing": {
+            "model": "english",
+            "repo": "convaiinnovations/laya",
+            "reason": "explicit model='english'",
+            "detection": null,
+            "workflow": null
+        }
+    }))
 }
