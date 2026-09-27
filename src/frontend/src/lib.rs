@@ -1,4 +1,5 @@
 //! Jev HTTP transport. The worker owns request parsing and inference.
+pub mod engine;
 
 use std::{env, error::Error, net::SocketAddr, time::Duration};
 

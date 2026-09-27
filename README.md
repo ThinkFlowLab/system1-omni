@@ -65,3 +65,7 @@ If you find system1-omni useful, [give us a star on GitHub](https://github.com/T
 to support the project and help others discover it!
 
 [![GitHub repository screenshot demonstrating a click on Star, turning the star yellow and showing Starred](docs/assets/stay-tuned.gif)](https://github.com/ThinkFlowLab/system1-omni)
+
+## Native Laya
+
+The Rust/CUDA English engine, build steps and input limits are documented in [recipe/laya/native](recipe/laya/native/README.md).

@@ -1,0 +1,26 @@
+[package]
+name = "omni-laya"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow = "1"
+half = "2"
+memmap2 = "0.9"
+safetensors = "0.6"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision"] }
+tokenizers = { version = "0.23.2", default-features = false, features = ["fancy-regex"] }
+
+
+omni-cuda = { path = "../../backends/cuda", optional = true }
+
+omni-jev = { path = "../../frontend", optional = true }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "sync"], optional = true }
+axum = { version = "0.8", optional = true }
+sha2 = "0.10"
+
+[features]
+cuda = ["dep:omni-cuda"]
+serve = ["cuda", "dep:omni-jev", "dep:tokio", "dep:axum"]
