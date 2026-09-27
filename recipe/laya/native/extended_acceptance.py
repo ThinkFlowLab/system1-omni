@@ -28,21 +28,47 @@ for name in ['laya_capture_begin','laya_graph_run','laya_graph_free','laya_strea
 lib.laya_capture_end.argtypes=[ptr,ctypes.POINTER(ptr)]
 records=[]
 from laya.tl_kernels import attn_kernel
-for window,label in [(0,'full'),(64,'local')]:
- fn=getattr(lib,'laya_attn_'+label);fn.argtypes=[ctypes.POINTER(ptr),ctypes.c_int,ctypes.c_int,ctypes.c_int,ptr]
- lens=torch.tensor([512,129,1,0],device='cuda',dtype=torch.int32);y=torch.empty((4,512,1024),device='cuda',dtype=torch.bfloat16);ref=torch.empty_like(y)
- attn_kernel(None,None,16,64,window=window)(q,lens,ref);torch.cuda.synchronize()
- args=(ptr*3)(q.data_ptr(),lens.data_ptr(),y.data_ptr());g=ptr()
- assert lib.laya_capture_begin(stream)==0;assert fn(args,4,512,2048,stream)==0;assert lib.laya_capture_end(stream,ctypes.byref(g))==0
- for rep in range(5):
-  y.fill_(17);torch.cuda.synchronize();assert lib.laya_graph_run(g,stream)==0;assert lib.laya_sync(stream)==0
-  for b,l in enumerate([512,129,1,0]):
-   if l:assert torch.equal(y[b,:l],ref[b,:l]),(label,b,rep)
-   if l==0:assert torch.count_nonzero(y[b])==0
-   if window and l and l+window+64<512:
-    # Whole query tiles beyond the local window have no key loop iterations.
-    start=((l+window+63)//64)*64
-    assert torch.count_nonzero(y[b,start:])==0,(label,b,start)
- assert lib.laya_graph_free(g)==0;records.append({'kernel':label,'replays':5,'valid_rows_bitwise':True,'empty_ranges_zero':True})
+# Dynamic and fixed shape exports share the same row-level empty-key contract.
+# Slice only real exported QKV; no synthetic activations/weights are introduced.
+source_q = q
+for batch,length,fixed,lengths in [
+ (4,512,False,[512,129,1,0]),
+ (4,512,True,[512,129,1,0]),
+ (1,512,True,[1]),
+ (1,512,True,[129]),
+ (1,512,True,[0]),
+ (4,128,False,[128,65,1,0]),
+]:
+ q=source_q[:batch,:length].contiguous()
+ for window,label in [(0,'full'),(64,'local')]:
+  name='laya_attn_'+label+(f'_b{batch}_l{length}' if fixed else '')
+  fn=getattr(lib,name);fn.argtypes=[ctypes.POINTER(ptr),ctypes.c_int,ctypes.c_int,ctypes.c_int,ptr]
+  lens=torch.tensor(lengths,device='cuda',dtype=torch.int32)
+  y=torch.empty((batch,length,1024),device='cuda',dtype=torch.bfloat16);ref=torch.empty_like(y)
+  attn_kernel(batch if fixed else None,length if fixed else None,16,64,window=window)(q,lens,ref)
+  torch.cuda.synchronize()
+  args=(ptr*3)(q.data_ptr(),lens.data_ptr(),y.data_ptr())
+  def check_rows(mode):
+   for b,n in enumerate(lengths):
+    # Oracle uses the actual key interval intersection, independently of tiles.
+    has_keys=torch.tensor([max(0,qi-window)<=min(n-1,qi+window) if window else n>0 for qi in range(length)],device='cuda',dtype=torch.bool)
+    assert torch.isfinite(y[b]).all(),(name,lengths,b,mode,'nonfinite')
+    assert torch.equal(y[b,has_keys],ref[b,has_keys]),(name,lengths,b,mode,'nonempty rows')
+    assert torch.count_nonzero(y[b,~has_keys])==0,(name,lengths,b,mode,'empty rows')
+    if window==64 and n==1 and length>=128:
+     assert torch.count_nonzero(y[b,65:128])==0,(name,mode,'mixed tile regression')
+  y.fill_(17);torch.cuda.synchronize()
+  assert fn(args,batch,length,batch*length,stream)==0;assert lib.laya_sync(stream)==0
+  check_rows('eager')
+  g=ptr()
+  assert lib.laya_capture_begin(stream)==0
+  assert fn(args,batch,length,batch*length,stream)==0
+  assert lib.laya_capture_end(stream,ctypes.byref(g))==0
+  for rep in range(5):
+   y.fill_(17);torch.cuda.synchronize()
+   assert lib.laya_graph_run(g,stream)==0;assert lib.laya_sync(stream)==0
+   check_rows(f'graph-{rep}')
+  assert lib.laya_graph_free(g)==0
+  records.append({'kernel':name,'batch':batch,'length':length,'lens':lengths,'eager':True,'replays':5,'valid_rows_bitwise':True,'nonempty_rows_bitwise':True,'empty_ranges_zero':True,'mixed_tile_rows_checked':True})
 assert lib.laya_stream_free(stream)==0
 (out/'attention-boundaries.json').write_text(json.dumps(records,indent=2));print('EXTENDED_PASS',len(cases),errors,flush=True)

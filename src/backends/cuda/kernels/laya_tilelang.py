@@ -151,7 +151,8 @@ def rope_kernel(H, Dh, bm=32, threads=128):
 def attn_kernel(B, L, H, Dh, window=0, bm=64, bn=64, stages=1, threads=128):
     """QKV: [B, L, 3, H, Dh] bf16 (a view of the packed [M, 3*H*Dh] buffer).  Lens: [B] int32 valid length.
     O: [B, L, H*Dh].  window>0 => bidirectional sliding window |i-j| <= window.  Masked scores use a large
-    finite negative so fully-masked (padding) rows stay finite.
+    finite negative; rows with no keys are explicitly zeroed after accumulation,
+    including empty rows inside a tile whose other rows still have local keys.
 
     B and/or L may be None: they then become runtime symbols (one compile serves every shape, at the
     cost of predicated loads -- ~4x slower for full attention at L=1024, free for short inputs)."""
@@ -213,7 +214,14 @@ def attn_kernel(B, L, H, Dh, window=0, bm=64, bn=64, stages=1, threads=128):
                     o[i, j] = o[i, j] * sc[i]
                 T.gemm(s_c, V_s, o, policy=T.GemmWarpPolicy.FullRow)
             for i, j in T.Parallel(bm, Dh):
-                o[i, j] = o[i, j] / T.max(l[i], 1e-30)
+                # A finite NEG mask alone gives positive softmax weights when
+                # every key is masked. Preserve arithmetic for every row with
+                # keys, and zero the exact empty range (inclusive window).
+                if window > 0:
+                    has_keys = (n > 0) & (bx * bm + i < n + window)
+                else:
+                    has_keys = n > 0
+                o[i, j] = T.if_then_else(has_keys, o[i, j] / T.max(l[i], 1e-30), 0.0)
             T.copy(o, O_s)
             T.copy(O_s, O[bz, bx * bm:(bx + 1) * bm, by * Dh:(by + 1) * Dh])
     return main
