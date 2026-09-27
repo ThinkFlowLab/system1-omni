@@ -3,7 +3,6 @@ use crate::{config::Config, preprocess::Batch, weights::Weights};
 use anyhow::{Context, Result, ensure};
 use half::bf16;
 use omni_cuda::{Buffer, Cuda, Graph, Ptr};
-use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, VecDeque},
     fs,
@@ -180,7 +179,7 @@ impl Model {
         original_rope: bool,
     ) -> Result<Self> {
         let config = Config::load(checkpoint)?;
-        validate_bundle(checkpoint, bundle)?;
+        crate::artifacts::validate_bundle(checkpoint, bundle)?;
         // SAFETY: bundle is an explicit trusted build artifact supplied by the operator.
         let cuda = unsafe { Cuda::load(&bundle.join("liblaya_cuda.so")) }?;
         let blas = Blas::new(&cuda)?;
@@ -580,42 +579,4 @@ impl Model {
         self.cache.push_back(s);
         Ok((logits, actions))
     }
-}
-
-fn validate_bundle(checkpoint: &Path, bundle: &Path) -> Result<()> {
-    let tables: serde_json::Value = serde_json::from_slice(&fs::read(bundle.join("tables.json"))?)?;
-    let build: serde_json::Value =
-        serde_json::from_slice(&fs::read(bundle.join("build-manifest.json"))?)?;
-    ensure!(
-        tables["abi"] == 1
-            && tables["laya"] == "0.3.20"
-            && tables["hidden_size"] == 1024
-            && tables["head_dim"] == 64
-            && tables["max_len"] == 512
-            && build["abi"] == 1
-            && build["arch"] == "sm_90a",
-        "unsupported CUDA bundle"
-    );
-    let check = |path: std::path::PathBuf, expected: &serde_json::Value| -> Result<()> {
-        let hash = format!("{:x}", Sha256::digest(fs::read(&path)?));
-        ensure!(
-            expected.as_str() == Some(hash.as_str()),
-            "bundle hash mismatch: {}",
-            path.display()
-        );
-        Ok(())
-    };
-    for name in ["rl_agent_config.json", "encoder/config.json"] {
-        check(checkpoint.join(name), &tables["config_sha256"][name])?;
-    }
-    for name in [
-        "rope_full_cos.f32",
-        "rope_full_sin.f32",
-        "rope_local_cos.f32",
-        "rope_local_sin.f32",
-    ] {
-        check(bundle.join(name), &tables["tables"][name])?;
-    }
-    check(bundle.join("liblaya_cuda.so"), &build["library_sha256"])?;
-    Ok(())
 }
