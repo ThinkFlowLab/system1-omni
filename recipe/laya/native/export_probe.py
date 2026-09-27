@@ -4,9 +4,10 @@ from pathlib import Path
 import torch
 from fast_candidate import make_router
 from laya.common import collate_items
-from rope_candidate import build
+sys.path.insert(0,str(Path(__file__).resolve().parents[3]/"src/backends/cuda/kernels"))
+from rope_selected import build
 router,agent=make_router('fast_no_graph');f=agent._fast
-cases=json.loads(Path('fixtures.json').read_text())
+cases=json.loads(Path(__file__).with_name('fixtures.json').read_text())
 for name in ['short_1','long_3']:
  req=next(c['request'] for c in cases if c['name']==name);qs=req['questions'];internal={k:agent._to_internal(v) for k,v in qs.items()}
  items=agent._encode_state(req['state'],list(qs),internal);batch=collate_items([items],agent.tok.pad_token_id)

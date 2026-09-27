@@ -11,7 +11,7 @@ router,agent=make_router('fast_graph');f=agent._fast;install(f,'r1_h8')
 for kind,label in [('full_attention','full'),('sliding_attention','local')]:
  for part,t in zip(['cos','sin'],f.rope[kind]):
   Path(f'generated/rope_{label}_{part}.f32').write_bytes(t.cpu().numpy().tobytes())
-cases=json.loads(Path('fixtures.json').read_text());results=[]
+cases=json.loads(Path(__file__).with_name('fixtures.json').read_text());results=[]
 for case in cases:
  name=case['name'];req=case['request'];qs=req['questions'];internal={k:agent._to_internal(v) for k,v in qs.items()};items=agent._encode_state(req['state'],list(qs),internal);batch=collate_items([items],agent.tok.pad_token_id)
  response=router.predict(**req)
