@@ -2,7 +2,7 @@
 
 A community-maintained inference engine for prefill-only System1-Omni models, designed around a Rust frontend, model-owned execution, and high-performance CUDA and Metal backends.
 
-The Rust frontend forwards requests to a separately running model worker. In-repository model engines and GPU backends are not implemented yet.
+The Rust frontend forwards requests to a separately running model worker. The LFM2.5-350M worker owns candidate scoring and hybrid cache branching through Transformers; native CUDA and Metal backends remain planned.
 
 ## Run the frontend
 
@@ -17,7 +17,7 @@ OMNI_JEV_BACKEND_URL=http://127.0.0.1:8000 \
 
 Start the worker separately. See the [frontend documentation](src/frontend/README.md)
 for the HTTP interface and configuration, or the [Laya recipe](recipe/laya/README.md)
-for a CPU text worker and response checks.
+for a CPU text worker and response checks. The [LFM2.5 recipe](recipe/lfm2/README.md) covers a model-owned choice worker with configurable candidate batching.
 
 ## Architecture
 
@@ -42,20 +42,22 @@ Implementation code lives under `src/`; recipes and documentation stay at the re
 | --- | --- |
 | [`src/frontend/`](src/frontend/) | Rust serving code and the small engine interface. |
 | [`src/models/laya/`](src/models/laya/) | LAYA preprocessing, batching, state, execution, and output processing. |
+| [`src/models/lfm2/`](src/models/lfm2/) | LFM2.5-350M prompts, hybrid cache branching, candidate scoring, and HTTP worker. |
 | [`src/backends/cuda/`](src/backends/cuda/) | NVIDIA GPU operations and kernel integration. |
 | [`src/backends/metal/`](src/backends/metal/) | Apple GPU operations and kernel integration. |
 | [`recipe/`](recipe/) | Model setup instructions, launch commands, configuration examples, and example requests. |
 | [`docs/`](docs/) | Project documentation and architecture assets. |
 
-The frontend is a Cargo workspace member. Model and backend directories currently document planned work; they do not prescribe process boundaries.
+The frontend is a Cargo workspace member. Each model documents its implementation and process boundary; native backend directories currently document planned work.
 
 ## Supported models
 
-LAYA can run as an external Python worker for text requests. Its in-repository model engine is still planned:
+Model capabilities are declared by each worker:
 
 | Model | Status |
 | --- | --- |
 | LAYA | [External worker](recipe/laya/README.md); model engine planned |
+| LFM2.5-350M | [Transformers worker](recipe/lfm2/README.md); text and independent choice questions, explicit candidate batch size |
 
 CUDA and Metal coverage will be documented per model as implementations are added and validated.
 
