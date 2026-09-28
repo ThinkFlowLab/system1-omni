@@ -48,6 +48,23 @@ def fetch(base, path, body=None):
         return response.status, response.headers.get("Content-Type"), response.read()
 
 
+def decision(body):
+    """The part of a response the frontend must not change: None when body is not a decision.
+
+    ``usage`` is deliberately excluded. A backend that reuses encoder state across requests
+    charges only for the calls it paid for, so an identical request can report different
+    ``input_tokens`` depending on whether the work was already cached -- CLM does exactly
+    this. The answer must still be identical; the envelope is reported, not asserted.
+    """
+    try:
+        parsed = json.loads(body)
+    except ValueError:
+        return None
+    if not isinstance(parsed, dict) or "answers" not in parsed:
+        return None
+    return parsed["answers"], parsed.get("usage")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--backend", default="http://127.0.0.1:8000")
@@ -66,8 +83,15 @@ def main():
         direct = fetch(args.backend, path, body)
         proxied = fetch(args.frontend, path, body)
         ok = direct == proxied and direct[0] == 200
+        note = ""
+        if not ok:
+            # Compare the decision itself before falling back to the byte comparison.
+            left, right = decision(direct[2]), decision(proxied[2])
+            if left and right and direct[:2] == proxied[:2] and left[0] == right[0]:
+                ok = True
+                note = f"  (usage {left[1]} -> {right[1]})"
         failed += not ok
-        print(f"{'PASS' if ok else 'FAIL'} {name}: status {direct[0]} -> {proxied[0]}")
+        print(f"{'PASS' if ok else 'FAIL'} {name}: status {direct[0]} -> {proxied[0]}{note}")
         if body is not None:
             print(f"     {proxied[2].decode(errors='replace')}")
     sys.exit(1 if failed else 0)
