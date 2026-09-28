@@ -1,0 +1,33 @@
+{
+  "name": "scoring",
+  "abi_version": 1,
+  "status": "validated",
+  "sources": [
+    "candidate_scoring.cu",
+    "reference.py",
+    "kernel_simulation.py",
+    "gpu_parity.py"
+  ],
+  "build": {
+    "script": "build.sh",
+    "output": "libscoring.so",
+    "default_arch": 80,
+    "architectures": [
+      80
+    ],
+    "min_capability": 80
+  },
+  "numerics": {
+    "precision": "float32",
+    "accumulation": "float32 in the kernel, float64 in the reference",
+    "tolerance": {
+      "max_abs": 0.0001,
+      "measured_max_abs": 1.835e-07,
+      "note": "13 fixed cases, all within tolerance. Measured on RTX 4090 (sm_89, built with ./build.sh ./out 89), CUDA 13.0, driver 595.58.03."
+    }
+  },
+  "reference": {
+    "entrypoint": "src/backends/cuda/scoring/gpu_parity.py",
+    "note": "float64 oracle in reference.py; skips with a reason when no GPU or no library"
+  }
+}
