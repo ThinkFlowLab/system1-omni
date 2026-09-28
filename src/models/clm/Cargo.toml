@@ -7,6 +7,8 @@ description = "CLM: projection heads, typed decision scoring and the embeddings 
 
 [dependencies]
 anyhow = "1"
+# The embeddings payload is base64 f32; reqwest already pulls this in, so it is free.
+base64 = "0.22"
 memmap2 = "0.9"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 safetensors = "0.6"

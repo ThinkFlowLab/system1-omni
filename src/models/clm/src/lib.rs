@@ -9,12 +9,14 @@
 //! That split is why this model is implemented second — LAYA's engine owns one forward
 //! pass, while this one owns a client to someone else's server.
 //!
-//! Nothing here needs a GPU: the tests drive the heads from hash-derived vectors that
-//! match the Python oracle's, so the decision path is checked on a CPU-only machine.
+//! Nothing here needs a GPU. The encoder can be [`embedding::HashingEncoder`], whose
+//! vectors are the Python oracle's, so the decision path is checked on a CPU-only machine.
 pub mod config;
+pub mod embedding;
 pub mod scoring;
 pub mod weights;
 
 pub use config::{Config, HeadConfig};
+pub use embedding::{Encoder, HashingEncoder, HttpEncoder};
 pub use scoring::{Answer, Kind, Question, answer, confidence, distribution};
 pub use weights::{Head, Heads, Weights, head_tensors};
