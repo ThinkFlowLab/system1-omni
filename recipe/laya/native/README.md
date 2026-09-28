@@ -17,6 +17,8 @@ python src/backends/cuda/tools/export_tables.py "$CHECKPOINT" "$BUNDLE"
 cargo build --release --locked -p omni-laya --features serve
 ```
 
+Build once and reuse the bundle for deployment. Generated binaries are not checked into the repository.
+
 Deployment needs `target/release/omni-laya`, the checkpoint (config, tokenizer and safetensors), the bundle, and compatible CUDA/cuBLAS libraries. No Python environment is needed to start the server. Before loading CUDA, startup verifies bundle/table hashes and the hashes of both checkpoint configs, `model.safetensors`, `tokenizer/tokenizer.json` and `tokenizer/tokenizer_config.json`. Large files are hashed incrementally. Regenerate `tables.json` with `export_tables.py` when upgrading older bundles that only recorded config hashes; missing artifact hashes are rejected.
 
 ```sh
@@ -33,9 +35,11 @@ curl http://127.0.0.1:8080/v1/systemone \
 
 English `choice`, `score` and `noul`; at most 16 questions, 2048 total options, 512 tokens per row and a 1 MiB HTTP body. Unsupported model/language/configuration fails explicitly. This does not implement image/audio/video inference or language routing.
 
-A single GPU worker owns the model, stream and buffers. The queue holds at most 32 requests. Requests time out after 30 seconds, including upload and queueing. Cancelled or expired queued requests are skipped; submitted CUDA work finishes before buffers can be reused. SIGTERM stops new admissions and drains accepted work. `/health` succeeds only after model loading and prewarm. Graphs cover the encoder and decision transformer; the scorer remains outside Graph. The cache is limited to four shapes and 512 MiB of workspaces; a new shape pays allocation, warmup and capture costs.
+A single GPU worker owns the model, stream and buffers. Requests run sequentially without cross-request batching. The queue holds at most 32 requests; a full queue returns HTTP 503. Requests time out after 30 seconds, including upload and queueing. Cancelled or expired queued requests are skipped; submitted CUDA work finishes before buffers can be reused. SIGTERM stops new admissions and drains accepted work. `/health` succeeds only after model loading and prewarm. Graphs cover the encoder and decision transformer; the scorer remains outside Graph. An LRU cache retains up to four shapes and 512 MiB of workspaces. A new shape allocates buffers, runs two warmups, and captures synchronously in the current request. This limit covers retained workspaces, not total GPU memory.
 
 ## Validate
+
+See the [recorded validation results](VALIDATION.md) for tested scope, versions, numerical checks, and historical GPU measurements.
 
 ```sh
 cargo fmt --all --check
@@ -46,4 +50,4 @@ python recipe/laya/native/http_acceptance.py "$CHECKPOINT" "$BUNDLE" http-result
 python recipe/laya/native/benchmark.py native "$CHECKPOINT" "$BUNDLE" native-results.json
 ```
 
-The CPU oracle checks token IDs, option markers, lengths, type IDs, padding and usage against the official tokenizer. GPU acceptance must separately compare eager/Graph outputs, intermediate tensors and warmed paired performance. Repeated requests do not add independent model-quality samples. Sub-millisecond latency and business quality are not implied by native execution.
+The CPU oracle checks token IDs, option markers, lengths, type IDs, padding and usage against the official tokenizer. GPU acceptance must separately compare eager/Graph outputs, intermediate tensors and warmed paired performance. These checks cover numerical and serving parity on the tested inputs.
