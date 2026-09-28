@@ -14,9 +14,11 @@
 pub mod config;
 pub mod embedding;
 pub mod scoring;
+pub mod serve;
 pub mod weights;
 
 pub use config::{Config, HeadConfig};
 pub use embedding::{Encoder, HashingEncoder, HttpEncoder};
 pub use scoring::{Answer, Kind, Question, answer, confidence, distribution};
+pub use serve::{Decision, Engine, Request};
 pub use weights::{Head, Heads, Weights, head_tensors};
