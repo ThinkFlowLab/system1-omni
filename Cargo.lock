@@ -420,6 +420,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1f9e3d69d39e4862ffed03ed071a76f9a13ba1d9109d355b0f0aa6b15e393c4"
 dependencies = [
  "futures-core",
+ "futures-sink",
 ]
 
 [[package]]
@@ -943,6 +944,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "omni-clm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "memmap2",
+ "reqwest",
+ "safetensors 0.6.2",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "omni-cua-s1-native"
 version = "0.1.0"
 dependencies = [
@@ -1267,6 +1281,7 @@ checksum = "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147"
 dependencies = [
  "base64 0.22.1",
  "bytes",
+ "futures-channel",
  "futures-core",
  "futures-util",
  "http",
