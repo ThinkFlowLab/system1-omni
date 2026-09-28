@@ -142,7 +142,8 @@ class Engine:
             logits = self.model(ids, past_key_values=forked, attention_mask=mask, use_cache=True).logits
             for row, (_, _, suffix_len, value, _) in enumerate(chunk):
                 logp = logits[row, suffix_len - 1:suffix_len + len(value) - 1].float().log_softmax(-1)
-                collected.append(logp.gather(1, self.tensor(value)[:, None]).sum())
+                targets = ids[row, suffix_len:suffix_len + len(value)]
+                collected.append(logp.gather(1, targets[:, None]).sum())
             padded_tokens += len(chunk) * width
             del logp, logits, forked, ids, mask
         scores = torch.stack(collected).cpu().tolist() if collected else []

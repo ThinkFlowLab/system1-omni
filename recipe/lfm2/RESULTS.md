@@ -1,6 +1,8 @@
 # LFM2.5-350M execution results
 
-Run: 2026-09-28, one NVIDIA L40S (48 GiB), FP16; Python 3.12.14, PyTorch 2.14.0+cu130, Transformers 5.17.0, CUDA 13.0, driver 595.71.05. Batch size is explicit. These are inference/execution measurements on unchanged 350M weights.
+A later [token-target reuse comparison](#token-target-reuse-2026-09-29) records the small follow-up optimization separately.
+
+Baseline run (published commit f46f458): 2026-09-28, one NVIDIA L40S (48 GiB), FP16; Python 3.12.14, PyTorch 2.14.0+cu130, Transformers 5.17.0, CUDA 13.0, driver 595.71.05. Batch size is explicit. These are inference/execution measurements on unchanged 350M weights.
 
 All runs completed successfully. Raw unmodified records, manifests, environment freeze and check logs are in [the result bundle](results/l40s-20260928/README.md). The JSON/JSONL files are losslessly compressed; no measurements were removed.
 
@@ -195,3 +197,34 @@ All memory values below are peak allocated MiB, including weights. Latencies are
 | long / mixed | 3877 | engine_b32 | 357.25 | 363.59 | 2949.7 |
 | long / mixed | 3877 | engine_b64 | 341.50 | 352.43 | 5166.7 |
 | long / mixed | 3877 | engine_all | 328.84 | 333.69 | 18400.4 |
+
+## Token-target reuse (2026-09-29)
+
+The follow-up reuses candidate token IDs already on the GPU for the score gather.
+Against published commit f46f458, only the target-tensor construction changes.
+On one L40S, all 160 paired comparisons have exactly equal scores and selections;
+the 26 Python tests and complete GPU verifier pass again (maximum oracle error
+0.12763977, unchanged). The engine and worker now total 446 lines.
+
+Three warmups and 20 samples per variant, alternating baseline/candidate order.
+Mixed-length candidates only; both variants share one model. These are scorer
+measurements, separate from the baseline public-worker measurements above.
+All raw records, the exact executed script, source hashes and reproduction steps
+are in [the follow-up bundle](results/l40s-token-copy-20260929/README.md).
+
+| Candidates | State | Batch | Baseline p50 / p95 ms | Reuse p50 / p95 ms | p50 change |
+| ---: | --- | --- | ---: | ---: | ---: |
+| 16 | short | 32 | 23.55 / 33.97 | 22.65 / 23.67 | -3.81% |
+| 16 | short | all | 23.22 / 25.43 | 22.30 / 23.51 | -3.94% |
+| 16 | long | 32 | 36.19 / 36.88 | 35.73 / 36.20 | -1.28% |
+| 16 | long | all | 36.92 / 37.39 | 36.16 / 37.09 | -2.07% |
+| 255 | short | 32 | 231.45 / 233.25 | 224.89 / 227.23 | -2.83% |
+| 255 | short | all | 213.76 / 218.63 | 208.38 / 210.25 | -2.52% |
+| 255 | long | 32 | 360.16 / 371.50 | 350.77 / 366.43 | -2.61% |
+| 255 | long | all | 329.65 / 334.40 | 323.97 / 327.89 | -1.72% |
+
+Peak allocation is identical in six cells; in the two 255-candidate/batch-32
+cells it increases by 4,608 bytes (below 0.00021%). Small percentile differences
+are descriptive: the first row's p95 reduction is not a general tail-latency claim.
+The previous full matrix and frontend results remain measurements of f46f458;
+they were not replaced or relabelled as runs of the optimized source.
