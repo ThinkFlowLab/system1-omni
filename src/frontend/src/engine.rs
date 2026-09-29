@@ -45,7 +45,11 @@ pub enum Readiness {
 pub struct Report {
     /// Requests accepted and not yet completed, including the one running.
     pub depth: usize,
-    /// Requests the engine refused or dropped since it started. Monotonic.
+    /// The depth at which admission starts refusing. Reported so an operator can see how
+    /// close the queue is to refusing without knowing the configuration.
+    pub capacity: usize,
+    /// Work the engine did not complete, since it started: refused because there was no
+    /// room, and accepted but then dropped. Monotonic.
     pub rejected: u64,
 }
 
@@ -175,6 +179,7 @@ async fn health(State(service): State<Service>) -> Response {
     }
     if let Some(report) = report {
         fields.push(format!("\"depth\":{}", report.depth));
+        fields.push(format!("\"capacity\":{}", report.capacity));
         fields.push(format!("\"rejected\":{}", report.rejected));
     }
     json(status, &format!("{{{}}}", fields.join(",")))

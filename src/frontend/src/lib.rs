@@ -4,10 +4,13 @@
 //!
 //! - [`Config`] and [`app`] forward to a worker that already speaks HTTP. The frontend
 //!   owns no model state, which is how the Jev path works today.
-//! - [`engine`] serves a model linked into this binary. Admission, the request budget and
-//!   readiness are the transport's; the model owns the bytes.
+//! - [`engine`] and [`worker`] serve a model linked into this binary. The transport owns
+//!   the request lifecycle (budget, queue admission, readiness, shutdown) and the model
+//!   owns the bytes.
 
 pub mod engine;
+pub mod passthrough;
+pub mod worker;
 
 use std::{env, error::Error, net::SocketAddr, time::Duration};
 
