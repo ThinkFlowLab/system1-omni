@@ -26,9 +26,10 @@
 System1-Omni models, designed around a Rust frontend, model-owned execution,
 and high-performance CUDA and Metal backends.
 
-The Rust frontend forwards requests to a separately running model worker. The
-Cua-S1 4B 0.2 `text` adapter and Open-Jev-27B-v1.1 have native workers using
-shared CUDA kernels in this repository.
+The Rust frontend forwards requests to a separately running model worker, and
+defines the small engine interface a model implements to serve in-process
+instead. The Cua-S1 4B 0.2 `text` adapter and Open-Jev-27B-v1.1 have native
+workers using shared CUDA kernels in this repository.
 
 ## News
 
