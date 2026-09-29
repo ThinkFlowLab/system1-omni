@@ -41,8 +41,7 @@ Implementation code lives under `src/`; recipes and documentation stay at the re
 | Directory | Responsibility |
 | --- | --- |
 | [`src/frontend/`](src/frontend/) | Rust serving code and the small engine interface. |
-| [`src/models/laya/`](src/models/laya/) | LAYA preprocessing, batching, state, execution, and output processing. |
-| [`src/models/lfm2/`](src/models/lfm2/) | LFM2.5-350M prompts, hybrid cache branching, candidate scoring, and HTTP worker. |
+| [`src/models/`](src/models/) | Model implementations, one directory per model: preprocessing, batching, state, execution, and output processing. |
 | [`src/backends/cuda/`](src/backends/cuda/) | NVIDIA GPU operations and kernel integration. |
 | [`src/backends/metal/`](src/backends/metal/) | Apple GPU operations and kernel integration. |
 | [`recipe/`](recipe/) | Model setup instructions, launch commands, configuration examples, and example requests. |
