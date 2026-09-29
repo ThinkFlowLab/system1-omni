@@ -1,4 +1,13 @@
 //! Jev HTTP transport. The worker owns request parsing and inference.
+//!
+//! Two ways to answer `/v1/systemone`:
+//!
+//! - [`Config`] and [`app`] forward to a worker that already speaks HTTP. The frontend
+//!   owns no model state, which is how the Jev path works today.
+//! - [`engine`] serves a model linked into this binary. Admission, the request budget and
+//!   readiness are the transport's; the model owns the bytes.
+
+pub mod engine;
 
 use std::{env, error::Error, net::SocketAddr, time::Duration};
 
