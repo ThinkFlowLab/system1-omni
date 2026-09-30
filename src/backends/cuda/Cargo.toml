@@ -1,0 +1,12 @@
+[package]
+name = "omni-cuda"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow = "1"
+libloading = "0.8"
+
+[dev-dependencies]
+tempfile = "3"
