@@ -1,0 +1,14 @@
+# Versions match upstream's `four-b` lock (trycua/cua libs/cua-s1/python/uv.lock
+# at 0e75660ce4c2edda519e0c795fa3ad98abf4e76f), the reference environment in
+# src/models/cua_s1/README.md.
+torch==2.14.0
+transformers==5.17.0
+tokenizers==0.23.2
+peft==0.21.0
+accelerate==1.15.0
+safetensors==0.8.0
+huggingface-hub==1.32.0
+jinja2==3.1.6
+# HTTP serving.
+fastapi==0.141.1
+uvicorn==0.54.0

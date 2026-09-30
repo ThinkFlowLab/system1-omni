@@ -2,7 +2,7 @@
 
 A community-maintained inference engine for prefill-only System1-Omni models, designed around a Rust frontend, model-owned execution, and high-performance CUDA and Metal backends.
 
-The Rust frontend forwards requests to a separately running model worker. The LFM2.5-350M worker owns candidate scoring and hybrid cache branching through Transformers; native CUDA and Metal backends remain planned.
+The Rust frontend forwards requests to a separately running model worker. The Cua-S1 4B 0.2 `text` adapter has a native worker with CUDA kernels. The LFM2.5-350M Transformers worker owns candidate scoring and hybrid cache branching.
 
 ## Run the frontend
 
@@ -40,14 +40,14 @@ Implementation code lives under `src/`; recipes and documentation stay at the re
 
 | Directory | Responsibility |
 | --- | --- |
-| [`src/frontend/`](src/frontend/) | Rust serving code and the small engine interface. |
+| [`src/frontend/`](src/frontend/) | Rust serving code, Python worker adapters, and the small engine interface. |
 | [`src/models/`](src/models/) | Model implementations, one directory per model: preprocessing, batching, state, execution, and output processing. |
 | [`src/backends/cuda/`](src/backends/cuda/) | NVIDIA GPU operations and kernel integration. |
 | [`src/backends/metal/`](src/backends/metal/) | Apple GPU operations and kernel integration. |
 | [`recipe/`](recipe/) | Model setup instructions, launch commands, configuration examples, and example requests. |
 | [`docs/`](docs/) | Project documentation and architecture assets. |
 
-The frontend is a Cargo workspace member. Each model documents its implementation and process boundary; native backend directories currently document planned work.
+The frontend and the Cua-S1 native worker are Cargo workspace members. Each model documents its implementation and process boundary.
 
 ## Supported models
 
@@ -56,6 +56,7 @@ Model capabilities are declared by each worker:
 | Model | Status |
 | --- | --- |
 | LAYA | [External worker](recipe/laya/README.md); model engine planned |
+| Cua-S1 4B 0.2 (`text` adapter) | [Python worker](recipe/cua_s1/text.md); [native worker](recipe/cua_s1/native.md), CUDA, run on sm_89 |
 | LFM2.5-350M | [Transformers worker](recipe/lfm2/README.md); text and independent choice questions, explicit candidate batch size |
 
 CUDA and Metal coverage will be documented per model as implementations are added and validated.

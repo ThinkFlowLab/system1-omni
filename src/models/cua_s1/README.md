@@ -2,7 +2,7 @@
 
 This directory owns Cua-S1 4B 0.2 ([#10](https://github.com/ThinkFlowLab/system1-omni/issues/10)): request mapping, prompt construction, adapter selection, execution, and the answer-letter readout. This page records the pinned upstream revisions, the inference contract an implementation must match, and how its outputs will be compared with the upstream reference.
 
-Status: planned; nothing is implemented or validated yet. The first target is the `text` adapter on CUDA, starting with a worker that loads the model directly through Hugging Face Transformers and PEFT. The `multimodal` adapter is deferred; see [Not covered yet](#not-covered-yet).
+Status: a reference worker for the `text` adapter loads the model through Hugging Face Transformers and PEFT: [`text/`](text/), served by [`src/frontend/cua_s1_text.py`](../../frontend/cua_s1_text.py), with setup in [`recipe/cua_s1/text.md`](../../../recipe/cua_s1/text.md). It is the correctness reference for the native worker in [`native/`](native/): Rust, with the Qwen3.5 forward pass on the CUDA kernels in [`src/backends/cuda/qwen3_5/`](../../backends/cuda/qwen3_5/), set up as in [`recipe/cua_s1/native.md`](../../../recipe/cua_s1/native.md). The `multimodal` adapter is deferred; see [Not covered yet](#not-covered-yet).
 
 ## Pinned revisions
 
@@ -76,19 +76,19 @@ The response `model` is `cua-ai/cua-s1-4b-0.2@<adapter revision>:<modality>`, in
 
 An error rejects the whole request. Its body is `{"detail": "<message>"}`, as the LAYA worker returns, and the message names the problem.
 
-The status is `400` when the body is not a usable JSON object: invalid JSON or UTF-8, `NaN` or `Infinity`, a lone surrogate such as `\ud800`, nesting too deep to parse, or a key repeated in any object.
+The status is `400` when the body is not a usable JSON object: invalid JSON or UTF-8, `NaN`, `Infinity` or a number out of range, a lone surrogate such as `\ud800`, nesting too deep to parse, or a key repeated in any object.
 
 The status is `422` when a well-formed request cannot be answered:
 
 - a `score` or `noul` question, since the adapters were trained only on closed-option choices;
 - a question without an `instructions` field (`null` is allowed), or a `choice` with no options or more than 26 options;
 - a `criteria` value that is a number or a boolean;
-- an empty `state`;
+- an empty `state` (`""`, `{}` or `[]`);
 - a `model` other than `cua-s1-4b-0.2`.
 
 ## Validation
 
-**Inputs.** The fixed input set is upstream's two checked-in fixtures, converted to `/v1/systemone` requests with the chooser's rendered regions as `state`, plus `/v1/systemone` choice requests that will be checked in with the worker. These cover 1 to 26 options, short and long states, string and structured `state`, `instructions` and `criteria`, `null` criteria, non-ASCII text, and text that spells a special token. Each input is scored once per configuration.
+**Inputs.** The fixed input set is upstream's two checked-in fixtures, converted to `/v1/systemone` requests with the chooser's rendered regions as `state`, plus `/v1/systemone` choice requests. These cover 1 to 26 options, short and long states, string and structured `state`, `instructions` and `criteria`, `null` criteria, non-ASCII text, and text that spells a special token. Each input is scored once per configuration.
 
 **Tolerances.** These are declared before any comparison is run:
 
@@ -97,7 +97,7 @@ The status is `422` when a well-formed request cannot be answered:
 | Worker prompt vs upstream `build_prompt` | Same inputs | Identical token ids |
 | Worker vs upstream `FourBModel` | Same GPU and reference environment, bfloat16, adapter not merged, full logits, one unpadded prompt per forward pass | Identical fp32 probabilities |
 | Through the frontend vs direct to the worker | Same worker | Identical status, content type and body bytes |
-| Native engine vs fp32 worker (later) | Same GPU; the engine runs in bfloat16; the fp32 worker runs with TF32 disabled | (1) Over the whole input set, the largest per-option probability difference is at most twice the bfloat16 worker's largest difference from the fp32 worker, plus 0.01. (2) The top option matches wherever the fp32 worker's top-two margin is at least 0.05. |
+| Native engine vs fp32 worker | Same GPU; the engine runs in bfloat16; the fp32 worker runs with TF32 disabled | (1) Over the whole input set, the largest per-option probability difference is at most twice the bfloat16 worker's largest difference from the fp32 worker, plus 0.01. (2) The top option matches wherever the fp32 worker's top-two margin is at least 0.05. |
 
 The bfloat16 worker's own difference from the fp32 worker is reported next to each native-engine result.
 
