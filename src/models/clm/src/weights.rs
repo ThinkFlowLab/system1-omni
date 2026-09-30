@@ -16,7 +16,8 @@ pub struct Head {
     pub inp_bias: Vec<f32>,
     pub hidden_weight: Vec<f32>,
     pub hidden_bias: Vec<f32>,
-    /// Absent when the configuration has no hidden blocks; LayerNorm weight when present.
+    /// Absent when the configuration has no hidden blocks or sets `layernorm: false`;
+    /// the LayerNorm weight when present.
     pub norm_weight: Option<Vec<f32>>,
     pub norm_bias: Option<Vec<f32>>,
     pub out_weight: Vec<f32>,
@@ -132,11 +133,21 @@ fn load_head(weights: &Weights, name: &str, cfg: &HeadConfig) -> Result<Head> {
         "the published checkpoint has {blocks} hidden blocks; the loader implements one"
     );
     let (hidden_weight, hidden_bias, norm_weight, norm_bias) = if blocks == 1 {
+        // `head_tensors` only lists `norms.N.*` when `cfg.layernorm` is set, so a
+        // `layernorm: false` checkpoint is complete without them and loads without them.
+        let (norm_weight, norm_bias) = if cfg.layernorm {
+            (
+                Some(weights.f32(&format!("{name}.norms.0.weight"), &[w])?),
+                Some(weights.f32(&format!("{name}.norms.0.bias"), &[w])?),
+            )
+        } else {
+            (None, None)
+        };
         (
             weights.f32(&format!("{name}.hidden.0.weight"), &[w, w])?,
             weights.f32(&format!("{name}.hidden.0.bias"), &[w])?,
-            Some(weights.f32(&format!("{name}.norms.0.weight"), &[w])?),
-            Some(weights.f32(&format!("{name}.norms.0.bias"), &[w])?),
+            norm_weight,
+            norm_bias,
         )
     } else {
         (Vec::new(), Vec::new(), None, None)
