@@ -25,7 +25,8 @@ fn real_encoder_matches_official_hidden_states() -> Result<()> {
             .map(std::path::PathBuf::from)
             .expect(name)
     };
-    let cuda = unsafe { Cuda::load(&path("LAYA_CUDA_LIBRARY"), 0) }?;
+    let device = std::env::var("LAYA_CUDA_DEVICE")?.parse()?;
+    let cuda = unsafe { Cuda::load(&path("LAYA_CUDA_LIBRARY"), device) }?;
     let encoder =
         unsafe { Encoder::load(&cuda, &path("LAYA_CHECKPOINT"), &path("LAYA_KERNEL_BUNDLE")) }?;
     let root = path("LAYA_ENCODER_ORACLE");

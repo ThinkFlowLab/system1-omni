@@ -96,7 +96,7 @@ checks checkpoint and bundle hashes before loading native code.
 For GPU validation, supply real request fixtures to
 `recipe/laya/native/export_encoder.py CHECKPOINT REQUESTS OUTPUT`. It uses Laya
 0.3.20 and PyTorch on CUDA as the reference, independently of the Rust runtime.
-Set `LAYA_CUDA_LIBRARY`, `LAYA_CHECKPOINT`, `LAYA_KERNEL_BUNDLE` and
+Set `LAYA_CUDA_LIBRARY`, `LAYA_CUDA_DEVICE`, `LAYA_CHECKPOINT`, `LAYA_KERNEL_BUNDLE` and
 `LAYA_ENCODER_ORACLE`, then run:
 
 ```sh

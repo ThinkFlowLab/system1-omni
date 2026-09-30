@@ -42,11 +42,9 @@ impl Fixture {
             "rope_local_cos.f32",
             "rope_local_sin.f32",
         ] {
-            fs::write(bundle.join(name), b"table").unwrap();
-            tables.insert(
-                name.into(),
-                json!(format!("{:x}", Sha256::digest(b"table"))),
-            );
+            let data = vec![0u8; 512 * 32 * 4];
+            fs::write(bundle.join(name), &data).unwrap();
+            tables.insert(name.into(), json!(format!("{:x}", Sha256::digest(&data))));
         }
         let table_manifest = json!({
             "abi": 1,
@@ -92,6 +90,29 @@ impl Drop for Fixture {
 #[test]
 fn matching_artifacts_pass_without_loading_cuda() {
     Fixture::new().validate().unwrap();
+}
+
+#[test]
+fn wrong_sized_tables_fail_even_with_matching_hashes() {
+    for name in [
+        "rope_full_cos.f32",
+        "rope_full_sin.f32",
+        "rope_local_cos.f32",
+        "rope_local_sin.f32",
+    ] {
+        for size in [0, 512 * 32 * 4 - 1, 512 * 32 * 4 + 1] {
+            let f = Fixture::new();
+            let data = vec![0u8; size];
+            fs::write(f.bundle.join(name), &data).unwrap();
+            let path = f.bundle.join("tables.json");
+            let mut manifest: serde_json::Value =
+                serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            manifest["tables"][name] = json!(format!("{:x}", Sha256::digest(&data)));
+            fs::write(path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+            let error = f.validate().unwrap_err().to_string();
+            assert!(error.contains("invalid rotary table size") && error.contains(name));
+        }
+    }
 }
 
 #[test]
