@@ -668,7 +668,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "half",
+ "libloading",
  "memmap2",
+ "omni-cuda",
  "safetensors",
  "serde",
  "serde_json",

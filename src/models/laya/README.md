@@ -22,3 +22,20 @@ cargo test --release --locked -p omni-laya --test weights -- --ignored
 ```
 
 These two CPU tests check all 206 tensor names and shapes, 618 conversion hashes, and the legacy temperature buffer. The normal CI job skips them because it does not download the full checkpoint.
+
+## GPU weight residency
+
+`ResidentWeights::upload(&cuda, &weights)` validates the checkpoint inventory and
+uploads the weights once. Embeddings use FP16; encoder norms, head norms and biases,
+and the scorer input norm use FP32; other weights use BF16. Layouts stay unchanged.
+The legacy `temperature` buffer is validated but not uploaded.
+
+`get(name)` returns the resident buffer. `bytes()` reports weight allocations only,
+excluding CUDA context and allocator overhead. Buffers keep their CUDA context alive
+after the caller drops the source mapping or `Cuda`. Failed loads release partial
+allocations. Workspace, rotary tables and inference are separate modules.
+
+The ignored `real_checkpoint_residency_matches_torch` test requires
+`LAYA_CUDA_LIBRARY`, `LAYA_CUDA_DEVICE`, `LAYA_CHECKPOINT` and `LAYA_WEIGHT_ORACLE`.
+It uploads all 205 used tensors and compares readback hashes with the existing Torch
+oracle; it does not test model outputs or latency.
