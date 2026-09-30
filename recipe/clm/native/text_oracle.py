@@ -33,6 +33,11 @@ QUESTIONS = [
     {"type": "noul", "instructions": "Does the customer ask for a refund?", "criteria": None},
     {"type": "noul", "instructions": "Refund?",
      "criteria": {"true": "Yes they do", "false": "No they do not"}},
+    # An empty container is a description that renders to nothing, not a missing one, so
+    # these exercise the difference between "absent" and "renders empty".
+    {"type": "choice", "instructions": "Pick a bucket",
+     "criteria": {"empty_obj": {}, "empty_list": []}},
+    {"type": "noul", "instructions": "Is it so?", "criteria": {"true": {}, "false": []}},
 ]
 
 

@@ -80,7 +80,10 @@ fn decisions_match_the_reference_implementation() {
             kind,
             keys,
         };
-        let answer = answer(&question, &probs).unwrap();
+        // The oracle carries keys and probabilities, not candidate texts; the legend a
+        // score answer is built from is checked in `text.rs`, where `candidates` supplies
+        // the texts.
+        let answer = answer(&question, &question.keys, &probs).unwrap();
         match (&answer, case.get("choice")) {
             (
                 omni_clm::Answer::Choice {

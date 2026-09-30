@@ -5,8 +5,8 @@
 //! produced by the reference implementation itself
 //! (`recipe/clm/native/text_oracle.py`, which imports `clm.schema`), so this compares
 //! against the real thing rather than a transcription of it.
-use omni_clm::serve::{candidates, state_text, to_text};
-use omni_clm::{Kind, serve::QuestionRequest};
+use omni_clm::serve::{answer_json, candidates, state_text, to_text};
+use omni_clm::{Kind, Question, answer, serve::QuestionRequest};
 use serde_json::{Value, json};
 
 fn oracle() -> Value {
@@ -52,6 +52,17 @@ fn questions() -> Vec<QuestionRequest> {
             kind: Kind::Noul,
             instructions: "Refund?".into(),
             criteria: Some(json!({"true": "Yes they do", "false": "No they do not"})),
+        },
+        // An empty container renders to nothing, which is not the same as being absent.
+        QuestionRequest {
+            kind: Kind::Choice,
+            instructions: "Pick a bucket".into(),
+            criteria: Some(json!({"empty_obj": {}, "empty_list": []})),
+        },
+        QuestionRequest {
+            kind: Kind::Noul,
+            instructions: "Is it so?".into(),
+            criteria: Some(json!({"true": {}, "false": []})),
         },
     ]
 }
@@ -132,4 +143,29 @@ fn text_construction_handles_the_edges_the_oracle_does_not() {
     // A state that is a bare scalar is not a container, so it renders unindented.
     assert_eq!(to_text(&json!(true)), "true");
     assert_eq!(to_text(&json!(null)), "");
+}
+
+#[test]
+fn a_score_answer_carries_its_level_legend() {
+    // `answer_from_probs` returns the criteria text next to the score so a consumer can
+    // read a level back without the request; the serialized answer must not drop it.
+    let request = QuestionRequest {
+        kind: Kind::Score,
+        instructions: "How urgent?".into(),
+        criteria: Some(json!(["Not urgent", "Soon", "Now"])),
+    };
+    let (keys, texts) = candidates(&request).unwrap();
+    let question = Question {
+        id: "urgency".into(),
+        kind: Kind::Score,
+        keys,
+    };
+    let answer = answer(&question, &texts, &[0.1, 0.7, 0.2]).unwrap();
+    let json = answer_json(&answer);
+    assert_eq!(json["type"], "score");
+    assert_eq!(
+        json["legend"],
+        json!({"0": "Not urgent", "1": "Soon", "2": "Now"})
+    );
+    assert!((json["score"].as_f64().unwrap() - 1.1).abs() < 1e-6);
 }

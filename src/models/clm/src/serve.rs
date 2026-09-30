@@ -149,14 +149,13 @@ pub fn candidates(q: &QuestionRequest) -> Result<(Vec<String>, Vec<String>)> {
             );
             let keys: Vec<String> = crit.keys().cloned().collect();
             // The option's own text when one is given, else the key. Nothing is prefixed.
+            // "Given" is the reference's test — null or the empty string — so an empty
+            // container is a description that renders to nothing, not a missing one.
             let texts = keys
                 .iter()
                 .map(|k| match &crit[k] {
-                    Value::Null => k.clone(),
-                    v => {
-                        let t = to_text(v);
-                        if t.is_empty() { k.clone() } else { t }
-                    }
+                    v if v.is_null() || v.as_str() == Some("") => k.clone(),
+                    v => to_text(v),
                 })
                 .collect();
             Ok((keys, texts))
@@ -177,19 +176,17 @@ pub fn candidates(q: &QuestionRequest) -> Result<(Vec<String>, Vec<String>)> {
             let ins = &q.instructions;
             let mut texts = Vec::with_capacity(NOUL_KEYS.len());
             for k in NOUL_KEYS {
-                let described = crit
-                    .and_then(|c| c.get(k))
-                    .filter(|v| !matches!(v, Value::Null) && !to_text(v).is_empty());
-                let body = match described {
-                    Some(v) => to_text(v),
-                    None if !ins.is_empty() => {
+                // The same "given or not" test as `choice`: `crit.get(k)` in `(None, "")`.
+                let body = match crit.and_then(|c| c.get(k)) {
+                    Some(v) if !v.is_null() && v.as_str() != Some("") => to_text(v),
+                    _ if !ins.is_empty() => {
                         if k == "true" {
                             format!("Yes. This is true: {ins}")
                         } else {
                             format!("No. This is false: {ins}")
                         }
                     }
-                    None => k.to_string(),
+                    _ => k.to_string(),
                 };
                 texts.push(format!("{k}: {body}"));
             }
@@ -307,7 +304,10 @@ impl<E: Encoder> Engine<E> {
             }
             let probs = scoring::distribution(&self.heads, &state, &candidates, temperature)
                 .with_context(|| format!("question {:?}", p.id))?;
-            answers.push((p.id.clone(), scoring::answer(&p.question, &probs)?));
+            answers.push((
+                p.id.clone(),
+                scoring::answer(&p.question, &p.candidate_texts, &probs)?,
+            ));
         }
 
         Ok(Decision {
@@ -324,6 +324,15 @@ pub fn answers_json(answers: &[(String, Answer)]) -> Value {
         out.insert(id.clone(), answer_json(answer));
     }
     Value::Object(out)
+}
+
+/// The level key to level text map a `score` answer carries, in answer order.
+fn legend_json(legend: &[(String, String)]) -> Value {
+    let mut map = Map::new();
+    for (key, text) in legend {
+        map.insert(key.clone(), Value::String(text.clone()));
+    }
+    Value::Object(map)
 }
 
 fn probabilities(pairs: &[(String, f32)]) -> Value {
@@ -351,11 +360,13 @@ pub fn answer_json(answer: &Answer) -> Value {
         Answer::Score {
             score,
             confidence,
+            legend,
             probabilities: p,
         } => serde_json::json!({
             "type": "score",
             "score": score,
             "confidence": confidence,
+            "legend": legend_json(legend),
             "probabilities": probabilities(p),
         }),
     }

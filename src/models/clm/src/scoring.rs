@@ -41,6 +41,9 @@ pub enum Answer {
     Score {
         score: f32,
         confidence: f32,
+        /// Level key to level text, in answer order: `answer_from_probs` returns this so a
+        /// consumer can read a score back as a level without the request.
+        legend: Vec<(String, String)>,
         probabilities: Vec<(String, f32)>,
     },
 }
@@ -252,7 +255,10 @@ pub fn confidence(probs: &[f32]) -> f32 {
 }
 
 /// Assemble the answer for one question from its distribution.
-pub fn answer(question: &Question, probs: &[f32]) -> Result<Answer> {
+///
+/// `texts` is the candidate text per key, which `answer_from_probs` reads out of the
+/// question's `criteria`; a `score` answer carries them back as its legend.
+pub fn answer(question: &Question, texts: &[String], probs: &[f32]) -> Result<Answer> {
     ensure!(
         question.keys.len() == probs.len(),
         "{}: {} keys but {} probabilities",
@@ -302,6 +308,14 @@ pub fn answer(question: &Question, probs: &[f32]) -> Result<Answer> {
             Answer::Score {
                 score,
                 confidence: confidence(probs),
+                // The reference builds the legend from the criteria as `str(i) -> text`,
+                // which is exactly the keys and the candidate texts it already has.
+                legend: question
+                    .keys
+                    .iter()
+                    .cloned()
+                    .zip(texts.iter().cloned())
+                    .collect(),
                 probabilities: pairs,
             }
         }

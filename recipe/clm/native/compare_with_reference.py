@@ -80,7 +80,18 @@ def main() -> None:
     requests_ = [(n, request_for(n, k, c)) for n, k, c in CASES]
     payload = "".join(json.dumps(r) + "\n" for _, r in requests_)
     proc = subprocess.run(
-        [str(args.bin), str(args.checkpoint), "--emb-url", args.emb_url, "--model", args.emb_model],
+        [
+            str(args.bin),
+            str(args.checkpoint),
+            "--emb-url",
+            args.emb_url,
+            "--model",
+            args.emb_model,
+            # Both sides must run the same temperature, or a non-default one compares two
+            # different configurations and reports a port regression that is not there.
+            "--temperature",
+            str(args.temperature),
+        ],
         input=payload,
         capture_output=True,
         text=True,
