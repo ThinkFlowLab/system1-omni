@@ -21,6 +21,7 @@ typedef struct { int device, live; } Stream;
 typedef struct { int device; unsigned char data[]; } Allocation;
 static Stream streams[16];
 static int device = -1, mode, next_stream, live;
+static int allocations_before_failure = -1;
 static char trace[4096], error[64];
 static size_t trace_len, pending_bytes;
 static void *pending_dst;
@@ -38,6 +39,7 @@ static int valid_stream(void *p) {
   return s && s->live && s->device == device;
 }
 void laya_test_mode(int value) { mode = value; }
+void laya_test_fail_alloc_after(int count) { allocations_before_failure = count; }
 const char *laya_test_trace(void) { return trace; }
 int laya_test_live(void) { return live; }
 uint32_t laya_abi_version(void) { return LAYA_TEST_ABI; }
@@ -62,7 +64,8 @@ int laya_stream_create(void **out) {
 }
 int laya_alloc(void **out, size_t bytes) {
   record("alloc");
-  if (mode == mode_alloc_error) return 31;
+  if (mode == mode_alloc_error || allocations_before_failure == 0) return 31;
+  if (allocations_before_failure > 0) allocations_before_failure--;
   Allocation *a = calloc(1, sizeof(*a) + bytes);
   if (!a) return 32;
   a->device = device;
