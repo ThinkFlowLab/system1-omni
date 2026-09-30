@@ -2,7 +2,7 @@
 
 A community-maintained inference engine for prefill-only System1-Omni models, designed around a Rust frontend, model-owned execution, and high-performance CUDA and Metal backends.
 
-The Rust frontend forwards requests to a separately running model worker. In-repository model engines and GPU backends are not implemented yet.
+The Rust frontend serves `/v1/systemone` either by forwarding to a separately running model worker or, with a model linked in, in-process behind a small engine interface. In-repository model engines and GPU backends are not implemented yet.
 
 ## Run the frontend
 
