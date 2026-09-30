@@ -42,6 +42,24 @@ fn real_encoder_matches_official_hidden_states() -> Result<()> {
         let ids: Vec<i64> = serde_json::from_value(case["ids"].clone())?;
         let lengths: Vec<i32> = serde_json::from_value(case["lengths"].clone())?;
         let types: Vec<i64> = serde_json::from_value(case["types"].clone())?;
+        if name == "mixed_16" {
+            assert_eq!((b, l), (16, 512));
+            let rows: std::collections::HashSet<_> = lengths
+                .iter()
+                .enumerate()
+                .map(|(row, n)| (&ids[row * l..row * l + *n as usize], types[row]))
+                .collect();
+            assert_eq!(rows.len(), 16, "maximum batch must have distinct real rows");
+            assert_eq!(
+                types
+                    .iter()
+                    .copied()
+                    .collect::<std::collections::HashSet<_>>()
+                    .len(),
+                3
+            );
+            assert!(lengths.iter().any(|n| *n < 512) && lengths.contains(&512));
+        }
         let workspace = Workspace::new(&cuda, b, l)?;
         // Kernels are asynchronous; readback must observe the completed final layer.
         *encoder.checkpoints.borrow_mut() = Some(Vec::new());
