@@ -37,6 +37,8 @@ class Server(ThreadingHTTPServer):
         # When set, every other call reports this instead -- a cache that goes warm.
         self.alternate_usage: dict | None = None
         self.status = 200
+        # The body sent with a non-200 status; normally an empty object.
+        self.error: dict = {}
 
     @property
     def url(self) -> str:
@@ -62,7 +64,7 @@ class Handler(BaseHTTPRequestHandler):
         self.rfile.read(int(self.headers.get("Content-Length") or 0))
         server.calls += 1
         if server.status != 200:
-            self._send(server.status, b"{}")
+            self._send(server.status, json.dumps(server.error).encode())
             return
         usage = dict(server.usage)
         if server.alternate_usage is not None and server.calls % 2 == 0:
@@ -91,6 +93,7 @@ def reset(*servers: Server) -> None:
         server.usage = {"input_tokens": 0}
         server.alternate_usage = None
         server.status = 200
+        server.error = {}
 
 
 def main() -> None:
@@ -131,6 +134,15 @@ def main() -> None:
     worker.status = 500
     code, out = run(worker.url, frontend.url)
     check("a non-200 backend fails", code == 1 and "FAIL" in out, out)
+
+    # 6. Matching 500s are not a pass, even when the error body carries equal answers.
+    reset(worker, frontend)
+    worker.status = 500
+    frontend.status = 500
+    worker.error = {"answers": {}, "detail": "failed"}
+    frontend.error = {"answers": {}, "detail": "failed"}
+    code, out = run(worker.url, frontend.url)
+    check("equal answers on matching errors fail", code == 1 and "FAIL" in out, out)
 
     worker.shutdown()
     frontend.shutdown()

@@ -84,8 +84,10 @@ def main():
         proxied = fetch(args.frontend, path, body)
         ok = direct == proxied and direct[0] == 200
         note = ""
-        if not ok:
-            # Compare the decision itself before falling back to the byte comparison.
+        if not ok and direct[0] == 200:
+            # Compare the decision itself before falling back to the byte comparison. Only a
+            # successful status relaxes the body comparison: a 500 that happens to carry
+            # equal "answers" is still a failure.
             left, right = decision(direct[2]), decision(proxied[2])
             if left and right and direct[:2] == proxied[:2] and left[0] == right[0]:
                 ok = True
