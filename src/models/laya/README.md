@@ -6,7 +6,7 @@ GPU operations and kernel implementations belong in [`backends/cuda/`](../../bac
 
 The `omni-laya` crate currently reads and checks the English Laya 0.3.20 checkpoint. `Config::load` validates the architecture and temperatures; `Weights` checks tensor names and shapes and converts FP32, FP16 and BF16 values. `checkpoint_tensors()` lists the 206 expected tensors. Each backend chooses its own storage precision.
 
-Keep checkpoint files unchanged while `Weights` holds a read-only memory mapping. This crate does not yet execute inference.
+Keep checkpoint files unchanged while `Weights` holds a read-only memory mapping. The eager encoder is described below; complete request-to-result inference is not yet implemented.
 
 ## CPU checks
 
