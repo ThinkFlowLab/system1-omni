@@ -23,7 +23,7 @@ def main():
     assert fast is not None and not fast.use_graphs
     cases = json.loads(args.requests.read_text())
     # Exercise the largest supported batch with real, independently packed questions.
-    widest = copy.deepcopy(next(c for c in cases if c["name"] == "long_3"))
+    widest = copy.deepcopy(next(c for c in cases if c["name"] == "truncated_3"))
     widest["name"] = "long_16"
     question = next(iter(widest["request"]["questions"].values()))
     widest["request"]["questions"] = {f"q{i}": copy.deepcopy(question) for i in range(16)}

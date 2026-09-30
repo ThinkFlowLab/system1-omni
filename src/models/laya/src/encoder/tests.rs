@@ -1,5 +1,7 @@
 use super::*;
 
+pub(super) type Checkpoints = std::cell::RefCell<Option<Vec<(String, Vec<u8>)>>>;
+
 #[test]
 fn input_bounds_cover_padding_and_vocabulary_edges() {
     assert!(validate_inputs(&[0; 32], &[16, 0], &[0, 2], 2, 16).is_ok());
@@ -42,6 +44,7 @@ fn real_encoder_matches_official_hidden_states() -> Result<()> {
         let types: Vec<i64> = serde_json::from_value(case["types"].clone())?;
         let workspace = Workspace::new(&cuda, b, l)?;
         // Kernels are asynchronous; readback must observe the completed final layer.
+        *encoder.checkpoints.borrow_mut() = Some(Vec::new());
         encoder.run(&ids, &lengths, &types, &workspace)?;
         let got = workspace.buffers().residual.read(b * l * 1024 * 4)?;
         check_output(
@@ -51,7 +54,7 @@ fn real_encoder_matches_official_hidden_states() -> Result<()> {
             &lengths,
             l,
         )?;
-        for (stage, output) in encoder.checkpoints.take() {
+        for (stage, output) in encoder.checkpoints.take().unwrap() {
             check_output(
                 &format!("{name}/{stage}"),
                 &output,
@@ -62,7 +65,6 @@ fn real_encoder_matches_official_hidden_states() -> Result<()> {
         }
         // Reusing the same allocations must not accumulate residuals across requests.
         encoder.run(&ids, &lengths, &types, &workspace)?;
-        encoder.checkpoints.borrow_mut().clear();
         assert_eq!(
             got,
             workspace.buffers().residual.read(got.len())?,
@@ -74,9 +76,9 @@ fn real_encoder_matches_official_hidden_states() -> Result<()> {
 
 impl Encoder {
     pub(super) fn record(&self, stage: &str, buffer: &Buffer) -> Result<()> {
-        self.checkpoints
-            .borrow_mut()
-            .push((stage.into(), buffer.read(buffer.bytes())?));
+        if let Some(stages) = self.checkpoints.borrow_mut().as_mut() {
+            stages.push((stage.into(), buffer.read(buffer.bytes())?));
+        }
         Ok(())
     }
 }

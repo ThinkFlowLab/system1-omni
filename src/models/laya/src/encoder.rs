@@ -33,7 +33,7 @@ pub struct Encoder {
     tables: HashMap<String, Buffer>,
     zeros: Buffer,
     #[cfg(test)]
-    checkpoints: std::cell::RefCell<Vec<(String, Vec<u8>)>>,
+    checkpoints: tests::Checkpoints,
 }
 
 impl Encoder {
