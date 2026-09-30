@@ -31,6 +31,11 @@ int cs1_stream_sync(void* stream);
 // Copy and wait for the copy.
 int cs1_upload(void* dst, const void* src, size_t bytes, void* stream);
 int cs1_download(void* dst, const void* src, size_t bytes, void* stream);
+// Capture the work queued on `stream` between begin and end into an executable graph.
+int cs1_graph_begin(void* stream);
+int cs1_graph_end(void* stream, void** exec);
+int cs1_graph_launch(void* exec, void* stream);
+int cs1_graph_destroy(void* exec);
 
 // ---- operations ----
 
@@ -83,10 +88,14 @@ int cs1_sigmoid_gate(void* x, const void* gate, size_t n, void* stream);
 // out [T, I] = silu(gate) * up, from gate_up [T, 2*I] (gate first) in rows of ld.
 int cs1_silu_mul(const void* gate_up, int ld, void* out, int T, int I, void* stream);
 
-// y [M, N] (rows of ldy) = x [M, K] * w [N, K]^T through cuBLASLt, float32 accumulation,
-// with cuBLASLt's first heuristic choice for each shape (see gemm.cu).
+// y [M, N] (rows of ldy) = x [M, K] * w [N, K]^T through cuBLASLt, float32 accumulation.
+// cs1_gemm_tune times the candidate algorithms for a shape on the given buffers and
+// keeps the fastest (see gemm.cu); cs1_gemm_tune_done frees what tuning allocated.
 void* cs1_gemm_create(size_t workspace_bytes);
 void cs1_gemm_destroy(void* gemm);
+int cs1_gemm_tune(void* gemm, const void* x, const void* w, void* y, int M, int N, int K, int ldy,
+                  void* stream);
+void cs1_gemm_tune_done(void* gemm);
 int cs1_gemm(void* gemm, const void* x, const void* w, void* y, int M, int N, int K, int ldy,
              void* stream);
 

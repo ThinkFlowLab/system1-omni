@@ -57,6 +57,10 @@ api! {
     cs1_stream_sync(stream: Stream) -> c_int;
     cs1_upload(dst: *mut c_void, src: *const c_void, bytes: usize, stream: Stream) -> c_int;
     cs1_download(dst: *mut c_void, src: *const c_void, bytes: usize, stream: Stream) -> c_int;
+    cs1_graph_begin(stream: Stream) -> c_int;
+    cs1_graph_end(stream: Stream, exec: *mut *mut c_void) -> c_int;
+    cs1_graph_launch(exec: *mut c_void, stream: Stream) -> c_int;
+    cs1_graph_destroy(exec: *mut c_void) -> c_int;
     cs1_embed(ids: *const i32, table: *const c_void, out: *mut c_void, t: c_int, d: c_int, stream: Stream) -> c_int;
     cs1_rms_norm(
         x: *const c_void, w: *const c_void, out: *mut c_void, rows: c_int, d: c_int, eps: f32, stream: Stream,
@@ -94,6 +98,11 @@ api! {
     cs1_sigmoid_gate(x: *mut c_void, gate: *const c_void, n: usize, stream: Stream) -> c_int;
     cs1_silu_mul(gate_up: *const c_void, ld: c_int, out: *mut c_void, t: c_int, i: c_int, stream: Stream) -> c_int;
     cs1_gemm_create(workspace_bytes: usize) -> *mut c_void;
+    cs1_gemm_tune(
+        gemm: *mut c_void, x: *const c_void, w: *const c_void, y: *mut c_void, m: c_int, n: c_int, k: c_int,
+        ldy: c_int, stream: Stream,
+    ) -> c_int;
+    cs1_gemm_tune_done(gemm: *mut c_void);
     cs1_gemm_destroy(gemm: *mut c_void);
     cs1_gemm(
         gemm: *mut c_void, x: *const c_void, w: *const c_void, y: *mut c_void, m: c_int, n: c_int, k: c_int,
@@ -236,4 +245,53 @@ pub unsafe fn download(dst: &mut [u8], src: *const c_void, stream: Stream) -> Re
         unsafe { (api().cs1_download)(dst.as_mut_ptr().cast(), src, dst.len(), stream) },
         "copy to host",
     )
+}
+
+/// An instantiated CUDA graph, destroyed on drop.
+pub struct Graph {
+    exec: *mut c_void,
+}
+
+// SAFETY: the executable graph is only launched by its owner, one launch at a time.
+unsafe impl Send for Graph {}
+
+impl Graph {
+    /// Capture the work `record` queues on `stream` (nothing runs) and instantiate it.
+    pub fn capture(stream: Stream, record: impl FnOnce() -> Result<()>) -> Result<Self> {
+        // SAFETY: plain runtime calls on a stream from new_stream; the capture is
+        // always ended, also when `record` fails.
+        unsafe {
+            check((api().cs1_graph_begin)(stream), "cudaStreamBeginCapture")?;
+            let recorded = record();
+            let mut exec = std::ptr::null_mut();
+            let ended = check(
+                (api().cs1_graph_end)(stream, &mut exec),
+                "capturing a CUDA graph",
+            );
+            match recorded.and(ended) {
+                Ok(()) => Ok(Graph { exec }),
+                Err(e) => {
+                    if !exec.is_null() {
+                        (api().cs1_graph_destroy)(exec);
+                    }
+                    Err(e)
+                }
+            }
+        }
+    }
+
+    pub fn launch(&self, stream: Stream) -> Result<()> {
+        // SAFETY: an instantiated graph whose buffers outlive it (see Model).
+        check(
+            unsafe { (api().cs1_graph_launch)(self.exec, stream) },
+            "cudaGraphLaunch",
+        )
+    }
+}
+
+impl Drop for Graph {
+    fn drop(&mut self) {
+        // SAFETY: instantiated by capture and not destroyed before.
+        unsafe { (api().cs1_graph_destroy)(self.exec) };
+    }
 }

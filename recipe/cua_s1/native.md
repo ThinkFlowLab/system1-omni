@@ -23,7 +23,7 @@ Start the worker (`CUA_S1_HOST` and `CUA_S1_PORT` default to `127.0.0.1` and `80
 CUA_S1_MODEL=weights/cua-s1-4b-0.2-text-merged target/release/omni-cua-s1-native
 ```
 
-Each question is one eager forward pass over its prompt; the final hidden state at the last position times the 26 letter rows of the output projection gives the option probabilities. The probabilities are not bitwise identical to the reference worker's, since the adapter is merged and the kernels differ; they are held to the tolerance in [`src/models/cua_s1/README.md`](../../src/models/cua_s1/README.md#validation). Error messages are worded differently, and bodies nested more than 127 levels deep are refused.
+Each question is one forward pass over its prompt, run as a CUDA graph captured for its length when it has at most 2,048 tokens; the worker times cuBLASLt's GEMM candidates at startup, which takes about 5 seconds. The final hidden state at the last position times the 26 letter rows of the output projection gives the option probabilities. The probabilities are not bitwise identical to the reference worker's, since the adapter is merged and the kernels differ; they are held to the tolerance in [`src/models/cua_s1/README.md`](../../src/models/cua_s1/README.md#validation). Error messages are worded differently, and bodies nested more than 127 levels deep are refused.
 
 The request tests need no GPU; the kernel tests compare attention and the chunked Gated DeltaNet prefill with float64 references:
 
