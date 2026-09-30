@@ -114,3 +114,17 @@ int laya_stream_free(void *stream) {
   live--;
   return 0;
 }
+
+#ifdef LAYA_TEST_KERNELS
+int laya_kernels_init(void) {
+  record("kernels_init");
+  return mode == mode_create_error ? 23 : 0;
+}
+int laya_fill(void **args, int b, int l, int m, void *stream) {
+  static const unsigned char value = 73;
+  record("kernel");
+  if (m != b * l || !valid_stream(stream)) return 91;
+  if (mode == mode_copy_error) return 41;
+  return copy(args[0], &value, 1, stream);
+}
+#endif

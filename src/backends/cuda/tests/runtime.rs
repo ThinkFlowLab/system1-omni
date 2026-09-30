@@ -252,3 +252,42 @@ fn real_gpu_round_trip() {
     drop(cuda);
     assert_eq!(buffer.read(expected.len()).unwrap(), expected);
 }
+
+#[test]
+fn kernels_validate_context_and_shape_and_keep_the_library_alive() {
+    use omni_cuda::kernels::Kernels;
+    let f = Fixture::new(&["-DLAYA_TEST_KERNELS"]);
+    let cuda = unsafe { Cuda::load(&f.path, 0) }.unwrap();
+    let buffer = cuda.alloc(1).unwrap();
+    let kernels = unsafe { Kernels::load(&cuda, &f.path, &["fill"]) }.unwrap();
+    assert!(unsafe { Kernels::load(&cuda, &f.path, &["absent"]) }.is_err());
+    f.mode(MODE_CREATE_ERROR);
+    assert!(unsafe { Kernels::load(&cuda, &f.path, &["fill"]) }.is_err());
+    f.mode(MODE_NORMAL);
+    let other = unsafe { Cuda::load(&f.path, 1) }.unwrap();
+    let foreign = other.alloc(1).unwrap();
+    let same_device = unsafe { Cuda::load(&f.path, 0) }.unwrap();
+    let foreign_stream = same_device.alloc(1).unwrap();
+    let before = f.trace();
+    for args in [&foreign, &foreign_stream] {
+        assert!(unsafe { kernels.launch("fill", &[args], 1, 16) }.is_err());
+    }
+    for (b, l) in [(0, 16), (3, 16), (32, 16), (1, 0), (1, 17), (1, 528)] {
+        assert!(unsafe { kernels.launch("fill", &[&buffer], b, l) }.is_err());
+    }
+    assert!(unsafe { kernels.launch("absent", &[&buffer], 1, 16) }.is_err());
+    assert_eq!(
+        before,
+        f.trace(),
+        "rejected calls must not enter the runtime"
+    );
+    f.mode(MODE_COPY_ERROR);
+    assert!(unsafe { kernels.launch("fill", &[&buffer], 1, 16) }.is_err());
+    f.mode(MODE_NORMAL);
+    drop(cuda);
+    unsafe { kernels.launch("fill", &[&buffer], 1, 16) }.unwrap();
+    assert!(f.trace().ends_with("device0 kernel0 "));
+    drop(kernels);
+    assert!(f.trace().ends_with("device0 sync0 "));
+    assert_eq!(buffer.read(1).unwrap(), [73]);
+}

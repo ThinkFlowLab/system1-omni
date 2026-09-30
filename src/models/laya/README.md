@@ -70,3 +70,41 @@ The ignored `real_gpu_workspace_capacity_and_reuse` test requires
 `LAYA_CUDA_LIBRARY` and `LAYA_CUDA_DEVICE`. It writes and reads all 17 buffers twice
 at three shapes, including both capacity bounds, using deterministic byte patterns.
 This tests allocation and transfer, not model numerics or latency.
+
+## Eager encoder
+
+`Encoder::load(&cuda, checkpoint, bundle)` loads the existing trusted native Laya
+bundle and resident weights. `run(ids, lengths, types, &workspace)` executes all
+28 encoder layers and both decision transformer layers, synchronizes, and leaves
+FP32 hidden states in `workspace.buffers().residual`. Padded rows have length zero.
+IDs must be within the vocabulary; lengths and types are checked before upload.
+
+This uses the existing original RoPE entry point and dynamic full/local attention.
+No Scorer, output decoding, HTTP service, Graph capture or cache is included.
+The resource library supplied to `Cuda::load` remains separate from the operator
+bundle; CPU builds need neither library. The operator bundle currently targets
+Hopper `sm_90a`. `Encoder::load` is unsafe because callers must trust the native
+code and provide a compatible GPU; hashes bind artifacts, not code trust.
+
+Reuse the [existing CUDA build entry](https://github.com/linear3735/system1-omni/blob/5ff41a5/src/backends/cuda/build.sh)
+and its model source/export tools. Export rotary tables with that version's
+`tools/export_tables.py`. Keep `liblaya_cuda.so`, `build-manifest.json`,
+`tables.json` and the four rotary table files in one bundle directory. These build
+tools are a separate dependency, not duplicated by this encoder change. Startup
+checks checkpoint and bundle hashes before loading native code.
+
+For GPU validation, supply real request fixtures to
+`recipe/laya/native/export_encoder.py CHECKPOINT REQUESTS OUTPUT`. It uses Laya
+0.3.20 and PyTorch on CUDA as the reference, independently of the Rust runtime.
+Set `LAYA_CUDA_LIBRARY`, `LAYA_CHECKPOINT`, `LAYA_KERNEL_BUNDLE` and
+`LAYA_ENCODER_ORACLE`, then run:
+
+```sh
+cargo test --release --locked -p omni-laya --lib real_encoder_matches_official_hidden_states -- --ignored --nocapture
+```
+
+The test checks selected encoder intermediates, both head layers, final hidden
+states, shape changes and repeated workspace reuse. It compares valid tokens;
+empty-key padding differs intentionally from the original attention. Candidate
+padding must still be finite. This is numerical parity, not model quality or a
+performance benchmark. The intermediate capture hooks compile only in tests.
