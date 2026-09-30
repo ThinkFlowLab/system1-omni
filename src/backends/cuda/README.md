@@ -4,9 +4,9 @@
 stream per context, plus the buffers allocated through that context. Rust builds
 and CPU tests need no CUDA toolkit.
 
-This first slice covers allocation, copies, synchronization and cleanup. Model
-initialization, weights, kernel calls, Graphs and hardware-specific optimizations
-remain separate. It does not yet run Laya inference.
+The resource library covers allocation, copies, synchronization and cleanup.
+`Kernels` loads operator code separately; model execution order belongs to Laya.
+Graphs and hardware-specific optimizations remain separate.
 
 ## Build and check
 
@@ -49,3 +49,14 @@ hidden in stream creation.
 
 These are Laya's resource entry points, not a new shared tensor interface. A common
 runtime can be extracted when another model needs the same implementation.
+
+## Kernel library
+
+`Kernels::load(&cuda, path, names)` resolves the requested Laya pointer-array
+entry points and initializes their launch attributes on the owning device.
+`launch` checks the supported batch/sequence bounds and rejects buffers from
+another context, including another stream on the same device. Tensor sizes,
+dtypes, argument counts, contents and aliasing remain the unsafe caller's contract.
+The library stays loaded until pending work has synchronized. Loading requires
+trusted native code compiled for the selected GPU; the resource library itself
+does not impose the operator bundle's architecture restrictions.
