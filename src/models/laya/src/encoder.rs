@@ -248,4 +248,5 @@ fn validate_inputs(ids: &[i64], lengths: &[i32], types: &[i64], b: usize, l: usi
 }
 
 #[cfg(test)]
+#[path = "../../../../tests/laya/unit/encoder.rs"]
 mod tests;

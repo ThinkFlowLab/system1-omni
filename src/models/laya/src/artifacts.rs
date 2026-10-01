@@ -78,4 +78,5 @@ pub fn validate_bundle(checkpoint: &Path, bundle: &Path) -> Result<()> {
 }
 
 #[cfg(test)]
+#[path = "../../../../tests/laya/unit/artifacts.rs"]
 mod tests;
