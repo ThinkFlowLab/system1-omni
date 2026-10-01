@@ -30,7 +30,7 @@ impl Fixture {
             ])
             .arg(
                 PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../backends/cuda/tests/fixtures/runtime.c"),
+                    .join("../../../tests/backends/cuda/fixtures/runtime.c"),
             )
             .arg("-o")
             .arg(&path)

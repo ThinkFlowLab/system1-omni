@@ -81,4 +81,5 @@ fn packed(source: &Weights, spec: &TensorSpec) -> Result<Vec<u8>> {
 }
 
 #[cfg(test)]
+#[path = "../../../../tests/laya/unit/resident.rs"]
 mod tests;
