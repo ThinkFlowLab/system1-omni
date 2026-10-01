@@ -1,0 +1,53 @@
+site_name: System1-Omni
+site_url: https://thinkflowlab.github.io/system1-omni/
+repo_url: https://github.com/ThinkFlowLab/system1-omni
+edit_uri: edit/main/
+# The recipes run their workers on port 8000.
+dev_addr: 127.0.0.1:8001
+
+theme:
+  name: material
+  features:
+    - content.action.edit
+    - content.code.copy
+    - navigation.indexes
+    - navigation.sections
+    - search.highlight
+
+# docs/hooks.py builds the site from the repository root, so each page keeps its
+# repository path and relative links work here as they do on GitHub.
+hooks:
+  - docs/hooks.py
+# The published files; assets/ is the theme's. Nothing in hidden directories.
+exclude_docs: |
+  *
+  !/README.md
+  !/CONTRIBUTING.md
+  !/docs/**/*.md
+  !/docs/assets/**
+  !/recipe/**/*.md
+  !/src/frontend/README.md
+  !/assets/**
+  **/.*/**
+
+validation:
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn
+
+markdown_extensions:
+  - toc:
+      permalink: true
+      # Heading anchors as GitHub makes them.
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
+  - pymdownx.superfences
+
+nav:
+  - Overview: README.md
+  - Frontend: src/frontend/README.md
+  - Recipes:
+      - recipe/README.md
+      - Laya text worker: recipe/laya/README.md
+  - Contributing: CONTRIBUTING.md
