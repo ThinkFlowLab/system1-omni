@@ -17,3 +17,11 @@ sha2 = "0.10"
 [dev-dependencies]
 libloading = "0.8"
 tempfile = "3"
+
+[[test]]
+name = "checkpoint"
+path = "../../../tests/laya/checkpoint.rs"
+
+[[test]]
+name = "weights"
+path = "../../../tests/laya/weights.rs"

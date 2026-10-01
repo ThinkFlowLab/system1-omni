@@ -97,4 +97,5 @@ impl Workspace {
 }
 
 #[cfg(test)]
+#[path = "../../../../tests/laya/unit/workspace.rs"]
 mod tests;

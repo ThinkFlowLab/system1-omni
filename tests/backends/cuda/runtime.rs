@@ -32,7 +32,10 @@ impl Fixture {
         let result = command
             .args(["-fPIC", "-std=c11", "-Wall", "-Wextra", "-Werror"])
             .args(defines)
-            .arg(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/runtime.c"))
+            .arg(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../../tests/backends/cuda/fixtures/runtime.c"),
+            )
             .arg("-o")
             .arg(&path)
             .output()
