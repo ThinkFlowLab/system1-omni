@@ -23,4 +23,10 @@ target
 # Local Python worker environment
 .venv/
 __pycache__/
+# Model weights downloaded by the recipes
+weights/
 .DS_Store
+
+# Documentation site build and environment
+/site/
+.venv-docs/
