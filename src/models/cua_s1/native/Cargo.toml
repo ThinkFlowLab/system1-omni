@@ -1,0 +1,24 @@
+[package]
+name = "omni-cua-s1-native"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Native /v1/systemone worker for Cua-S1 4B 0.2 (text adapter)"
+
+[[bin]]
+name = "omni-cua-s1-native"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.100"
+axum = "0.8.8"
+half = "2.7.1"
+# the CUDA kernels live in libqwen3_5_cuda.so, loaded at run time
+libloading = "0.8"
+memmap2 = "0.9.9"
+safetensors = "0.8.0"
+serde = "1"
+serde_json = { version = "1.0.149", features = ["float_roundtrip", "preserve_order", "raw_value"] }
+# the onig regex backend, as in the Python tokenizers wheel
+tokenizers = { version = "=0.22.2", default-features = false, features = ["onig"] }
+tokio = { version = "1.49.0", features = ["macros", "net", "rt-multi-thread", "sync"] }
