@@ -16,3 +16,23 @@ tokenizers = { version = "0.23.2", default-features = false, features = ["fancy-
 [dev-dependencies]
 sha2 = "0.10"
 tempfile = "3"
+
+[[test]]
+name = "checkpoint"
+path = "../../../tests/laya/checkpoint.rs"
+
+[[test]]
+name = "weights"
+path = "../../../tests/laya/weights.rs"
+
+[[test]]
+name = "preprocess"
+path = "../../../tests/laya/preprocess.rs"
+
+[[test]]
+name = "packing"
+path = "../../../tests/laya/packing.rs"
+
+[[test]]
+name = "decision"
+path = "../../../tests/laya/decision.rs"
