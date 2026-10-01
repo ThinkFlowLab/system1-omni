@@ -1,5 +1,10 @@
 # CUDA backend
 
+[`qwen3_5/`](qwen3_5/) provides the prefill-only Qwen3.5 operations used by the
+Cua-S1 native worker, measured on sm_89.
+
+## Laya resources
+
 `omni-cuda` loads Laya's CUDA resource library at runtime. It owns one device and
 stream per context, plus the buffers allocated through that context. Rust builds
 and CPU tests need no CUDA toolkit.
@@ -8,7 +13,7 @@ The resource library covers allocation, copies, synchronization and cleanup.
 `Kernels` loads operator code separately; model execution order belongs to Laya.
 Graphs and hardware-specific optimizations remain separate.
 
-## Build and check
+### Build and check
 
 On a machine with the CUDA toolkit, build the resource library:
 
@@ -26,7 +31,7 @@ The normal CPU tests compile a small C fixture with `cc`. They check the dynamic
 loader, errors, copy bounds and resource lifetime. They do not validate CUDA or
 hardware support. The ignored test exercises real allocation and copy roundtrips.
 
-## Ownership and ABI
+### Ownership and ABI
 
 Load only a trusted library with the matching ABI. `Cuda::load(path, device)`
 checks `laya_abi_version() == 1` and all required symbols before creating a stream.
