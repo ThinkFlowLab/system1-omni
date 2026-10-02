@@ -107,6 +107,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    from models.cua_s1.multimodal.graph_runtime import GraphConfig
     from models.cua_s1.multimodal.model import MultimodalEngine
 
     p = argparse.ArgumentParser(description=__doc__)
@@ -117,9 +118,29 @@ def main():
         "--adapter", required=True, help="verified local multimodal adapter directory"
     )
     p.add_argument("--port", type=int, default=8000)
+    p.add_argument(
+        "--graph", action="store_true", help="enable segmented CUDA Graph replay"
+    )
+    p.add_argument("--graph-max-shapes", type=int, default=8)
+    p.add_argument("--graph-max-memory-mib", type=int, default=1024)
+    p.add_argument("--graph-min-uses", type=int, default=2)
+    p.add_argument("--graph-max-tokens", type=int, default=2048)
     args = p.parse_args()
+    try:
+        graph_config = (
+            GraphConfig(
+                max_shapes=args.graph_max_shapes,
+                max_bytes=args.graph_max_memory_mib * 1024 * 1024,
+                min_uses=args.graph_min_uses,
+                max_tokens=args.graph_max_tokens,
+            )
+            if args.graph
+            else None
+        )
+    except ValueError as exc:
+        p.error(str(exc))
     logging.basicConfig(level=logging.INFO)
-    engine = MultimodalEngine(args.base, args.adapter)
+    engine = MultimodalEngine(args.base, args.adapter, graph_config=graph_config)
     engine.warmup()
     # Bind only after model loading and a representative inference succeed.
     server = WorkerServer(("127.0.0.1", args.port), engine)

@@ -61,6 +61,78 @@ fn from_device(buf: &DeviceBuffer, n: usize, st: Stream) -> Vec<f32> {
 
 #[test]
 #[ignore = "needs a GPU and CUA_S1_CUDA_LIB"]
+fn graph_replay_reads_updated_inputs_after_failed_capture() {
+    let st = setup();
+    // A failed recording must end capture so this stream can be captured again.
+    assert!(cuda::Graph::capture(st, || anyhow::bail!("recording failed")).is_err());
+    let table: Vec<bf16> = (0..24).map(|i| bf16::from_f32(i as f32)).collect();
+    let weights = to_device(&table, st);
+    let ids = DeviceBuffer::new(8).unwrap();
+    let output = DeviceBuffer::new(32).unwrap();
+    let embed = || {
+        // SAFETY: two int32 ids, three embedding rows of width eight, two output rows.
+        check(
+            unsafe { (api().cs1_embed)(ids.at(0).cast(), weights.at(0), output.at(0), 2, 8, st) },
+            "capture embed",
+        )
+    };
+    let graph = cuda::Graph::capture(st, embed).unwrap();
+    let assert_replay = |graph: &cuda::Graph, rows: [i32; 2]| {
+        let bytes: Vec<u8> = rows.iter().flat_map(|id| id.to_le_bytes()).collect();
+        // SAFETY: ids holds two int32 values; every id is a valid embedding row.
+        unsafe { cuda::upload(ids.at(0), &bytes, st).unwrap() };
+        graph.launch(st).unwrap();
+        let expected: Vec<f32> = rows
+            .iter()
+            .flat_map(|&row| (row * 8..row * 8 + 8).map(|i| i as f32))
+            .collect();
+        assert_eq!(from_device(&output, 16, st), expected);
+    };
+    for rows in [[0i32, 1], [2, 0], [1, 2]] {
+        assert_replay(&graph, rows);
+    }
+    // SAFETY: zero is CUDA's valid legacy default stream handle. Capturing it
+    // is unsupported and must report an error without poisoning this thread.
+    let default_stream: Stream = unsafe { std::mem::zeroed() };
+    assert_ne!(unsafe { (api().cs1_graph_begin)(default_stream) }, 0);
+    let recovered = cuda::Graph::capture(st, embed).unwrap();
+    assert_replay(&recovered, [0, 1]);
+    // SAFETY: a null graph handle deliberately exercises CUDA's argument error.
+    assert_ne!(
+        unsafe { (api().cs1_graph_launch)(std::ptr::null_mut(), st) },
+        0
+    );
+    let recovered = cuda::Graph::capture(st, embed).unwrap();
+    assert_replay(&recovered, [2, 0]);
+    for propagate in [true, false] {
+        let error = cuda::Graph::capture(st, || {
+            embed()?;
+            // Synchronizing a capturing stream invalidates the capture (900).
+            // EndCapture then reports 901, even if the closure returns Ok.
+            // SAFETY: st is a live stream created by setup.
+            let code = unsafe { (api().cs1_stream_sync)(st) };
+            assert_eq!(code, 900);
+            if propagate {
+                check(code, "invalidate capture")
+            } else {
+                Ok(())
+            }
+        })
+        .err()
+        .expect("synchronization must invalidate capture");
+        let expected_code = if propagate { "(900)" } else { "(901)" };
+        assert!(error.to_string().contains(expected_code), "{error}");
+
+        // Retained-graph replay and download do not consume CUDA's last error.
+        // Recapture must work on this same thread without clearing it here.
+        assert_replay(&graph, [2, 1]);
+        let recovered = cuda::Graph::capture(st, embed).unwrap();
+        assert_replay(&recovered, [0, 2]);
+    }
+}
+
+#[test]
+#[ignore = "needs a GPU and CUA_S1_CUDA_LIB"]
 fn flash_attention_matches_float64_reference() {
     let st = setup();
     let (hq, hk, dh) = (16usize, 4usize, 256usize);

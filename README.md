@@ -49,7 +49,7 @@ Implementation code lives under `src/`; recipes and documentation stay at the re
 | [`recipe/`](recipe/) | Model setup instructions, launch commands, configuration examples, and example requests. |
 | [`docs/`](docs/) | Project documentation and architecture assets. |
 
-The frontend and the Cua-S1 native worker are Cargo workspace members. The other model and backend directories currently document planned work; they do not prescribe process boundaries.
+The frontend, Cua-S1 native worker and Laya checkpoint reader are Cargo workspace members. The other model and backend directories currently document planned work; they do not prescribe process boundaries.
 
 ## Supported models
 
@@ -57,10 +57,16 @@ LAYA can run as an external Python worker for text requests; its in-repository m
 
 | Model | Status |
 | --- | --- |
-| LAYA | [External worker](recipe/laya/README.md); model engine planned |
+| LAYA | [External worker](recipe/laya/README.md); [CPU checkpoint reader](src/models/laya/README.md); model execution planned |
 | Cua-S1 4B 0.2 (`text` adapter) | [Python worker](recipe/cua_s1/text.md); [native worker](recipe/cua_s1/native.md), CUDA, run on sm_89 |
 
 CUDA and Metal coverage will be documented per model as implementations are added and validated.
+
+## Benchmarks
+
+See the [GPU serving benchmark](benchmarks/README.md) for request replay,
+output-fidelity checks, and the CUDA comparison protocol. GPU performance
+measurements are pending.
 
 ## Stay Tuned with Us
 

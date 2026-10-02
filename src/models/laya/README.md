@@ -4,4 +4,21 @@ LAYA is the first planned System1-Omni model. This directory owns its complete r
 
 GPU operations and kernel implementations belong in [`backends/cuda/`](../../backends/cuda/) and [`backends/metal/`](../../backends/metal/). Setup and usage examples belong in the top-level [`recipe/`](../../../recipe/) directory.
 
-Status: planned; no model implementation or validated GPU backend support yet.
+The `omni-laya` crate currently reads and checks the English Laya 0.3.20 checkpoint. `Config::load` validates the architecture and temperatures; `Weights` checks tensor names and shapes and converts FP32, FP16 and BF16 values. `checkpoint_tensors()` lists the 206 expected tensors. Each backend chooses its own storage precision.
+
+Keep checkpoint files unchanged while `Weights` holds a read-only memory mapping. This crate does not yet execute inference.
+
+## CPU checks
+
+The normal workspace tests cover configuration errors, malformed tensors, inventory mismatches and conversion boundaries without downloading weights.
+
+To check the complete checkpoint, use `convaiinnovations/laya` revision `55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851` and a Python environment with PyTorch, safetensors and NumPy:
+
+```sh
+export LAYA_CHECKPOINT=/path/to/laya/snapshot
+export LAYA_WEIGHT_ORACLE=/tmp/laya-weight-oracle.json
+python recipe/laya/native/export_weights.py "$LAYA_CHECKPOINT" "$LAYA_WEIGHT_ORACLE"
+cargo test --release --locked -p omni-laya --test weights -- --ignored
+```
+
+These two CPU tests check all 206 tensor names and shapes, 618 conversion hashes, and the legacy temperature buffer. The normal CI job skips them because it does not download the full checkpoint.
