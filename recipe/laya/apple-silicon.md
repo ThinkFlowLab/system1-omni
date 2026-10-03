@@ -45,11 +45,11 @@ launcher reads do not: device, model, host, port and log level are the flags abo
 Laya loads another checkpoint when a request names it (`"model": "multilingual"`) or its routing picks it
 (a non-English state). The worker prepares that checkpoint the same way inside that first request; other
 requests wait behind it, `/health` names it under `preparing` meanwhile and lists it afterwards. On the
-M1 Pro that first request took about 5–10 s without the options and about 70 s with `--compile` (plus the
-download the first time, 680 MB for `multilingual`). The frontend gives a backend 60 s, so with `--compile`
-it answered that request with 504 while the worker finished preparing; the same request sent again then
-took 35 ms. To avoid that, send one request for each further checkpoint straight to the worker after
-startup. Each resident checkpoint needs its own memory (see Troubleshooting).
+M1 Pro that first request took 5–10 s without the options and 19–22 s with `--compile` (plus the download
+the first time, 680 MB for `multilingual`). Under heavy load it once took 71 s; the frontend gives a
+backend 60 s, so it answered that request with 504 while the worker finished preparing, and the same
+request sent again took 35 ms. To be safe, send one request for each further checkpoint straight to the
+worker after startup. Each resident checkpoint needs its own memory (see Troubleshooting).
 
 With `--require-device`, a checkpoint that does not land on the requested device is unloaded again and
 the request fails with 500. If Laya evicted another checkpoint to make room for it (it keeps two by
@@ -67,7 +67,7 @@ dtype Laya uses for requests with at least `mps_amp_min_rows` questions, and the
 and dtypes are read on every call: if a request runs out of GPU memory, Laya moves the model to the CPU
 and keeps serving, and `/health` then shows `device: cpu` and `device_mismatch: true`. Triggered on the
 M1 Pro by lowering PyTorch's MPS memory limit: the request that ran out of memory still returned 200
-after about 30 s, and later 68-token requests took 140–270 ms from the CPU.
+after 30–73 s, and later 68-token requests took 140–270 ms from the CPU.
 
 ### Faster: compile and fp16 weights
 
@@ -168,7 +168,8 @@ LAYA_CONTRACT=1 LAYA_CONTRACT_DEVICE=mps LAYA_CONTRACT_FLAGS="--compile --weight
 ## Benchmark
 
 Stop the worker and frontend first; the benchmark starts its own. The scripts are listed in
-[`benchmarks/laya_mps/`](../../benchmarks/laya_mps/README.md). A first pass that checks everything runs:
+[`benchmarks/laya_mps/`](../../benchmarks/laya_mps/README.md), which also lists the command behind each
+number in this recipe. A first pass that checks everything runs:
 
 ```sh
 .venv/bin/python benchmarks/laya_mps/bench_inproc.py --device mps --config C2 --run feasibility

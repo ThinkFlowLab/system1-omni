@@ -77,57 +77,64 @@ DOCUMENTS = [
     "benchmarks/laya_mps/README.md",
     "src/models/laya/README.md",
 ]
+BENCH_SCRIPTS = (
+    "bench_http",
+    "bench_inproc",
+    "paired",
+    "profile_mps",
+    "report",
+    "lengths",
+)
+BENCH_SCRIPTS += ("late_load", "fallback")
 SCRIPTS = {
     "frontend.laya_mps": "src/frontend/laya_mps.py",
-    **{f"benchmarks/laya_mps/{name}.py": f"benchmarks/laya_mps/{name}.py"
-       for name in ("bench_http", "bench_inproc", "paired", "profile_mps", "report")},
-}  # fmt: skip
+    **{f"{name}.py": f"benchmarks/laya_mps/{name}.py" for name in BENCH_SCRIPTS},
+}
 
 
 def documented_commands():
+    """Commands in sh blocks, and inline ones in tables such as the reproduction index."""
     import re
 
     for document in DOCUMENTS:
         text = (REPO / document).read_text()
+        lines = []
         for block in re.findall(r"```sh\n(.*?)```", text, flags=re.S):
-            for command in block.replace("\\\n", " ").splitlines():
-                for name, source in SCRIPTS.items():
-                    if name in command:
-                        yield document, command, name, source
+            lines += block.replace("\\\n", " ").splitlines()
+        prose = re.sub(r"```.*?```", "", text, flags=re.S)
+        lines += re.findall(r"`([^`\n]*\.py --[^`\n]*)`", prose)
+        for command in lines:
+            for name, source in SCRIPTS.items():
+                if re.search(rf"(^|[/ ]){re.escape(name)}( |$)", command):
+                    yield document, command, name, source
+
+
+def options_of(source):
+    import re
+
+    text = (REPO / source).read_text()
+    return set(re.findall(r'add_argument\(\s*"(--?[a-z][a-z-]*)"', text))
 
 
 def test_documented_commands_use_flags_and_files_that_exist():
     import re
 
     commands = list(documented_commands())
-    assert len(commands) >= 15
+    assert len(commands) >= 25
+    worker = options_of(SCRIPTS["frontend.laya_mps"])
     for document, command, name, source in commands:
         assert (REPO / source).exists(), f"{document}: {source}"
-        options = set(
-            re.findall(
-                r'add_argument\(\s*"(--?[a-z][a-z-]*)"', (REPO / source).read_text()
+        ours = command.split(name, 1)[1].split("--spawn")[0]
+        # --a/--b/--flags carry the worker's flags: check those against the worker
+        passed = re.findall(r'--(?:a|b|flags)(?: "([^"]*)"|=(\S+))', ours)
+        for value in (quoted or bare for quoted, bare in passed):
+            assert set(re.findall(r"--[a-z-]+", value)) <= worker, (
+                f"{document}: {command}"
             )
-        )
-        ours = (
-            command.split("--spawn")[0]
-            if name.endswith(".py")
-            else command.split(name, 1)[1]
-        )
-        if name == "benchmarks/laya_mps/paired.py":
-            ours = re.sub(
-                r'"[^"]*"', "", ours
-            )  # --a/--b carry flags of the worker, checked below
-            for worker_flags in re.findall(r'--[ab] "([^"]*)"', command):
-                assert set(re.findall(r"--[a-z-]+", worker_flags)) <= set(
-                    re.findall(
-                        r'add_argument\(\s*"(--[a-z-]+)"',
-                        (REPO / SCRIPTS["frontend.laya_mps"]).read_text(),
-                    )
-                ), f"{document}: {command}"
+        ours = re.sub(r'(--(?:a|b|flags))(?: "[^"]*"|=\S+)', r"\1", ours)
         used = set(re.findall(r"(?<![\w-])(--[a-z][a-z-]*)", ours))
-        assert used <= options, (
-            f"{document}: {command}: unknown {sorted(used - options)}"
-        )
+        unknown = sorted(used - options_of(source))
+        assert not unknown, f"{document}: {command}: unknown {unknown}"
 
 
 def test_the_header_degrades_to_none_where_macos_tools_are_missing(monkeypatch):
@@ -224,3 +231,50 @@ def test_paired_summary_reports_answers_of_different_shape(tmp_path, capsys):
         tmp_path, capsys, {"q": CHOICE_ANSWER}, {"q": {"type": "noul", "noul": 0.9}}
     )
     assert "errors ['W1/q']" in out
+
+
+# --------------------------------------------------------------------------------------------- lengths.py
+import lengths  # noqa: E402
+
+
+def test_new_lengths_skip_the_warmup_lengths():
+    assert lengths.lengths(2, 4, 3) == [2, 6, 14]  # 10 is a warmup length
+    assert lengths.lengths(146, 4, 2) == [146, 154]  # and so is 150
+    assert len(set(lengths.lengths(37, 4, 477))) == 477
+
+
+def test_lengths_summary_reports_extra_time_and_memory_per_side(tmp_path, capsys):
+    records = [
+        {"type": "env", "run": "x", "a": "plain", "b": "fast", "loadavg_1m": 1.0}
+    ]
+    for side, extra in (("A", 5.0), ("B", 15.0)):
+        records += [
+            {"type": "length", "side": side, "words": w, "tokens": w + 27,
+             "first_ms": 40.0 + extra, "again_ms": 40.0}
+            for w in (37, 41, 45)
+        ]  # fmt: skip
+    records.append(
+        {
+            "type": "end",
+            "footprint_before_mb": {"A": 3400, "B": 2700},
+            "footprint_after_mb": {"A": 3410, "B": 2716},
+            "recompiled_after_ready": {"A": None, "B": False},
+        }
+    )
+    path = tmp_path / "lengths_x.jsonl"
+    path.write_text("\n".join(json.dumps(r) for r in records))
+    lengths.summarize([str(path)])
+    out = capsys.readouterr().out
+    assert "| A | `plain` | 3 | 5.0 (5.0) | 3400 → 3410 | None |" in out
+    assert "| B | `fast` | 3 | 15.0 (15.0) | 2700 → 2716 | False |" in out
+
+
+def test_paired_summary_says_how_requests_were_paced(tmp_path, capsys):
+    both = {"q": CHOICE_ANSWER}
+    assert "back to back" in summary_of(tmp_path, capsys, both, both)
+    path = tmp_path / "paired_x.jsonl"
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    records[0]["gap_s"] = 2.0
+    path.write_text("\n".join(json.dumps(r) for r in records))
+    paired.summarize([str(path)])
+    assert "2.0 s idle before each request" in capsys.readouterr().out

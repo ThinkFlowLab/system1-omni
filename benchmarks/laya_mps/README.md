@@ -9,6 +9,9 @@ JSONL to `results/` (kept out of the repository); `report.py` builds the tables 
 | `bench_inproc.py` | Laya in-process (no HTTP): load, warmup, first request, warm latency, memory |
 | `bench_http.py` | a `/v1/systemone` server, optionally started by the script and optionally behind the frontend: time to ready, first request, warm latency, throughput |
 | `paired.py` | two configurations compared request by request, both alive at once: two worker flag sets, or two running servers (e.g. a worker directly and through the frontend) |
+| `lengths.py` | first request of new input lengths and the memory it adds, for one or two worker flag sets |
+| `late_load.py` | a checkpoint loaded while serving: its first request directly and through the frontend |
+| `fallback.py` | Laya's fallback to the CPU on a GPU out-of-memory error, triggered by a lowered MPS memory limit |
 | `profile_mps.py` | where a request's time goes on MPS |
 | `report.py` | tables from the JSONL, including the run-to-run gate and the answer comparison against a reference config |
 | `env.py` | shared: versions, checkpoint, hardware, power and load recorded with each run; memory footprint |
@@ -42,6 +45,32 @@ python benchmarks/laya_mps/paired.py --run p1 --a "" --b "--compile --weights fp
 python benchmarks/laya_mps/paired.py --run f1 --a-url http://127.0.0.1:8000 --b-url http://127.0.0.1:8080
 python benchmarks/laya_mps/paired.py --summarize benchmarks/laya_mps/results/paired_p1.jsonl
 ```
+
+## Reproduce every number in the recipe
+
+Each claim in the [recipe](../../recipe/laya/apple-silicon.md) comes from one of these commands. A
+rerun on another Mac, or under different load, gives other numbers; the comparison each command makes
+(A against B in the same run) is what carries over. Paired runs need no idle machine for that reason;
+separate runs (`bench_*.py`) do, and refuse a measured run without it.
+
+| recipe claim | command |
+| --- | --- |
+| checkpoint download time | `HF_HOME="$(mktemp -d)" python -c "import time, huggingface_hub as h; t = time.time(); h.snapshot_download('convaiinnovations/laya', allow_patterns=['rl_agent_config.json', 'model.safetensors', 'tokenizer/*', 'encoder/*']); print(f'{time.time() - t:.0f} s')"` |
+| first request after ready, time to ready, memory: worker against laya-serve, with and without the options | `bench_http.py` C3, C3w and C3o above, then `report.py` (phases and memory tables) |
+| warm latency and answers, with the options against without | `paired.py --run p1 --a "" --b "--compile --weights fp16"` |
+| what each option contributes | `paired.py --run p2 --a "" --b=--compile` and `paired.py --run p3 --a=--compile --b "--compile --weights fp16"` |
+| frontend overhead | start a worker on 8000 and the frontend on 8080 as in the recipe, then `paired.py --run f1 --a-url http://127.0.0.1:8000 --b-url http://127.0.0.1:8080` |
+| a request after an idle gap | `paired.py --run i1 --a "" --b "--compile --weights fp16" --gap 2 --only W1 -n 30 --discard 2` (also `--gap 0.5`) |
+| first request of a new input length; memory growth with the lengths seen | `lengths.py --run l1 --a "" --b "--compile --weights fp16"` (`--lengths 477` for all lengths up to the window) |
+| a checkpoint loaded while serving, directly and through the frontend | `late_load.py --flags "--compile --weights fp16" --frontend target/release/omni-jev`, and without `--flags` |
+| fallback to the CPU on a GPU out-of-memory error | `fallback.py --limit-gb 3.5`, and `--limit-gb 2.5 --flags "--compile --weights fp16"` |
+| where the time goes | `profile_mps.py --run p1` |
+| two commits compared | start each worker from its own checkout on its own port, then `paired.py --a-url ... --b-url ...` |
+
+All scripts are run as `python benchmarks/laya_mps/<script>` from the repository root; `--summarize`
+rebuilds a paired or lengths table from its JSONL. The published paired runs were made with the earlier
+environment-variable form of the options (`LAYA_WORKER_COMPILE=on LAYA_WORKER_WEIGHTS=fp16`), which the
+flags replace one for one.
 
 ## Results
 

@@ -3,12 +3,16 @@ back to back, alternating which goes first, so background load that shifts both 
 
     python benchmarks/laya_mps/paired.py --run p1 --a "" --b "--compile --weights fp16"
     python benchmarks/laya_mps/paired.py --run f1 --a-url http://127.0.0.1:8000 --b-url http://127.0.0.1:8080
+    python benchmarks/laya_mps/paired.py --run i1 --a "" --b "--compile --weights fp16" \
+        --gap 2 --only W1 -n 30 --discard 2
     python benchmarks/laya_mps/paired.py --summarize benchmarks/laya_mps/results/paired_p1.jsonl
 
 `--a`/`--b` are extra flags for `frontend.laya_mps`, which the script starts on MPS with the english
 model; `--a-url`/`--b-url` compare two servers that are already running (e.g. a worker directly and
 through the Rust frontend). The summary reports, per input, the median of the per-pair ratio B/A with a
-95% bootstrap interval, and B's answers against A's.
+95% bootstrap interval, and B's answers against A's. With `--gap`, every request follows that many
+seconds of idle on a fresh connection, as an agent asking now and then would see it; without it, requests
+are back to back.
 """
 
 import argparse
@@ -20,6 +24,7 @@ import shlex
 import statistics
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -53,13 +58,27 @@ def spawn(flags, port, python, model, log_path):
     )
 
 
+def stop(processes):
+    for p in processes:
+        p.terminate()
+    for p in processes:
+        try:
+            p.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            p.kill()
+
+
 def run(args):
     problems = noise_problems(args.max_load)
     if problems and args.run != "feasibility":
         sys.exit("refusing a measured run: " + "; ".join(problems))
     with open(args.workloads) as f:
         workloads = [json.loads(line) for line in f if line.strip()]
-    bench = [w for w in workloads if w["kind"] == "bench"]
+    bench = [
+        w
+        for w in workloads
+        if w["kind"] == "bench" and (not args.only or w["id"] in args.only)
+    ]
     parity = [w for w in workloads if w["kind"] == "parity"]
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -102,6 +121,7 @@ def run(args):
                     n=args.n,
                     discard=args.discard,
                     seed=args.seed,
+                    gap_s=args.gap,
                     health=health,
                     noise=problems,
                 )
@@ -128,6 +148,11 @@ def run(args):
                     first, second = ("A", "B") if i % 2 == 0 else ("B", "A")
                     ms = {}
                     for s in (first, second):
+                        if args.gap:
+                            clients[
+                                s
+                            ].close()  # uvicorn drops keep-alive after 5 s idle
+                            time.sleep(args.gap)
                         try:
                             t, status, _ = clients[s].request(
                                 "POST", "/v1/systemone", body
@@ -161,13 +186,7 @@ def run(args):
                 }
             )
     finally:
-        for p in procs.values():
-            p.terminate()
-        for p in procs.values():
-            try:
-                p.wait(timeout=30)
-            except subprocess.TimeoutExpired:
-                p.kill()
+        stop(list(procs.values()))
     print(out_dir / f"paired_{args.run}.jsonl")
 
 
@@ -205,8 +224,11 @@ def summarize(paths):
         with open(path) as f:
             records = [json.loads(line) for line in f if line.strip()]
         env = next(r for r in records if r["type"] == "env")
+        gap = env.get("gap_s")
+        pacing = f"{gap} s idle before each request" if gap else "back to back"
         print(
-            f"## {env['run']}: A = `{env['a']}`, B = `{env['b']}`, load at start {env['loadavg_1m']}\n"
+            f"## {env['run']}: A = `{env['a']}`, B = `{env['b']}`, {pacing}, "
+            f"load at start {env['loadavg_1m']}\n"
         )
         print(
             "| input | pairs | A p50 ms | B p50 ms | median B/A | 95% interval |\n|---|---|---|---|---|---|"
@@ -301,6 +323,10 @@ def main():
     parser.add_argument("-n", type=int, default=300, help="timed pairs per input")
     parser.add_argument("--discard", type=int, default=20)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--gap", type=float, default=0, help="seconds of idle before every request"
+    )
+    parser.add_argument("--only", nargs="*", help="bench workload ids (default: all)")
     parser.add_argument("--ready-timeout", type=float, default=900)
     parser.add_argument("--max-load", type=float, default=2.0)
     parser.add_argument("--out", default=str(HERE / "results"))
