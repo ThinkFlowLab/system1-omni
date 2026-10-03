@@ -3,6 +3,35 @@
 Review the [README](README.md) for the project's architecture and current
 implementation status before making changes.
 
+## Adding a model
+
+Keep model-specific preprocessing, execution and response formatting under
+`src/models/<model>/`; reusable hardware operations belong under `src/backends/`.
+Share serving infrastructure and extract shared model execution when multiple
+implementations need it.
+
+All test bodies, test helpers and fixtures belong in the repository-level
+`tests/` tree. Do not add inline test bodies or crate-local `tests/` directories
+under `src/`. Register Rust integration tests with explicit `[[test]]` paths in
+the crate manifest. For tests of private items, only the `#[cfg(test)]` and
+external module-path wiring may remain in `src/`; the test implementation stays
+under root `tests/`. Existing tests under `src/` do not change this rule for new
+contributions.
+
+Document the model contract in `src/models/<model>/README.md` and setup, launch,
+example requests and validation in `recipe/<model>/`. Update the root README's
+supported-model status, `recipe/README.md` and the documentation navigation in
+`mkdocs.yml`. Update affected shared-component documentation when build or ABI
+requirements change, and state support and validation limits explicitly.
+
+For agent-assisted implementation, use the
+[add-new-model skill](.agents/skills/add-new-model/SKILL.md). For example:
+
+```text
+Read .agents/skills/add-new-model/SKILL.md and use it to add support for this
+model. Keep all tests under root tests/ and update the model docs and recipes.
+```
+
 ## Self-review before requesting review
 
 Self-review your PR before marking it ready for review or requesting maintainer

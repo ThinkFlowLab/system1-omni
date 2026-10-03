@@ -13,7 +13,7 @@
 #include <stdint.h>
 
 // Bumped whenever a signature below changes.
-#define CS1_ABI_VERSION 2
+#define CS1_ABI_VERSION 3
 
 #ifdef __cplusplus
 extern "C" {
@@ -28,6 +28,10 @@ int cs1_malloc(void** ptr, size_t bytes);
 int cs1_free(void* ptr);
 int cs1_stream_create(void** stream);
 int cs1_stream_sync(void* stream);
+int cs1_graph_begin(void* stream);
+int cs1_graph_end(void* stream, void** exec);
+int cs1_graph_launch(void* exec, void* stream);
+int cs1_graph_destroy(void* exec);
 // Copy and wait for the copy.
 int cs1_upload(void* dst, const void* src, size_t bytes, void* stream);
 int cs1_download(void* dst, const void* src, size_t bytes, void* stream);
