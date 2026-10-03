@@ -38,6 +38,31 @@ def unavailable_reason(library):
     return None
 
 
+def gpu_name():
+    """The first device's name, or None when there is none."""
+    probe = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+                           capture_output=True, text=True)
+    if probe.returncode != 0 or not probe.stdout.strip():
+        return None
+    return probe.stdout.strip().splitlines()[0]
+
+
+def provenance():
+    """What the numbers are attached to: device, driver, CUDA toolkit, nvcc."""
+    out = {"gpu": gpu_name()}
+    probe = subprocess.run(["nvidia-smi", "--query-gpu=driver_version",
+                            "--format=csv,noheader"], capture_output=True, text=True)
+    if probe.returncode == 0 and probe.stdout.strip():
+        out["driver"] = probe.stdout.strip().splitlines()[0]
+    nvcc = shutil.which("nvcc") or "/usr/local/cuda/bin/nvcc"
+    if os.path.exists(nvcc):
+        version = subprocess.run([nvcc, "--version"], capture_output=True, text=True)
+        for line in version.stdout.splitlines():
+            if "release" in line:
+                out["nvcc"] = line.strip()
+    return out
+
+
 def load_runtime():
     """The CUDA runtime, for device memory.
 
@@ -191,6 +216,89 @@ def rejection_checks(lib, runtime):
     return results
 
 
+def graph_checks(lib, runtime, questions=4, k=17, d=64, seed=7):
+    """Capture one launch into a CUDA Graph, replay it, and compare with a direct call.
+
+    The ABI is written for capture: it queues on the caller's stream and does not
+    synchronize. So a capture must see exactly one node, and a replay must produce
+    the same probabilities as the same call made directly -- not merely within
+    tolerance, but identical, because the kernel has no atomics and its reduction
+    order is fixed.
+    """
+    for name, argtypes in (
+        ("cudaStreamCreate", [ctypes.POINTER(ctypes.c_void_p)]),
+        ("cudaStreamBeginCapture", [ctypes.c_void_p, ctypes.c_int]),
+        ("cudaStreamEndCapture", [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]),
+        ("cudaGraphGetNodes", [ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_size_t)]),
+        ("cudaGraphInstantiate", [ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p,
+                                  ctypes.c_ulonglong]),
+        ("cudaGraphLaunch", [ctypes.c_void_p, ctypes.c_void_p]),
+        ("cudaGraphExecDestroy", [ctypes.c_void_p]),
+        ("cudaGraphDestroy", [ctypes.c_void_p]),
+        ("cudaStreamDestroy", [ctypes.c_void_p]),
+    ):
+        getattr(runtime, name).argtypes = argtypes
+        getattr(runtime, name).restype = ctypes.c_int
+
+    rng = np.random.default_rng(seed)
+    q = np.ascontiguousarray(rng.standard_normal((questions, d)), dtype=np.float32)
+    c = np.ascontiguousarray(rng.standard_normal((questions, k, d)), dtype=np.float32)
+    direct = np.zeros((questions, k), dtype=np.float32)
+    replayed = np.zeros((questions, k), dtype=np.float32)
+    spec = reference.ScoreSpec(scale=0.0625, temperature=1.5)
+
+    device = {}
+    stream, graph, graph_exec = ctypes.c_void_p(), ctypes.c_void_p(), ctypes.c_void_p()
+    try:
+        for name, array in (("q", q), ("c", c), ("direct", direct), ("replayed", replayed)):
+            pointer = ctypes.c_void_p()
+            check(runtime, runtime.cudaMalloc(ctypes.byref(pointer), array.nbytes),
+                  "cudaMalloc(%s)" % name)
+            device[name] = pointer
+        check(runtime, runtime.cudaMemcpy(device["q"], q.ctypes.data, q.nbytes, 1), "copy q")
+        check(runtime, runtime.cudaMemcpy(device["c"], c.ctypes.data, c.nbytes, 1), "copy c")
+        check(runtime, runtime.cudaStreamCreate(ctypes.byref(stream)), "cudaStreamCreate")
+
+        def score(out, on_stream):
+            return lib.cs_score_candidates_batch(
+                device["q"], device["c"], device[out], None, int(questions), int(k), int(d),
+                ctypes.c_float(spec.scale), ctypes.c_float(spec.temperature), 1, on_stream)
+
+        check(runtime, score("direct", None), "direct cs_score_candidates_batch")
+        check(runtime, runtime.cudaDeviceSynchronize(), "sync after the direct call")
+
+        # cudaStreamCaptureModeThreadLocal = 1: only this thread's work is captured.
+        check(runtime, runtime.cudaStreamBeginCapture(stream, 1), "cudaStreamBeginCapture")
+        check(runtime, score("replayed", stream), "cs_score_candidates_batch under capture")
+        check(runtime, runtime.cudaStreamEndCapture(stream, ctypes.byref(graph)),
+              "cudaStreamEndCapture")
+
+        nodes = ctypes.c_size_t()
+        check(runtime, runtime.cudaGraphGetNodes(graph, None, ctypes.byref(nodes)),
+              "cudaGraphGetNodes")
+        check(runtime, runtime.cudaGraphInstantiate(ctypes.byref(graph_exec), graph,
+                                                    ctypes.c_ulonglong(0)), "cudaGraphInstantiate")
+        check(runtime, runtime.cudaGraphLaunch(graph_exec, stream), "cudaGraphLaunch")
+        check(runtime, runtime.cudaDeviceSynchronize(), "sync after the replay")
+
+        check(runtime, runtime.cudaMemcpy(direct.ctypes.data, device["direct"], direct.nbytes, 2),
+              "copy the direct result out")
+        check(runtime, runtime.cudaMemcpy(replayed.ctypes.data, device["replayed"],
+                                          replayed.nbytes, 2), "copy the replayed result out")
+    finally:
+        if graph_exec.value:
+            runtime.cudaGraphExecDestroy(graph_exec)
+        if graph.value:
+            runtime.cudaGraphDestroy(graph)
+        if stream.value:
+            runtime.cudaStreamDestroy(stream)
+        for pointer in device.values():
+            runtime.cudaFree(pointer)
+
+    return int(nodes.value), float(np.abs(direct.astype(np.float64)
+                                          - replayed.astype(np.float64)).max())
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--library", default=DEFAULT_LIBRARY)
@@ -241,6 +349,15 @@ def main(argv=None):
         if not ok:
             failures.append("not rejected: %s" % name)
         print("%s %-20s returned %d" % ("ok " if ok else "FAIL", name, status))
+
+    print()
+    print("--- CUDA Graph capture and replay ---")
+    nodes, graph_difference = graph_checks(lib, runtime)
+    graphs_ok = nodes == 1 and graph_difference == 0.0
+    if not graphs_ok:
+        failures.append("graph: %d node(s), max_abs=%.3e" % (nodes, graph_difference))
+    print("%s captured %d node, replay matches the direct call exactly (max_abs=%.3e)"
+          % ("ok " if graphs_ok else "FAIL", nodes, graph_difference))
 
     print("\nworst absolute difference: %.3e (tolerance %g)" % (worst, args.tolerance))
     if failures:

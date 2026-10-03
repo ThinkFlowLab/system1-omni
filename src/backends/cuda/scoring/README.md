@@ -19,14 +19,19 @@ and `#27` describes Kev's as `scale * (k(h_opts) @ q(h_decide))` with
 
 ## What is fused, precisely
 
-Not merely "fewer launches". When the similarity is a cosine, each candidate's
-norm and its dot with the query need **the same elements**, so both accumulate in
-a single read of `C`. For Kev that is 255 rows of 2560 floats read twice per
-question in the unfused version and once here. Beyond that:
+Not merely "fewer launches". When the similarity is a cosine — CLM's case, not
+Kev's, which is a plain dot — each candidate's norm and its dot with the query
+need **the same elements**, so both accumulate in a single read of `C`. The
+unfused version composes a normalisation pass with a scoring pass and reads `C`
+twice; at CLM's widest, 255 candidates of 512 floats, that is 522 KB per question
+read twice and once here. Beyond that:
 
-- One thread block per question; the stable softmax runs over shared memory, so
-  there is no second kernel, no atomics, and no global round trip for the
-  similarities.
+- One thread block per question, 1024 threads; the stable softmax runs over
+  shared memory, so there is no second kernel, no atomics, and no global round
+  trip for the similarities. The block size is not cosmetic — see
+  [the benchmark](../../../docs/benchmarks/scoring-fusion/README.md), where 256
+  threads made the fusion a **loss** at every shape that mattered and 1024
+  threads made it a 1.8x win.
 - `K ≤ 255` (the serving API's limit), which is what makes the in-block softmax
   possible at all — the whole similarity vector fits in shared memory.
 - A batch is a grid over questions, not a loop of launches.
@@ -40,6 +45,8 @@ The query norm is computed once per block rather than once per candidate.
 | `reference.py` | The oracle: float64, deliberately slow and obvious | **yes**, 17 tests |
 | `kernel_simulation.py` | The kernel's algorithm in numpy: float32, warp tree order, same norm flooring | **yes** |
 | `candidate_scoring.cu` | The kernel and its C ABI | **yes**, compiled and checked against the reference on sm_89 |
+| `bench.cu` | The unfused baseline the kernel is measured against | **yes**, timed on sm_89 |
+| `bench.py` | Drives both and writes the report | **yes** |
 
 ## Verification state
 
@@ -109,6 +116,20 @@ good as its fidelity, and the hardware is what settles it.
 **1.835e-07**, so the declared bound has 545x of headroom and a failure is a real
 failure rather than tolerance noise. Declared in `scoring.backend.json`.
 
+## What the fusion is worth
+
+Measured against an unfused baseline that reads the candidate matrix twice, at
+1024 threads: **1.22x** at CLM's narrowest shape, **1.51x** at 64 candidates and
+**1.79x** to **1.84x** at 255. Kev's plain dot, which has no norm to fuse, lands
+at the same **1.81x** from the second kernel and the global similarity round trip
+it does not need.
+
+The measurement also found a defect the correctness checks could not: at the 256
+threads this kernel was first written with, a one-question request occupies one of
+the 128 SMs, and the norm accumulation sat on that block's critical path — so the
+fusion *lost*, down to 0.57x on Kev's shape. Protocol, both result sets and the
+limits are in [the benchmark](../../../docs/benchmarks/scoring-fusion/README.md).
+
 ## Reproducing
 
 On a machine with `nvcc` and an NVIDIA GPU:
@@ -117,6 +138,7 @@ On a machine with `nvcc` and an NVIDIA GPU:
 src/backends/cuda/scoring/build.sh ./out 89   # or CUDA_ARCH_LIST="80 89 90"
 python3 src/backends/cuda/scoring/gpu_parity.py --library ./out/libscoring.so
 python3 src/backends/cuda/scoring/test_scoring.py   # the reference, on CPU
+python3 src/backends/cuda/scoring/bench.py --library ./out/libscoring.so   # compiled kernel vs baseline
 ```
 
 The inputs are not committed. They are deterministic from a fixed seed, so the

@@ -32,7 +32,7 @@
 namespace {
 
 constexpr int WARP = 32;
-constexpr int THREADS = 256;
+constexpr int THREADS = 1024;
 constexpr int MAX_K = 255;      // the largest candidate set the serving API allows
 constexpr float NORM_EPS = 1e-12f;
 
