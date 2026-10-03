@@ -1,0 +1,19 @@
+[package]
+name = "omni-clm"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "CLM: projection heads, typed decision scoring and the embeddings client"
+
+[dependencies]
+anyhow = "1"
+# The embeddings payload is base64 f32; reqwest already pulls this in, so it is free.
+base64 = "0.22"
+memmap2 = "0.9"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+safetensors = "0.6"
+serde = { version = "1", features = ["derive"] }
+# preserve_order keeps object key order, which to_text depends on: the heads are
+# trained on the caller's field order, so re-sorting a state would change the text.
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
