@@ -25,16 +25,21 @@ from bench_http import Client, body_for, wait_ready  # noqa: E402
 from env import footprint_mb, header, read_workloads, refuse_if_noisy  # noqa: E402
 from paired import CHECKPOINT, spawn, stop  # noqa: E402
 
-from models.laya.engine import WARMUP_SHAPES  # noqa: E402
+from models.laya import engine  # noqa: E402
 
 
 def warmup_lengths(tokens_of):
-    """The input lengths the warmup ran, as `tokens_of(state, questions)` reports them."""
-    return {
-        tokens_of(" ".join(["refund"] * words), questions)
-        for words, questions in WARMUP_SHAPES
-        if len(questions) == 1
-    }
+    """The input lengths the warmup ran: its one-question requests, sent through `tokens_of(state, questions)`."""
+    seen = set()
+
+    class Replay:
+        def predict(self, state, questions, model=None):
+            if len(questions) == 1:
+                seen.add(tokens_of(state, questions))
+            return {}
+
+    engine.warmup(Replay(), None, repeats=1)
+    return seen
 
 
 def measure(sides, request, first_words, step, count, seen, emit):

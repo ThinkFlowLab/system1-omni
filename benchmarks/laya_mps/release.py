@@ -111,12 +111,20 @@ def main():
     import torch
 
     question = read_workloads(args.workloads)["W1"]["questions"]
-    router = prepare(args)
+    try:
+        router = prepare(args)
+    except RuntimeError as exc:
+        sys.exit(str(exc))
 
     def ask(state, questions):
         return router.predict(state, questions, model=args.model)["usage"][
             "input_tokens"
         ]
+
+    def release():
+        # buffers of work still running on the GPU cannot be released
+        torch.mps.synchronize()
+        torch.mps.empty_cache()
 
     def run(words):
         started = time.perf_counter()
@@ -126,7 +134,7 @@ def main():
     result = measure(
         run,
         lambda: footprint_mb()["footprint_mb"],
-        torch.mps.empty_cache,
+        release,
         args.first_words,
         args.step,
         args.lengths,

@@ -518,8 +518,6 @@ def must_not_start(*args, **kwargs):
 def test_a_measured_run_is_refused_on_a_noisy_machine(monkeypatch, script, argv):
     import importlib
 
-    import laya
-
     module = importlib.import_module(script)
     monkeypatch.setattr(
         bench_env, "noise_problems", lambda max_load: ["on Battery Power"]
@@ -527,7 +525,6 @@ def test_a_measured_run_is_refused_on_a_noisy_machine(monkeypatch, script, argv)
     for name in ("spawn", "prepare"):
         monkeypatch.setattr(module, name, must_not_start, raising=False)
     monkeypatch.setattr(subprocess, "run", must_not_start)
-    monkeypatch.setattr(laya, "load", must_not_start)
     monkeypatch.setattr(sys, "argv", [f"{script}.py", *argv])
     with pytest.raises(SystemExit, match="refusing a measured run: on Battery Power"):
         module.main()
@@ -555,3 +552,88 @@ def test_the_fresh_start_loop_starts_both_sides_the_recipe_compares():
         b for b in re.findall(r"```sh\n(.*?)```", readme, flags=re.S) if "for i in" in b
     )
     assert "--config C3o" in loop and "--spawn .venv/bin/laya-serve" in loop
+
+
+def test_release_waits_for_the_gpu_before_releasing(monkeypatch):
+    import release
+    import torch
+
+    calls = []
+    monkeypatch.setattr(bench_env, "noise_problems", lambda max_load: [])
+    monkeypatch.setattr(release, "prepare", lambda args: FakeRouter())
+    monkeypatch.setattr(torch.mps, "synchronize", lambda: calls.append("synchronize"))
+    monkeypatch.setattr(torch.mps, "empty_cache", lambda: calls.append("empty_cache"))
+    monkeypatch.setattr(sys, "argv", ["release.py", "--lengths", "2"])
+    release.main()
+    assert calls[-2:] == ["synchronize", "empty_cache"]
+
+
+def test_release_refuses_with_one_line_when_the_model_is_not_on_mps(monkeypatch):
+    import release
+    from frontend import laya_mps as worker
+
+    monkeypatch.setattr(bench_env, "noise_problems", lambda max_load: [])
+    monkeypatch.setattr(worker, "make_router", lambda device, model: FakeRouter("cpu"))
+    monkeypatch.setattr(sys, "argv", ["release.py"])
+    with pytest.raises(SystemExit, match="english is on cpu"):
+        release.main()
+
+
+def test_feasibility_results_say_the_machine_was_noisy(monkeypatch, capsys):
+    import late_load
+
+    server = FakeLateServer(200, resident=True)
+    monkeypatch.setattr(
+        bench_env, "noise_problems", lambda max_load: ["on Battery Power"]
+    )
+    monkeypatch.setattr(late_load, "Client", server.client)
+    monkeypatch.setattr(late_load, "spawn", lambda *a, **k: object())
+    monkeypatch.setattr(late_load, "wait_ready", lambda *a, **k: (0.0, {}))
+    monkeypatch.setattr(late_load, "stop", lambda processes: None)
+    monkeypatch.setattr(sys, "argv", ["late_load.py", "--feasibility"])
+    late_load.main()
+    assert json.loads(capsys.readouterr().out)["noise"] == ["on Battery Power"]
+
+
+def test_fallback_output_says_the_machine_was_noisy(monkeypatch, capsys):
+    import fallback
+
+    class Started(Exception):
+        pass
+
+    def started(*args, **kwargs):
+        raise Started
+
+    probe = subprocess.CompletedProcess([], 0, str(12 * 2**30), "")
+    monkeypatch.setattr(
+        bench_env, "noise_problems", lambda max_load: ["on Battery Power"]
+    )
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: probe)
+    monkeypatch.setattr(fallback, "spawn", started)
+    monkeypatch.setattr(
+        sys, "argv", ["fallback.py", "--limit-gb", "3", "--feasibility"]
+    )
+    with pytest.raises(Started):
+        fallback.main()
+    assert "on Battery Power" in capsys.readouterr().out
+
+
+def test_workloads_with_a_repeated_id_are_refused(tmp_path):
+    path = tmp_path / "workloads.jsonl"
+    path.write_text('{"id": "W1", "kind": "bench"}\n{"id": "W1", "kind": "parity"}\n')
+    with pytest.raises(ValueError, match="W1"):
+        bench_env.read_workloads(path)
+
+
+def test_the_warm_lengths_are_the_requests_the_warmup_sends(monkeypatch):
+    import lengths
+    from models.laya import engine
+
+    def warmup(router, model, shapes=engine.WARMUP_SHAPES, repeats=2):
+        for words, questions in shapes:
+            router.predict(" ".join(["billing"] * words), questions, model=model)
+
+    monkeypatch.setattr(engine, "warmup", warmup)
+    states = []
+    lengths.warmup_lengths(lambda state, questions: states.append(state) or 1)
+    assert states and all(set(state.split()) == {"billing"} for state in states)

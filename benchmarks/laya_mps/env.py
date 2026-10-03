@@ -91,8 +91,13 @@ def refuse_if_noisy(max_load, measured):
 
 def read_workloads(path):
     """The fixed inputs by id, in file order."""
+    workloads = {}
     with open(path) as f:
-        return {w["id"]: w for w in map(json.loads, filter(str.strip, f))}
+        for w in map(json.loads, filter(str.strip, f)):
+            if w["id"] in workloads:
+                raise ValueError(f"{path}: workload id {w['id']} appears twice")
+            workloads[w["id"]] = w
+    return workloads
 
 
 def header(checkpoint, **extra):
@@ -130,6 +135,9 @@ def header(checkpoint, **extra):
         "argv": sys.argv,
         **extra,
     }
+
+
+RUSAGE_INFO_V4 = 4  # <sys/resource.h>
 
 
 def footprint_mb(pid=None):
@@ -186,8 +194,10 @@ def footprint_mb(pid=None):
         return {}
     info = RusageInfoV4()
     libc = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
-    # RUSAGE_INFO_V4
-    if libc.proc_pid_rusage(pid or os.getpid(), 4, ctypes.byref(info)) != 0:
+    if (
+        libc.proc_pid_rusage(pid or os.getpid(), RUSAGE_INFO_V4, ctypes.byref(info))
+        != 0
+    ):
         return {}
     return {
         "footprint_mb": round(info.phys_footprint / 2**20),

@@ -12,7 +12,8 @@ beforehand to leave the download out. One JSON line per attempt:
 - `loaded`: whether the late checkpoint is resident afterwards; false means the load failed and the
   worker unloaded it;
 - `next`: the same request again, sent only when `loaded`, otherwise null (it would load again);
-- `models`: device, revision and warmup time of each resident checkpoint.
+- `models`: device, revision and warmup time of each resident checkpoint;
+- `noise`: why the machine was not fit for a measurement (a `--feasibility` run), empty otherwise.
 
     python benchmarks/laya_mps/late_load.py --flags "--compile --weights fp16" \\
         --frontend target/release/omni-jev
@@ -153,10 +154,13 @@ def main():
     args = cli.parse_args()
     if normalise_name(args.late) == normalise_name(args.model):
         cli.error(f"--late {args.late} is the checkpoint the worker starts with")
-    refuse_if_noisy(args.max_load, not args.feasibility)
+    problems = refuse_if_noisy(args.max_load, not args.feasibility)
     Path(args.out).mkdir(parents=True, exist_ok=True)
     for through_frontend in (False, True) if args.frontend else (False,):
-        print(json.dumps(attempt(args, through_frontend)), flush=True)
+        print(
+            json.dumps({**attempt(args, through_frontend), "noise": problems}),
+            flush=True,
+        )
 
 
 if __name__ == "__main__":

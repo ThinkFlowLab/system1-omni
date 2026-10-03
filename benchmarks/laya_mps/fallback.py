@@ -41,7 +41,9 @@ def main():
         help="run on battery or under load anyway; the numbers are not measurements",
     )
     args = parser.parse_args()
-    refuse_if_noisy(args.max_load, not args.feasibility)
+    problems = refuse_if_noisy(args.max_load, not args.feasibility)
+    if problems:
+        print("not a measurement:", "; ".join(problems))
     workloads = read_workloads(args.workloads)
     probe = [
         args.python,

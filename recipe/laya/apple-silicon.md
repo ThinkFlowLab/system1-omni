@@ -108,9 +108,10 @@ The latencies above are for requests sent back to back. Measured on the M1 Pro:
   once with the options (6 ms without). It is not a recompile (`recompiled_after_ready` stays `false`).
 - **Memory grows with the lengths seen.** With `--compile`, PyTorch keeps host memory for every input
   length the compiled model has run, about 5 MB each (fp16 weights alone add little): the 3 GB above became
-  3.3 GB after 100 new lengths and 5.3 GB after all 477, more than the 4.0 GB of a worker without the
-  options. `torch.mps.empty_cache()` gives about half of it back (270 of 568 MB after 106 new lengths),
-  and those lengths then pay their first-request cost again.
+  3.3 GB after 100 new lengths and 5.2 GB after all 454 that the benchmark's one-question request can
+  take (57–512 tokens), more than the 3.7 GB of a worker without the options. `torch.mps.empty_cache()`
+  gives it back (3.0 GB again after 100 new lengths), and those lengths then pay their first-request
+  cost again.
 
 `/health` reports under `compile` how many graphs existed when the worker became ready and how many
 exist now; `recompiled_after_ready: true` means a request shape was not covered by the warmup.
