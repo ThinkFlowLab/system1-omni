@@ -7,3 +7,5 @@ pub mod cuda;
 pub mod engine;
 pub mod json;
 pub mod model;
+
+pub mod vision;
