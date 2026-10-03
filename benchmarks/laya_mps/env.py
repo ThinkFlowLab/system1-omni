@@ -194,10 +194,10 @@ def footprint_mb(pid=None):
         return {}
     info = RusageInfoV4()
     libc = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
-    if (
-        libc.proc_pid_rusage(pid or os.getpid(), RUSAGE_INFO_V4, ctypes.byref(info))
-        != 0
-    ):
+    failed = libc.proc_pid_rusage(
+        pid or os.getpid(), RUSAGE_INFO_V4, ctypes.byref(info)
+    )
+    if failed:
         return {}
     return {
         "footprint_mb": round(info.phys_footprint / 2**20),

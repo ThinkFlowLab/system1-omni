@@ -1,11 +1,11 @@
 """Releasing PyTorch's MPS caches: how much memory it gives back, and what it costs afterwards.
 
 In this process, prepared as the worker prepares a checkpoint (options, warmup, and an exit if the
-model is not on MPS): walks `--lengths` new one-question lengths as lengths.py does (each run twice
-in a row, the warmup's lengths skipped, stopping at the window), releases the caches with
-`torch.mps.empty_cache()`, then runs the same lengths again. Prints the footprint before, after the
-lengths and after the release, and the extra time of a length's first request before and after the
-release (a released length is cold again).
+model is not on MPS): releases the caches with `torch.mps.empty_cache()` once, so that the baseline
+does not depend on what the warmup left cached, walks `--lengths` new one-question lengths as
+lengths.py does (each run twice in a row, stopping at the window), releases, runs the same lengths
+again and releases a second time. Prints the footprint at each step, and the extra time of a length's
+first request before and after the first release (a released length is cold again).
 
     python benchmarks/laya_mps/release.py --compile --weights fp16
 """
@@ -25,9 +25,10 @@ import lengths  # noqa: E402
 from env import footprint_mb, read_workloads, refuse_if_noisy  # noqa: E402
 
 
-def measure(run, footprint, release, first_words, step, count, seen):
-    """`run(words)` returns one request's ms and input tokens; `seen` holds the warm lengths."""
+def measure(run, footprint, release, first_words, step, count):
+    """`run(words)` returns one request's ms and input tokens. After the first release nothing is warm."""
     records = []
+    release()
     before = footprint()
     measured = lengths.measure(
         ["A"],
@@ -35,7 +36,7 @@ def measure(run, footprint, release, first_words, step, count, seen):
         first_words,
         step,
         count,
-        seen,
+        set(),
         records.append,
     )
     after_lengths = footprint()
@@ -44,6 +45,8 @@ def measure(run, footprint, release, first_words, step, count, seen):
     release_ms = (time.perf_counter() - started) * 1000
     after_release = footprint()
     after = [run(words)[0] - run(words)[0] for words, _ in measured]
+    after_rerun = footprint()
+    release()
     before_release = [
         r["first_ms"] - r["again_ms"] for r in records if r["type"] == "length"
     ]
@@ -56,6 +59,8 @@ def measure(run, footprint, release, first_words, step, count, seen):
             "before": before,
             "after_lengths": after_lengths,
             "after_release": after_release,
+            "after_rerun": after_rerun,
+            "after_second_release": footprint(),
         },
         "release_ms": round(release_ms, 1),
         "extra_ms_before_release": round(statistics.median(before_release), 1)
@@ -68,10 +73,13 @@ def measure(run, footprint, release, first_words, step, count, seen):
 
 
 def prepare(args):
-    """The worker's startup, in this process; raises if the model is not on MPS."""
+    """The worker's startup, in this process; exits if the model is not on MPS."""
     from frontend.laya_mps import build_app, make_router
 
     router = make_router("mps", args.model)
+    device = str(router.load(args.model).device)
+    if not device.startswith("mps"):
+        sys.exit(f"{args.model} is on {device}, not MPS")
     build_app(
         router,
         args.model,
@@ -111,34 +119,21 @@ def main():
     import torch
 
     question = read_workloads(args.workloads)["W1"]["questions"]
-    try:
-        router = prepare(args)
-    except RuntimeError as exc:
-        sys.exit(str(exc))
-
-    def ask(state, questions):
-        return router.predict(state, questions, model=args.model)["usage"][
-            "input_tokens"
-        ]
-
-    def release():
-        # buffers of work still running on the GPU cannot be released
-        torch.mps.synchronize()
-        torch.mps.empty_cache()
+    router = prepare(args)
 
     def run(words):
         started = time.perf_counter()
-        tokens = ask(" ".join(["invoice"] * words), question)
-        return (time.perf_counter() - started) * 1000, tokens
+        state = " ".join(["invoice"] * words)
+        result = router.predict(state, question, model=args.model)
+        return (time.perf_counter() - started) * 1000, result["usage"]["input_tokens"]
 
     result = measure(
         run,
         lambda: footprint_mb()["footprint_mb"],
-        release,
+        torch.mps.empty_cache,
         args.first_words,
         args.step,
         args.lengths,
-        lengths.warmup_lengths(ask),
     )
     print(
         json.dumps(

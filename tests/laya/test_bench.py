@@ -417,7 +417,7 @@ def test_late_load_refuses_a_late_checkpoint_the_worker_already_serves(monkeypat
 def test_release_walks_new_lengths_releases_and_runs_the_same_lengths_again():
     import release
 
-    calls, warm, memory = [], {76}, {"mb": 3000.0}
+    calls, warm, memory = [], {76}, {"mb": 3300.0}
 
     def run(words):
         """W1 adds 56 tokens to the state; the window stops at 120. A cold length costs 10 ms and 5 MB."""
@@ -432,28 +432,40 @@ def test_release_walks_new_lengths_releases_and_runs_the_same_lengths_again():
     def release_caches():
         calls.append("release")
         warm.clear()
-        memory["mb"] = 2900.0
+        memory["mb"] = 3000.0
 
-    result = release.measure(
-        run, lambda: memory["mb"], release_caches, 10, 10, 100, seen={76}
-    )
-    # 20 words is the warmup's length, 80 is past the window
-    measured = [
-        10,
-        30,
-        40,
-        50,
-        60,
-        70,
-    ]
-    assert calls[calls.index("release") + 1 :] == [w for w in measured for _ in (0, 1)]
-    assert result["lengths"] == 6 and result["stopped"] == "window"
+    result = release.measure(run, lambda: memory["mb"], release_caches, 10, 10, 100)
+    measured = [10, 20, 30, 40, 50, 60, 70]  # 80 words is past the window
+    twice = [w for w in measured for _ in (0, 1)]
+    assert calls == ["release", *twice, 80, "release", *twice, "release"]
+    assert result["lengths"] == 7 and result["stopped"] == "window"
+    assert result["extra_ms_before_release"] == result["extra_ms_after_release"] == 10.0
+
+
+def test_release_starts_from_released_caches_and_releases_twice():
+    """The warmup leaves cached buffers that vary from run to run: the baseline is taken after a release."""
+    import release
+
+    memory, warm = {"mb": 3300.0}, set()
+
+    def run(words):
+        if words not in warm:
+            warm.add(words)
+            memory["mb"] += 5.0
+        return 30.0, words
+
+    def release_caches():
+        warm.clear()
+        memory["mb"] = 3000.0
+
+    result = release.measure(run, lambda: memory["mb"], release_caches, 10, 10, 2)
     assert result["footprint_mb"] == {
         "before": 3000.0,
-        "after_lengths": 3030.0,
-        "after_release": 2900.0,
+        "after_lengths": 3010.0,
+        "after_release": 3000.0,
+        "after_rerun": 3010.0,
+        "after_second_release": 3000.0,
     }
-    assert result["extra_ms_before_release"] == result["extra_ms_after_release"] == 10.0
 
 
 class FakeRouter:
@@ -486,7 +498,7 @@ def test_release_refuses_a_model_that_is_not_on_mps(monkeypatch):
 
     monkeypatch.setattr(worker, "make_router", lambda device, model: FakeRouter("cpu"))
     args = argparse.Namespace(model="english", compile=True, weights="fp16")
-    with pytest.raises(RuntimeError, match="english is on cpu"):
+    with pytest.raises(SystemExit, match="english is on cpu"):
         release.prepare(args)
 
 
@@ -554,18 +566,17 @@ def test_the_fresh_start_loop_starts_both_sides_the_recipe_compares():
     assert "--config C3o" in loop and "--spawn .venv/bin/laya-serve" in loop
 
 
-def test_release_waits_for_the_gpu_before_releasing(monkeypatch):
+def test_release_keeps_the_traceback_of_other_failures(monkeypatch):
     import release
-    import torch
 
-    calls = []
+    def prepare(args):
+        raise RuntimeError("inductor could not compile the encoder")
+
     monkeypatch.setattr(bench_env, "noise_problems", lambda max_load: [])
-    monkeypatch.setattr(release, "prepare", lambda args: FakeRouter())
-    monkeypatch.setattr(torch.mps, "synchronize", lambda: calls.append("synchronize"))
-    monkeypatch.setattr(torch.mps, "empty_cache", lambda: calls.append("empty_cache"))
-    monkeypatch.setattr(sys, "argv", ["release.py", "--lengths", "2"])
-    release.main()
-    assert calls[-2:] == ["synchronize", "empty_cache"]
+    monkeypatch.setattr(release, "prepare", prepare)
+    monkeypatch.setattr(sys, "argv", ["release.py"])
+    with pytest.raises(RuntimeError, match="inductor"):
+        release.main()
 
 
 def test_release_refuses_with_one_line_when_the_model_is_not_on_mps(monkeypatch):
