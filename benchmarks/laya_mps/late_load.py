@@ -1,9 +1,18 @@
 """A checkpoint Laya loads while the worker serves: how long its first request takes.
 
 Starts the worker on MPS with one checkpoint (`--model`), optionally the Rust frontend in front of
-it, then asks for another checkpoint (`--late`) and times that request and the next one, directly
-and, with `--frontend`, through the frontend (a fresh worker for each). The first run also downloads
-the late checkpoint; run once beforehand to leave the download out.
+it, then asks for another checkpoint (`--late`), directly and, with `--frontend`, through the
+frontend (a fresh worker for each). The first run also downloads the late checkpoint; run once
+beforehand to leave the download out. One JSON line per attempt:
+
+- `through`, `flags`, `late`: what was run;
+- `first`: status and time of the late request (504 from the frontend, or a client timeout, can
+  still be a load that succeeds in the worker);
+- `prepared_after_s`: when the worker stopped preparing the checkpoint;
+- `loaded`: whether the late checkpoint is resident afterwards; false means the load failed and the
+  worker unloaded it;
+- `next`: the same request again, sent only when `loaded`, otherwise null (it would load again);
+- `models`: device, revision and warmup time of each resident checkpoint.
 
     python benchmarks/laya_mps/late_load.py --flags "--compile --weights fp16" \\
         --frontend target/release/omni-jev
@@ -131,7 +140,12 @@ def parser():
 
 
 def main():
-    args = parser().parse_args()
+    from laya.router import normalise_name
+
+    cli = parser()
+    args = cli.parse_args()
+    if normalise_name(args.late) == normalise_name(args.model):
+        cli.error(f"--late {args.late} is the checkpoint the worker starts with")
     Path(args.out).mkdir(parents=True, exist_ok=True)
     for through_frontend in (False, True) if args.frontend else (False,):
         print(json.dumps(attempt(args, through_frontend)), flush=True)

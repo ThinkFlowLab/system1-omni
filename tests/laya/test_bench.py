@@ -1,6 +1,8 @@
 """Checks on the benchmark inputs, the run header and the documented commands in recipe/laya. No model."""
 
 import json
+
+import pytest
 import subprocess
 import sys
 from pathlib import Path
@@ -389,3 +391,25 @@ def test_the_length_walk_records_why_it_stopped():
         "stopped": "count",
         "longest_tokens": 66,
     }
+
+
+def test_every_field_late_load_prints_is_explained_in_its_docstring(monkeypatch):
+    import late_load
+
+    result, _ = late_load_with(monkeypatch, 200)
+    missing = [key for key in result if f"`{key}`" not in late_load.__doc__]
+    assert not missing, missing
+
+
+def test_late_load_refuses_a_late_checkpoint_the_worker_already_serves(monkeypatch):
+    import late_load
+
+    monkeypatch.setattr(
+        late_load, "spawn", lambda *a, **k: pytest.fail("must not start")
+    )
+    for late in ("english", "en", "English"):
+        monkeypatch.setattr(
+            sys, "argv", ["late_load.py", "--model", "english", "--late", late]
+        )
+        with pytest.raises(SystemExit):
+            late_load.main()
