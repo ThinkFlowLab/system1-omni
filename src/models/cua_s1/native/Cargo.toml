@@ -18,7 +18,7 @@ libloading = "0.8"
 memmap2 = "0.9.9"
 safetensors = "0.8.0"
 serde = "1"
-serde_json = { version = "1.0.149", features = ["float_roundtrip", "preserve_order"] }
+serde_json = { version = "1.0.149", features = ["float_roundtrip", "preserve_order", "raw_value"] }
 # the onig regex backend, as in the Python tokenizers wheel
 tokenizers = { version = "=0.22.2", default-features = false, features = ["onig"] }
 tokio = { version = "1.49.0", features = ["macros", "net", "rt-multi-thread", "sync"] }
