@@ -5,6 +5,8 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import threading
+from contextlib import nullcontext
 from pathlib import Path
 
 from .protocol import InvalidRequest, Question, Request, answer, build_messages
@@ -118,6 +120,8 @@ class MultimodalEngine:
         dtype: str = "bfloat16",
         graph_config=None,
     ):
+        self._lifecycle_lock = threading.RLock()
+        self._closed = False
         import torch
         from peft import PeftModel
         from peft.tuners.lora import LoraLayer
@@ -157,7 +161,17 @@ class MultimodalEngine:
         if graph_config is not None:
             from .graph_runtime import GraphRuntime
 
-            self.graph_runtime = GraphRuntime(self.model, graph_config)
+            if graph_config.mode == "rule-bucket":
+                from .graph_buckets import RuleBucketRuntime
+                from .rule_prefill import pinned_implementation
+
+                pinned_implementation()
+                # Explicit adapter calls cannot honor offload/device-map hooks.
+                if any(p.device != self.model.device for p in self.model.parameters()):
+                    raise ValueError("rule-bucket requires one CUDA-resident model")
+                self.graph_runtime = RuleBucketRuntime(self.model, graph_config)
+            else:
+                self.graph_runtime = GraphRuntime(self.model, graph_config)
 
     def prepare(self, image, question: Question):
         return self._prepare(self.processor, image, question)
@@ -272,6 +286,24 @@ class MultimodalEngine:
         }
 
     def predict(self, request: Request) -> dict:
+        with getattr(self, "_lifecycle_lock", nullcontext()):
+            if getattr(self, "_closed", False):
+                raise RuntimeError("multimodal engine is closed")
+            runtime = getattr(self, "graph_runtime", None)
+            with runtime.request() if runtime is not None else nullcontext():
+                return self._predict(request)
+
+    def close(self):
+        """Drain prediction before explicitly releasing captured GPU resources."""
+        with getattr(self, "_lifecycle_lock", nullcontext()):
+            if getattr(self, "_closed", False):
+                return
+            runtime = getattr(self, "graph_runtime", None)
+            if runtime is not None:
+                runtime.close()
+            self._closed = True
+
+    def _predict(self, request: Request) -> dict:
         if len(request.questions) == 1:
             return self.predict_reference(request)
         # No image encoder or language model runs until every prompt is valid.
