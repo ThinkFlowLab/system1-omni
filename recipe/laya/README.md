@@ -3,7 +3,8 @@
 This recipe runs the external Laya Python package behind the Rust frontend.
 It validates text decisions; image, audio and video inference are not covered.
 
-Run all commands from the repository root.
+Run all commands from the repository root. To serve on the GPU of an Apple Silicon Mac, see
+[Laya on Apple Silicon](apple-silicon.md).
 
 ## Start the worker
 

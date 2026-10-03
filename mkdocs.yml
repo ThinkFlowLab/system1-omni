@@ -46,8 +46,11 @@ markdown_extensions:
 
 nav:
   - Overview: README.md
+  - Supported models and hardware: docs/supported-models.md
   - Frontend: src/frontend/README.md
   - Recipes:
       - recipe/README.md
       - Laya text worker: recipe/laya/README.md
+      - Cua-S1 text worker: recipe/cua_s1/text.md
+      - Cua-S1 native text worker: recipe/cua_s1/native.md
   - Contributing: CONTRIBUTING.md

@@ -1,0 +1,3 @@
+# Benchmark output stays out of the repository; the reports and raw data are release assets (see ../README.md).
+*
+!.gitignore

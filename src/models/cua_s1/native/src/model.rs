@@ -9,7 +9,7 @@
 //! token, so the multimodal rotary sections all get the same position and the
 //! rotary embedding is the plain one.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::ffi::c_void;
 use std::path::Path;
 
@@ -514,6 +514,9 @@ pub struct Model {
     gemm: *mut c_void,
     /// Buffers for the longest prompt so far; grows as needed.
     scratch: Option<Scratch>,
+    /// Opt-in replay with at most eight exact-length captures.
+    graph_enabled: bool,
+    graphs: VecDeque<(usize, cuda::Graph)>,
 }
 
 // SAFETY: the raw pointers are device addresses and a cuBLASLt handle owned by the
@@ -522,6 +525,7 @@ unsafe impl Send for Model {}
 
 impl Drop for Model {
     fn drop(&mut self) {
+        self.graphs.clear();
         // SAFETY: created by cs1_gemm_create and not destroyed before.
         unsafe { (cuda::api().cs1_gemm_destroy)(self.gemm) };
     }
@@ -601,6 +605,8 @@ impl Model {
             stream,
             gemm,
             scratch: None,
+            graph_enabled: std::env::var("CUA_S1_GRAPH").as_deref() == Ok("1"),
+            graphs: VecDeque::new(),
         };
         Ok(model)
     }
@@ -637,6 +643,7 @@ impl Model {
         );
         cuda::set_device(0)?;
         if self.scratch.as_ref().is_none_or(|s| t > s.cap) {
+            self.graphs.clear();
             self.scratch = None;
             self.scratch = Some(Scratch::new(
                 &self.cfg,
@@ -648,7 +655,38 @@ impl Model {
         let ids32: Vec<u8> = ids.iter().flat_map(|&i| (i as i32).to_le_bytes()).collect();
         // SAFETY: the ids buffer holds at least t int32 values.
         unsafe { cuda::upload(s.at(s.ids), &ids32, self.stream)? };
-        self.run(s, t)?;
+        if self.graph_enabled {
+            if !self.graphs.iter().any(|(length, _)| *length == t) {
+                // Initialize every cuBLASLt plan before stream capture.
+                self.run(s, t)?;
+                cuda::synchronize(self.stream)?;
+                match cuda::Graph::capture(self.stream, || self.run(s, t)) {
+                    Ok(graph) => {
+                        if self.graphs.len() == 8 {
+                            self.graphs.pop_front();
+                        }
+                        self.graphs.push_back((t, graph));
+                    }
+                    Err(error) => {
+                        // Capture records without executing: the eager result is valid.
+                        // Disable graphs for this worker rather than retrying failures.
+                        eprintln!("CUDA Graph capture failed; using eager execution: {error:#}");
+                        self.graph_enabled = false;
+                        self.graphs.clear();
+                    }
+                }
+            }
+            if self.graph_enabled {
+                self.graphs
+                    .iter()
+                    .find(|(length, _)| *length == t)
+                    .unwrap()
+                    .1
+                    .launch(self.stream)?;
+            }
+        } else {
+            self.run(s, t)?;
+        }
         let mut last = vec![0u8; h * BF16];
         // SAFETY: x holds at least t rows of the hidden size.
         unsafe { cuda::download(&mut last, s.at(s.x + (t - 1) * h * BF16), self.stream)? };
