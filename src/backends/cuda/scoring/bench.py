@@ -79,8 +79,12 @@ def load_bench_library(path):
     return lib
 
 
-def timed(runtime, call, iterations):
-    """Median milliseconds per call, over `iterations` calls after a warmup."""
+def timed(runtime, call, iterations, stream=None):
+    """Median milliseconds per call, over `iterations` calls after a warmup.
+
+    Both the direct launch and the graph replay are timed on the same stream, so
+    the only difference between them is the path taken to the kernel.
+    """
     for _ in range(max(3, iterations // 10)):
         call()
     runtime.cudaDeviceSynchronize()
@@ -91,9 +95,9 @@ def timed(runtime, call, iterations):
     samples = []
     try:
         for _ in range(iterations):
-            gpu_parity.check(runtime, runtime.cudaEventRecord(start, None), "record start")
+            gpu_parity.check(runtime, runtime.cudaEventRecord(start, stream), "record start")
             call()
-            gpu_parity.check(runtime, runtime.cudaEventRecord(stop, None), "record stop")
+            gpu_parity.check(runtime, runtime.cudaEventRecord(stop, stream), "record stop")
             gpu_parity.check(runtime, runtime.cudaEventSynchronize(stop), "sync stop")
             elapsed = ctypes.c_float()
             gpu_parity.check(runtime, runtime.cudaEventElapsedTime(ctypes.byref(elapsed), start, stop),
@@ -103,6 +107,26 @@ def timed(runtime, call, iterations):
         runtime.cudaEventDestroy(start)
         runtime.cudaEventDestroy(stop)
     return float(np.median(samples)), samples
+
+
+def capture_fused(runtime, lib, device, stream, questions, k, d, spec):
+    """Capture one fused launch into a graph, and instantiate it.
+
+    The ABI is written for this: it queues on the caller's stream and never
+    synchronizes, so the capture sees exactly one node.
+    """
+    graph, graph_exec = ctypes.c_void_p(), ctypes.c_void_p()
+    gpu_parity.check(runtime, runtime.cudaStreamBeginCapture(stream, 1), "cudaStreamBeginCapture")
+    gpu_parity.check(runtime, lib.cs_score_candidates_batch(
+        device["q"], device["c"], device["fused"], None, questions, k, d,
+        ctypes.c_float(spec.scale), ctypes.c_float(spec.temperature),
+        1 if spec.normalize else 0, stream), "launch under capture")
+    gpu_parity.check(runtime, runtime.cudaStreamEndCapture(stream, ctypes.byref(graph)),
+                     "cudaStreamEndCapture")
+    gpu_parity.check(runtime, runtime.cudaGraphInstantiate(ctypes.byref(graph_exec), graph,
+                                                           ctypes.c_ulonglong(0)),
+                     "cudaGraphInstantiate")
+    return graph, graph_exec
 
 
 def traffic_bytes(questions, k, d, passes):
@@ -169,17 +193,25 @@ def main(argv=None):
             for key in ("fused", "unfused"):
                 outputs[key] = np.zeros((questions, k), dtype=np.float32)
 
+            # One stream for every timing below, so the direct launch and the
+            # graph replay differ only in the path to the kernel. Measuring on
+            # the legacy default stream instead would add its synchronisation
+            # semantics to both and make the columns incomparable.
+            stream = ctypes.c_void_p()
+            gpu_parity.check(runtime, runtime.cudaStreamCreate(ctypes.byref(stream)),
+                             "cudaStreamCreate")
+
             def call_fused():
                 return fused.cs_score_candidates_batch(
                     device["q"], device["c"], device["fused"], None, questions, k, d,
                     ctypes.c_float(spec.scale), ctypes.c_float(spec.temperature),
-                    1 if spec.normalize else 0, None)
+                    1 if spec.normalize else 0, stream)
 
             def call_unfused():
                 return unfused.bench_unfused(
                     device["q"], device["c"], device["norms"], device["unfused"], questions, k, d,
                     ctypes.c_float(spec.scale), ctypes.c_float(spec.temperature),
-                    1 if spec.normalize else 0, None)
+                    1 if spec.normalize else 0, stream)
 
             # Correctness first. A wrong kernel can be arbitrarily fast.
             for label, call, key in (("fused", call_fused, "fused"),
@@ -203,8 +235,23 @@ def main(argv=None):
                 else:
                     unfused_worst = worst
 
-            fused_ms, _ = timed(runtime, call_fused, args.iterations)
-            unfused_ms, _ = timed(runtime, call_unfused, args.iterations)
+            fused_ms, _ = timed(runtime, call_fused, args.iterations, stream)
+            unfused_ms, _ = timed(runtime, call_unfused, args.iterations, stream)
+
+            # The same launch, replayed from a captured graph. The small shapes
+            # are launch-bound, so this is where the difference should show.
+            graph, graph_exec = capture_fused(runtime, fused, device, stream,
+                                              questions, k, d, spec)
+            try:
+                def call_replay():
+                    return runtime.cudaGraphLaunch(graph_exec, stream)
+
+                direct_ms, _ = timed(runtime, call_fused, args.iterations, stream)
+                graph_ms, _ = timed(runtime, call_replay, args.iterations, stream)
+            finally:
+                runtime.cudaGraphExecDestroy(graph_exec)
+                runtime.cudaGraphDestroy(graph)
+                runtime.cudaStreamDestroy(stream)
         finally:
             for pointer in device.values():
                 runtime.cudaFree(pointer)
@@ -225,12 +272,17 @@ def main(argv=None):
             "unfused_bytes": unfused_bytes,
             "fused_max_abs": fused_worst,
             "unfused_max_abs": unfused_worst,
+            "direct_ms": direct_ms,
+            "graph_replay_ms": graph_ms,
+            "graph_gain": direct_ms / graph_ms,
         })
         print("%-26s %-4s K=%-4d D=%-5d q=%d  fused %7.1f us (%5.0f GB/s)  "
               "unfused %7.1f us (%5.0f GB/s)  %.2fx"
               % (name, "cos" if spec.normalize else "dot", k, d, questions,
                  fused_ms * 1e3, rows[-1]["fused_gbs"],
                  unfused_ms * 1e3, rows[-1]["unfused_gbs"], rows[-1]["speedup"]))
+        print("%-26s      the same launch: direct %7.1f us, graph replay %7.1f us  %.2fx"
+              % ("", direct_ms * 1e3, graph_ms * 1e3, direct_ms / graph_ms))
 
     report = {"measured_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
               "provenance": provenance, "results": rows}

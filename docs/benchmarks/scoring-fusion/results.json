@@ -1,5 +1,5 @@
 {
-  "measured_at": "2026-10-03T12:58:48Z",
+  "measured_at": "2026-10-03T13:15:08Z",
   "provenance": {
     "gpu": "NVIDIA GeForce RTX 4090",
     "driver": "580.76.05",
@@ -17,15 +17,18 @@
       "K": 5,
       "D": 512,
       "cosine": true,
-      "fused_ms": 0.009216000325977802,
-      "unfused_ms": 0.011264000087976456,
-      "speedup": 1.2222221885372344,
-      "fused_gbs": 1.3355034249843238,
-      "unfused_gbs": 2.0017755525471306,
+      "fused_ms": 0.009151999838650227,
+      "unfused_ms": 0.011455999687314034,
+      "speedup": 1.2517482396507134,
+      "fused_gbs": 1.3448426810522358,
+      "unfused_gbs": 1.9682263107050233,
       "fused_bytes": 12308,
       "unfused_bytes": 22548,
       "fused_max_abs": 6.932993346087102e-09,
-      "unfused_max_abs": 6.932993346087102e-09
+      "unfused_max_abs": 6.932993346087102e-09,
+      "direct_ms": 0.009184000082314014,
+      "graph_replay_ms": 0.006144000217318535,
+      "graph_gain": 1.4947916271920716
     },
     {
       "shape": "clm-cosine-64x512",
@@ -33,15 +36,18 @@
       "K": 64,
       "D": 512,
       "cosine": true,
-      "fused_ms": 0.012128000147640705,
-      "unfused_ms": 0.018271999433636665,
-      "speedup": 1.5065962410291667,
-      "fused_gbs": 10.99736134369573,
-      "unfused_gbs": 14.472855089584856,
+      "fused_ms": 0.012160000391304493,
+      "unfused_ms": 0.018432000651955605,
+      "speedup": 1.515789478521412,
+      "fused_gbs": 10.968420699671686,
+      "unfused_gbs": 14.34722171474872,
       "fused_bytes": 133376,
       "unfused_bytes": 264448,
       "fused_max_abs": 1.2430758852821633e-09,
-      "unfused_max_abs": 1.2430758852821633e-09
+      "unfused_max_abs": 1.2430758852821633e-09,
+      "direct_ms": 0.01206399966031313,
+      "graph_replay_ms": 0.009184000082314014,
+      "graph_gain": 1.3135888014140202
     },
     {
       "shape": "clm-cosine-255x512",
@@ -49,15 +55,18 @@
       "K": 255,
       "D": 512,
       "cosine": true,
-      "fused_ms": 0.02356800064444542,
-      "unfused_ms": 0.04217600077390671,
-      "speedup": 1.7895451298643308,
-      "fused_gbs": 22.289035371517873,
-      "unfused_gbs": 24.837537480511738,
+      "fused_ms": 0.02425600029528141,
+      "unfused_ms": 0.043007999658584595,
+      "speedup": 1.7730870355798547,
+      "fused_gbs": 21.656826913140733,
+      "unfused_gbs": 24.357050044546877,
       "fused_bytes": 525308,
       "unfused_bytes": 1047548,
       "fused_max_abs": 1.2364590072297399e-09,
-      "unfused_max_abs": 1.2364590072297399e-09
+      "unfused_max_abs": 1.2364590072297399e-09,
+      "direct_ms": 0.024240000173449516,
+      "graph_replay_ms": 0.020735999569296837,
+      "graph_gain": 1.168981514126811
     },
     {
       "shape": "clm-cosine-batch8-255x512",
@@ -65,15 +74,18 @@
       "K": 255,
       "D": 512,
       "cosine": true,
-      "fused_ms": 0.023840000852942467,
-      "unfused_ms": 0.04383999854326248,
-      "speedup": 1.8389260475991762,
-      "fused_gbs": 176.27784604216188,
-      "unfused_gbs": 191.1584005124912,
+      "fused_ms": 0.024383999407291412,
+      "unfused_ms": 0.04398399963974953,
+      "speedup": 1.803805803349767,
+      "fused_gbs": 172.34514854619624,
+      "unfused_gbs": 190.53255885411613,
       "fused_bytes": 4202464,
       "unfused_bytes": 8380384,
       "fused_max_abs": 2.1920026549090976e-09,
-      "unfused_max_abs": 2.1920026549090976e-09
+      "unfused_max_abs": 2.1920026549090976e-09,
+      "direct_ms": 0.024383999407291412,
+      "graph_replay_ms": 0.020479999482631683,
+      "graph_gain": 1.1906250011368684
     },
     {
       "shape": "kev-dot-255x2560",
@@ -81,16 +93,19 @@
       "K": 255,
       "D": 2560,
       "cosine": false,
-      "fused_ms": 0.055296000093221664,
-      "unfused_ms": 0.1003359965980053,
-      "speedup": 1.814525398380574,
-      "fused_gbs": 47.42585350800931,
-      "unfused_gbs": 26.13678130399051,
+      "fused_ms": 0.05427199974656105,
+      "unfused_ms": 0.09728000313043594,
+      "speedup": 1.7924528962395585,
+      "fused_gbs": 48.320681239798475,
+      "unfused_gbs": 26.9578527509269,
       "fused_bytes": 2622460,
       "unfused_bytes": 2622460,
       "fused_max_abs": 7.07020300361183e-08,
-      "unfused_max_abs": 7.07020300361183e-08
+      "unfused_max_abs": 7.07020300361183e-08,
+      "direct_ms": 0.05238400027155876,
+      "graph_replay_ms": 0.04934399947524071,
+      "graph_gain": 1.0616083177011915
     }
   ],
-  "note": "Ratios, not absolute microseconds: the host is shared (1 of 8 GPUs) and its other GPUs carry unrelated work. The same harness at THREADS = 256 gave 0.82x, 0.83x and 0.57x on clm-cosine-255x512, clm-cosine-batch8-255x512 and kev-dot-255x2560; see README.md."
+  "note": "Ratios, not absolute microseconds: the host is shared (1 of 8 GPUs) and its other GPUs carry unrelated work. Every timing in a row is taken on one created stream. The same harness at THREADS = 256 gave 0.82x, 0.83x and 0.57x on clm-cosine-255x512, clm-cosine-batch8-255x512 and kev-dot-255x2560; see README.md."
 }

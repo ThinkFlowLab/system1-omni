@@ -24,6 +24,10 @@ arbitrarily fast.
   of 1e-4. Both passed before anything was timed.
 - Per shape: 30 warmup calls, then 300 calls timed individually with CUDA events;
   the median is reported.
+- Every timing in a row is taken on **one created stream**, including the graph
+  replay. Measuring on the legacy default stream instead adds its synchronisation
+  semantics to both and makes the columns incomparable — it cost the fused kernel
+  about 5 µs at K = 255, which is larger than the effect being measured.
 - `bench.cu` is the baseline. It is `candidate_scoring.cu`'s own block with the
   row norm loaded from a staged array instead of accumulated beside the dot, plus
   a separate norm pass. The norm pass runs only when the similarity is a cosine,
@@ -80,14 +84,33 @@ Correctness is unchanged by the block size: the parity harness reports the same
 `1.835e-07` worst case, and `compute-sanitizer --tool memcheck` reports
 `ERROR SUMMARY: 0 errors`.
 
+## CUDA Graph replay
+
+The ABI is written for capture — it queues on the caller's stream and never
+synchronizes — so the same launch can be replayed from a graph. It is timed here
+because the smallest shapes are launch-bound, and that is the part a graph
+removes:
+
+| shape | direct | graph replay | gain |
+| --- | ---: | ---: | ---: |
+| `clm-cosine-5x512` | 9.2 µs | 6.1 µs | **1.49x** |
+| `clm-cosine-64x512` | 12.1 µs | 9.2 µs | 1.31x |
+| `clm-cosine-255x512` | 24.2 µs | 20.7 µs | 1.17x |
+| `clm-cosine-batch8-255x512` | 24.4 µs | 20.5 µs | 1.19x |
+| `kev-dot-255x2560` | 52.4 µs | 49.3 µs | 1.06x |
+
+The saving is a flat ~3 µs, which is what a launch costs; it is 1.49x of a 9 µs
+call and 1.06x of a 52 µs one. That is the expected shape and it explains the
+floor at K = 5, but it also means the graph gain **shrinks as the shapes grow** —
+so it does not change which configuration wins at any shape measured here. A
+graph and the fused kernel are complementary rather than alternatives, and the
+two effects multiply.
+
 ## Limits
 
 - One GPU, one architecture: sm_89 only. The library builds for whatever
   `build.sh` is given, but nothing else has been run.
 - The tiny shapes are launch-bound, not compute-bound — `clm-cosine-5x512` is 9 µs
   either way. The interesting range starts around K = 64.
-- CUDA Graph replay is not timed here. It removes launch overhead, which matters
-  most exactly where these numbers are worst, so a graph-timed run would flatter
-  the fused kernel; that is a separate measurement.
 - No end-to-end number. This is the kernel, with the projections left to the
   caller as the design intends.
