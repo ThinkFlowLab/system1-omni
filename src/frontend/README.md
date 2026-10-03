@@ -42,6 +42,10 @@ text decisions against a real backend.
 From the repository root:
 
 ```sh
+# Focused CPU-only API integration suite.
+cargo test -p omni-jev --test frontend --locked
+
+# Full workspace checks.
 cargo fmt --all --check
 cargo clippy --workspace --locked --all-targets -- -D warnings
 cargo test --workspace --locked

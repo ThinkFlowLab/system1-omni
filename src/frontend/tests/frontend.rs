@@ -160,6 +160,82 @@ async fn forwards_every_modality_byte_for_byte() {
 }
 
 #[tokio::test]
+async fn round_trips_decision_fixtures() {
+    let fixtures = [
+        (
+            r#"{"model":"any-worker","state":"Please route this request.","questions":{"department":{"type":"choice","instructions":"Which team?","criteria":{"billing":"Charges and refunds","technical":"Software problems"}}}}"#,
+            r#"{"answers":{"department":{"type":"choice","choice":"billing"}}}"#,
+        ),
+        (
+            r#"{"model":"any-worker","state":"Please route this request.","questions":{"urgency":{"type":"score","instructions":"How urgent is this?","criteria":["Not urgent","Needs attention soon","Immediate attention"]}}}"#,
+            r#"{"answers":{"urgency":{"type":"score","score":0.8}}}"#,
+        ),
+        (
+            r#"{"model":"any-worker","state":"Please route this request.","questions":{"refund":{"type":"noul","instructions":"Does this ask for a refund?"}}}"#,
+            r#"{"answers":{"refund":{"type":"noul","noul":0.9}}}"#,
+        ),
+        (
+            r#"{"model":"any-worker","state":"Please route this request.","questions":{"department":{"type":"choice","instructions":"Which team?","criteria":{"billing":"Charges and refunds","technical":"Software problems"}},"urgency":{"type":"score","instructions":"How urgent is this?","criteria":["Not urgent","Needs attention soon","Immediate attention"]},"refund":{"type":"noul","instructions":"Does this ask for a refund?"}}}"#,
+            r#"{"answers":{"department":{"type":"choice","choice":"billing"},"urgency":{"type":"score","score":0.8},"refund":{"type":"noul","noul":0.9}}}"#,
+        ),
+    ];
+
+    for (request_body, response_body) in fixtures {
+        let (worker, seen) = start_worker(Reply {
+            headers: vec![("content-type", "application/json")],
+            body: Some(Bytes::from_static(response_body.as_bytes())),
+            ..Default::default()
+        })
+        .await;
+        let frontend = start_frontend(&worker, Config::DEFAULT_TIMEOUT).await;
+        let response = client()
+            .post(format!("{frontend}/v1/systemone"))
+            .header("content-type", "application/json")
+            .body(request_body)
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["content-type"], "application/json");
+        assert_eq!(response.bytes().await.unwrap(), response_body.as_bytes());
+        assert_eq!(seen.lock().unwrap()[0].body, request_body.as_bytes());
+    }
+}
+
+#[tokio::test]
+async fn rejects_invalid_routes_before_forwarding() {
+    let (worker, seen) = start_worker(Reply::default()).await;
+    let frontend = start_frontend(&worker, Config::DEFAULT_TIMEOUT).await;
+
+    let get_decision = client()
+        .get(format!("{frontend}/v1/systemone"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(get_decision.status(), StatusCode::METHOD_NOT_ALLOWED);
+
+    let post_health = client()
+        .post(format!("{frontend}/health"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(post_health.status(), StatusCode::METHOD_NOT_ALLOWED);
+
+    let unknown_path = client()
+        .get(format!("{frontend}/v1/unknown"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unknown_path.status(), StatusCode::NOT_FOUND);
+
+    assert!(
+        seen.lock().unwrap().is_empty(),
+        "rejected frontend requests must not reach the worker"
+    );
+}
+
+#[tokio::test]
 async fn forwards_authorization_when_present() {
     let (worker, seen) = start_worker(Reply::default()).await;
     let frontend = start_frontend(&worker, Config::DEFAULT_TIMEOUT).await;
@@ -288,6 +364,41 @@ async fn health_reflects_worker_health_under_base_path() {
         assert_eq!(seen[0].uri, "/worker/health?verbose=1");
         assert_eq!(seen[0].headers["authorization"], "Bearer health-token");
     }
+}
+
+#[tokio::test]
+async fn forwards_prefixed_decision_with_query() {
+    let response_body = r#"{"answers":{"refund":{"type":"noul","noul":0.9}}}"#;
+    let (worker, seen) = start_worker(Reply {
+        headers: vec![("content-type", "application/json")],
+        body: Some(Bytes::from_static(response_body.as_bytes())),
+        ..Default::default()
+    })
+    .await;
+    let frontend = start_frontend(&format!("{worker}/worker"), Config::DEFAULT_TIMEOUT).await;
+    let request_body = decision_request(r#""A request with a backend prefix.""#);
+    let response = client()
+        .post(format!(
+            "{frontend}/v1/systemone?request_id=param-test&verbose=1"
+        ))
+        .header("content-type", "application/json")
+        .body(request_body.clone())
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["content-type"], "application/json");
+    assert_eq!(response.bytes().await.unwrap(), response_body.as_bytes());
+
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].method, "POST");
+    assert_eq!(
+        seen[0].uri,
+        "/worker/v1/systemone?request_id=param-test&verbose=1"
+    );
+    assert_eq!(seen[0].body, request_body.as_bytes());
 }
 
 #[tokio::test]
