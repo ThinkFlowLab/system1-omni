@@ -9,11 +9,14 @@ from __future__ import annotations
 
 import ctypes
 import gc
+import math
 import threading
 import time
 from collections import OrderedDict
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
+
+from .graph_admission import AdmissionPolicy
 
 
 def tensor_signature(value):
@@ -33,9 +36,29 @@ class GraphConfig:
     max_bytes: int = 1024 * 1024 * 1024
     min_uses: int = 2
     max_tokens: int = 2048
+    admission_window: int = 8
+    cooldown_requests: int = 32
+    capture_window: int = 32
+    max_captures: int = 4
+    capture_budget_ms: float = 2000.0
 
     def __post_init__(self):
-        if min(self.max_shapes, self.max_bytes, self.min_uses, self.max_tokens) <= 0:
+        if not math.isfinite(self.capture_budget_ms):
+            raise ValueError("capture time budget must be finite")
+        if (
+            min(
+                self.max_shapes,
+                self.max_bytes,
+                self.min_uses,
+                self.max_tokens,
+                self.admission_window,
+                self.cooldown_requests,
+                self.capture_window,
+                self.max_captures,
+                self.capture_budget_ms,
+            )
+            <= 0
+        ):
             raise ValueError("graph limits must be positive")
 
 
@@ -243,6 +266,7 @@ class _GraphSegment:
 
 @dataclass
 class _ShapeEntry:
+    key: tuple | None = None
     blocks: dict = field(default_factory=dict)
     bytes: int = 0
     pool: _GraphPool | None = None
@@ -276,10 +300,17 @@ class GraphRuntime:
         self.model = model
         self.config = config or GraphConfig()
         self.cache = GraphCache(self.config.max_shapes, self.config.max_bytes)
-        self.uses = OrderedDict()
+        self.admission = AdmissionPolicy(self.config)
+        self._in_request = False
         self.disabled = OrderedDict()
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         self.stats = {
+            "requests": 0,
+            "no_request": 0,
+            "cooldown": 0,
+            "capture_budget": 0,
+            "capture_attempts": 0,
+            "capture_attempt_ms": 0.0,
             "eager": 0,
             "unsupported": 0,
             "warmup": 0,
@@ -295,11 +326,27 @@ class GraphRuntime:
             "numerical_mismatch": 0,
         }
 
+    @contextmanager
+    def request(self):
+        """Serialize a complete prediction and count duplicate layouts only once."""
+        with self.lock:
+            if self._in_request:
+                raise RuntimeError("nested Graph requests are unsupported")
+            self._in_request = True
+            self.admission.begin_request()
+            self.stats["requests"] += 1
+            try:
+                yield
+            finally:
+                self._in_request = False
+
     def invalidate(self):
         """Call after replacing model weights or adapters."""
         with self.lock:
+            if self._in_request:
+                raise RuntimeError("cannot invalidate during a Graph request")
             retired = self.cache.clear()
-            self.uses.clear()
+            self.admission.reset()
             self.disabled.clear()
             for entry in retired:
                 entry.close()
@@ -393,6 +440,9 @@ class GraphRuntime:
         import torch
 
         with self.lock, torch.no_grad():
+            if not self._in_request:
+                self.stats["no_request"] += 1
+                return self._eager(values)
             if not self._supported(values):
                 self.stats["unsupported"] += 1
                 return self._eager(values)
@@ -413,68 +463,78 @@ class GraphRuntime:
                 self.stats["replays"] += 1
                 return output
 
-            uses = self.uses.get(key, 0) + 1
-            self.uses[key] = uses
-            self.uses.move_to_end(key)
-            while len(self.uses) > 128:
-                self.uses.popitem(last=False)
-            if uses < self.config.min_uses:
-                self.stats["warmup"] += 1
+            reason = self.admission.reason(key)
+            if reason is not None:
+                self.stats[reason] += 1
                 return self._eager(values)
 
-            reference = self._eager(values)
-            candidate = _ShapeEntry()
+            ticket = self.admission.start_capture()
+            self.stats["capture_attempts"] += 1
+            attempt_start = time.perf_counter()
             try:
-                torch.cuda.synchronize(values["inputs_embeds"].device)
-                capture_start = time.perf_counter()
-                output = self._run_segments(values, candidate)
-                torch.cuda.synchronize(values["inputs_embeds"].device)
-                capture_ms = (time.perf_counter() - capture_start) * 1000
-            except torch.cuda.OutOfMemoryError:
-                self.stats["capture_oom"] += 1
-                candidate.close()
-                del candidate
-                gc.collect()
-                torch.cuda.empty_cache()
-                self._disable(key)
-                return reference
-            except RuntimeError:
-                # Only a healthy CUDA context can continue serving eagerly.
-                torch.cuda.synchronize(values["inputs_embeds"].device)
-                self.stats["capture_error"] += 1
-                candidate.close()
-                del candidate
-                self._disable(key)
-                gc.collect()
-                return reference
+                return self._capture(values, key)
+            finally:
+                elapsed = (time.perf_counter() - attempt_start) * 1000
+                self.admission.finish_capture(ticket, elapsed)
+                self.stats["capture_attempt_ms"] += elapsed
 
-            if not torch.equal(reference, output):
-                self.stats["numerical_mismatch"] += 1
-                candidate.close()
-                del candidate, output
-                self._disable(key)
-                gc.collect()
-                return reference
-            retired = self.cache.put(key, candidate)
-            if retired is None:
-                self.stats["memory_budget"] += 1
-                candidate.close()
-                del candidate
-                self._disable(key)
-                gc.collect()
-                return reference
-            self.stats["captures"] += 1
-            self.stats["capture_ms"] += capture_ms
-            self.stats["evictions"] += len(retired)
-            if retired:
-                for entry in retired:
-                    entry.close()
-                del entry
-                del retired
-                gc.collect()
-            else:
-                del retired
-            return output
+    def _capture(self, values, key):
+        import torch
+
+        reference = self._eager(values)
+        candidate = _ShapeEntry(key=key)
+        try:
+            torch.cuda.synchronize(values["inputs_embeds"].device)
+            capture_start = time.perf_counter()
+            output = self._run_segments(values, candidate)
+            torch.cuda.synchronize(values["inputs_embeds"].device)
+            capture_ms = (time.perf_counter() - capture_start) * 1000
+        except torch.cuda.OutOfMemoryError:
+            self.stats["capture_oom"] += 1
+            candidate.close()
+            del candidate
+            gc.collect()
+            torch.cuda.empty_cache()
+            self._disable(key)
+            return reference
+        except RuntimeError:
+            # Only a healthy CUDA context can continue serving eagerly.
+            torch.cuda.synchronize(values["inputs_embeds"].device)
+            self.stats["capture_error"] += 1
+            candidate.close()
+            del candidate
+            self._disable(key)
+            gc.collect()
+            return reference
+
+        if not torch.equal(reference, output):
+            self.stats["numerical_mismatch"] += 1
+            candidate.close()
+            del candidate, output
+            self._disable(key)
+            gc.collect()
+            return reference
+        retired = self.cache.put(key, candidate)
+        if retired is None:
+            self.stats["memory_budget"] += 1
+            candidate.close()
+            del candidate
+            self._disable(key)
+            gc.collect()
+            return reference
+        self.stats["captures"] += 1
+        self.stats["capture_ms"] += capture_ms
+        self.stats["evictions"] += len(retired)
+        if retired:
+            for entry in retired:
+                self.admission.evict(entry.key)
+                entry.close()
+            del entry
+            del retired
+            gc.collect()
+        else:
+            del retired
+        return output
 
     def _disable(self, key):
         self.stats["rejected"] += 1

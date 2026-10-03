@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+from contextlib import nullcontext
 from pathlib import Path
 
 from .protocol import InvalidRequest, Question, Request, answer, build_messages
@@ -272,6 +273,11 @@ class MultimodalEngine:
         }
 
     def predict(self, request: Request) -> dict:
+        runtime = getattr(self, "graph_runtime", None)
+        with runtime.request() if runtime is not None else nullcontext():
+            return self._predict(request)
+
+    def _predict(self, request: Request) -> dict:
         if len(request.questions) == 1:
             return self.predict_reference(request)
         # No image encoder or language model runs until every prompt is valid.

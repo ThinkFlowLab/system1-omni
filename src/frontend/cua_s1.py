@@ -123,8 +123,18 @@ def main():
     )
     p.add_argument("--graph-max-shapes", type=int, default=8)
     p.add_argument("--graph-max-memory-mib", type=int, default=1024)
-    p.add_argument("--graph-min-uses", type=int, default=2)
+    p.add_argument(
+        "--graph-min-uses",
+        type=int,
+        default=2,
+        help="distinct requests needed before capture",
+    )
     p.add_argument("--graph-max-tokens", type=int, default=2048)
+    p.add_argument("--graph-admission-window", type=int, default=8)
+    p.add_argument("--graph-cooldown-requests", type=int, default=32)
+    p.add_argument("--graph-capture-window", type=int, default=32)
+    p.add_argument("--graph-max-captures", type=int, default=4)
+    p.add_argument("--graph-capture-budget-ms", type=float, default=2000.0)
     args = p.parse_args()
     try:
         graph_config = (
@@ -133,6 +143,11 @@ def main():
                 max_bytes=args.graph_max_memory_mib * 1024 * 1024,
                 min_uses=args.graph_min_uses,
                 max_tokens=args.graph_max_tokens,
+                admission_window=args.graph_admission_window,
+                cooldown_requests=args.graph_cooldown_requests,
+                capture_window=args.graph_capture_window,
+                max_captures=args.graph_max_captures,
+                capture_budget_ms=args.graph_capture_budget_ms,
             )
             if args.graph
             else None
