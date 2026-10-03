@@ -30,7 +30,7 @@ fn official_packing_parity() {
     let cases: Vec<Value> = serde_json::from_slice(&std::fs::read(oracle).unwrap()).unwrap();
     assert_eq!(cases.len(), 17);
     for case in cases {
-        let request: Request = serde_json::from_value(case["request"].clone()).unwrap();
+        let request: Request = Request::from_value(case["request"].clone()).unwrap();
         let got = pre.prepare(&request).unwrap();
         let expected = &case["expected"];
         let items = expected["items"].as_array().unwrap();

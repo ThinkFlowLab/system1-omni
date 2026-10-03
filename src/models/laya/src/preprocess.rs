@@ -1,19 +1,92 @@
 //! English Laya 0.3.20 token packing, before backend padding or batching.
 use anyhow::{Result, anyhow, bail, ensure};
-use serde::{Deserialize, Serialize};
+use serde::de::{self, MapAccess, SeqAccess, Visitor};
+use serde::{Deserializer, Serialize};
+use serde_json::value::RawValue;
 use serde_json::{Map, Value};
 use std::path::Path;
 use tokenizers::Tokenizer;
 
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+/// Use `from_json` for a top-level JSON request or `from_value` for an existing value.
+#[derive(Debug, Serialize)]
 pub struct Request {
     pub state: Value,
-    #[serde(default)]
     pub model: Option<String>,
     pub questions: Map<String, Value>,
-    #[serde(default)]
     pub lang: Option<String>,
+}
+
+impl Request {
+    /// Decode one JSON request with serde_json's default nesting limit.
+    pub fn from_json(raw: &str) -> Result<Self> {
+        let raw: Box<RawValue> = serde_json::from_str(raw)?;
+        Self::from_value(parse_value(&raw, 0)?)
+    }
+
+    /// Keep existing structured values without reparsing or imposing a JSON depth limit.
+    pub fn from_value(value: Value) -> Result<Self> {
+        let Value::Object(mut fields) = value else {
+            bail!("request must be an object");
+        };
+        let state = fields
+            .remove("state")
+            .ok_or_else(|| anyhow!("missing state"))?;
+        let questions = fields
+            .remove("questions")
+            .ok_or_else(|| anyhow!("missing questions"))?;
+        let Value::Object(questions) = questions else {
+            bail!("questions must be an object");
+        };
+        let model = serde_json::from_value(fields.remove("model").unwrap_or(Value::Null))?;
+        let lang = serde_json::from_value(fields.remove("lang").unwrap_or(Value::Null))?;
+        ensure!(fields.is_empty(), "unknown request fields");
+        Ok(Self {
+            state,
+            model,
+            questions,
+            lang,
+        })
+    }
+}
+
+fn parse_value(raw: &RawValue, depth: usize) -> serde_json::Result<Value> {
+    let text = raw.get();
+    if !matches!(text.as_bytes()[0], b'{' | b'[') {
+        return serde_json::from_str(text);
+    }
+    if depth >= 127 {
+        return Err(de::Error::custom("recursion limit exceeded"));
+    }
+    // Construct containers explicitly: serde_json's private Number/RawValue
+    // map encodings must not interpret legitimate user object keys.
+    struct Containers(usize);
+    impl<'de> Visitor<'de> for Containers {
+        type Value = Value;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a JSON object or array")
+        }
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Value, A::Error> {
+            let mut values = Vec::new();
+            while let Some(raw) = seq.next_element::<Box<RawValue>>()? {
+                values.push(parse_value(&raw, self.0 + 1).map_err(de::Error::custom)?);
+            }
+            Ok(Value::Array(values))
+        }
+        fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Value, A::Error> {
+            let mut values = Map::new();
+            while let Some((key, raw)) = map.next_entry::<String, Box<RawValue>>()? {
+                if self.0 == 0 && values.contains_key(&key) {
+                    return Err(de::Error::custom(format!("duplicate field {key}")));
+                }
+                values.insert(
+                    key,
+                    parse_value(&raw, self.0 + 1).map_err(de::Error::custom)?,
+                );
+            }
+            Ok(Value::Object(values))
+        }
+    }
+    serde_json::Deserializer::from_str(text).deserialize_any(Containers(depth))
 }
 
 #[derive(Debug, Serialize)]
