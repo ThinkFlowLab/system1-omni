@@ -5,6 +5,7 @@ instead of failing the run.
 """
 
 import importlib.metadata
+import json
 import os
 import platform
 import subprocess
@@ -17,7 +18,9 @@ REPO = Path(__file__).resolve().parents[2]
 
 def _run(*cmd):
     try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=10, check=True).stdout.strip()
+        return subprocess.run(
+            cmd, capture_output=True, text=True, timeout=10, check=True
+        ).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         return None
 
@@ -35,7 +38,9 @@ def _checkpoint_revision(repo_id, ref="main"):
     try:
         from huggingface_hub.constants import HF_HUB_CACHE
 
-        ref_file = Path(HF_HUB_CACHE) / f"models--{repo_id.replace('/', '--')}" / "refs" / ref
+        ref_file = (
+            Path(HF_HUB_CACHE) / f"models--{repo_id.replace('/', '--')}" / "refs" / ref
+        )
         return ref_file.read_text().strip()
     except (ImportError, OSError):
         return None
@@ -66,13 +71,46 @@ def noise_problems(max_load):
     load = os.getloadavg()[0]
     if load > max_load:
         top = _run("ps", "-Ao", "pcpu=,comm=", "-r") or ""
-        busiest = "; ".join(" ".join(line.split()[:1] + [line.split("/")[-1]]) for line in top.splitlines()[:3])
+        busiest = "; ".join(
+            " ".join(line.split()[:1] + [line.split("/")[-1]])
+            for line in top.splitlines()[:3]
+        )
         problems.append(f"1-min load {load:.1f} > {max_load} (busiest: {busiest})")
     return problems
 
 
+def refuse_if_noisy(max_load, measured):
+    """Exits when a measured run would be noisy; otherwise warns about each problem and returns them."""
+    problems = noise_problems(max_load)
+    if problems and measured:
+        sys.exit("refusing a measured run: " + "; ".join(problems))
+    for problem in problems:
+        print(f"warning: {problem}", file=sys.stderr)
+    return problems
+
+
+def read_workloads(path):
+    """The fixed inputs by id, in file order."""
+    workloads = {}
+    with open(path) as f:
+        for w in map(json.loads, filter(str.strip, f)):
+            if w["id"] in workloads:
+                raise ValueError(f"{path}: workload id {w['id']} appears twice")
+            workloads[w["id"]] = w
+    return workloads
+
+
 def header(checkpoint, **extra):
-    status = _run("git", "-C", str(REPO), "status", "--porcelain", "--", ".", ":!benchmarks/laya_mps/results")
+    status = _run(
+        "git",
+        "-C",
+        str(REPO),
+        "status",
+        "--porcelain",
+        "--",
+        ".",
+        ":!benchmarks/laya_mps/results",
+    )
     return {
         "type": "env",
         "utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -84,7 +122,9 @@ def header(checkpoint, **extra):
         "torch": _version("torch"),
         "transformers": _version("transformers"),
         "python": platform.python_version(),
-        "os": f"macOS {platform.mac_ver()[0]}" if sys.platform == "darwin" else platform.platform(),
+        "os": f"macOS {platform.mac_ver()[0]}"
+        if sys.platform == "darwin"
+        else platform.platform(),
         "chip": _run("sysctl", "-n", "machdep.cpu.brand_string"),
         "cpu_perf_cores": _run("sysctl", "-n", "hw.perflevel0.physicalcpu"),
         "cpu_eff_cores": _run("sysctl", "-n", "hw.perflevel1.physicalcpu"),
@@ -95,6 +135,9 @@ def header(checkpoint, **extra):
         "argv": sys.argv,
         **extra,
     }
+
+
+RUSAGE_INFO_V4 = 4  # <sys/resource.h>
 
 
 def footprint_mb(pid=None):
@@ -151,7 +194,10 @@ def footprint_mb(pid=None):
         return {}
     info = RusageInfoV4()
     libc = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
-    if libc.proc_pid_rusage(pid or os.getpid(), 4, ctypes.byref(info)) != 0:  # RUSAGE_INFO_V4
+    failed = libc.proc_pid_rusage(
+        pid or os.getpid(), RUSAGE_INFO_V4, ctypes.byref(info)
+    )
+    if failed:
         return {}
     return {
         "footprint_mb": round(info.phys_footprint / 2**20),
