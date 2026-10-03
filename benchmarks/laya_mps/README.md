@@ -12,6 +12,7 @@ JSONL to `results/` (kept out of the repository); `report.py` builds the tables 
 | `lengths.py` | first request of new input lengths and the memory it adds, for one or two worker flag sets |
 | `late_load.py` | a checkpoint loaded while serving: its first request directly and through the frontend |
 | `fallback.py` | Laya's fallback to the CPU on a GPU out-of-memory error, triggered by a lowered MPS memory limit |
+| `release.py` | in-process: what releasing PyTorch's MPS caches gives back after many lengths, and what it costs |
 | `profile_mps.py` | where a request's time goes on MPS |
 | `report.py` | tables from the JSONL, including the run-to-run gate and the answer comparison against a reference config |
 | `env.py` | shared: versions, checkpoint, hardware, power and load recorded with each run; memory footprint |
@@ -59,15 +60,29 @@ frontend first: the scripts start their own on ports 8000, 8001 and 8080.
 | --- | --- |
 | checkpoint download time | `HF_HOME="$(mktemp -d)" python -c "import time, huggingface_hub as h; t = time.time(); h.snapshot_download('convaiinnovations/laya', allow_patterns=['rl_agent_config.json', 'model.safetensors', 'tokenizer/*', 'encoder/*']); print(f'{time.time() - t:.0f} s')"` |
 | first request after ready, time to ready, memory: worker against laya-serve, with and without the options | `bench_http.py` C3, C3w and C3o above, then `report.py` (phases and memory tables) |
+| first request after ready over many fresh starts | the loop below the table |
 | warm latency and answers, with the options against without | `paired.py --run p1 --a "" --b "--compile --weights fp16"` |
 | what each option contributes | `paired.py --run p2 --a "" --b=--compile`, `paired.py --run p3 --a "" --b "--weights fp16"`, and fp16 on top of compile: `paired.py --run p4 --a=--compile --b "--compile --weights fp16"` |
 | frontend overhead | start a worker on 8000 and the frontend on 8080 as in the recipe, then `paired.py --run f1 --a-url http://127.0.0.1:8000 --b-url http://127.0.0.1:8080` |
 | a request after an idle gap | `paired.py --run i1 --a "" --b "--compile --weights fp16" --gap 2 --only W1 -n 30 --discard 2` (also `--gap 0.5`) |
 | first request of a new input length; memory growth with the lengths seen | `lengths.py --run l1 --a "" --b "--compile --weights fp16"` (add `--first-words 1 --step 1 --lengths 1000` for every length up to the window) |
+| memory released by `torch.mps.empty_cache()` and the cost afterwards | `release.py --compile --weights fp16` |
 | a checkpoint loaded while serving, directly and through the frontend | `late_load.py --flags "--compile --weights fp16" --frontend target/release/omni-jev`, and without `--flags` |
 | fallback to the CPU on a GPU out-of-memory error | `fallback.py --limit-gb 3.5`, and `--limit-gb 2.5 --flags "--compile --weights fp16"` |
 | where the time goes | `profile_mps.py --run p1` |
 | two commits compared | start each worker from its own checkout on its own port, then `paired.py --a-url ... --b-url ...` |
+
+Each fresh start is one `bench_http.py` run; the phases table of `report.py` then lists the first request of
+every start (one measured run per start, so it needs an idle machine):
+
+```sh
+for i in $(seq 23); do
+  python benchmarks/laya_mps/bench_http.py --config C3o --run s$i --only W1 -n 1 --discard 1 \
+    --concurrency 1 --spawn .venv/bin/python -m frontend.laya_mps --device {device} --model {model} \
+    --compile --weights fp16 --port {port}
+done
+python benchmarks/laya_mps/report.py benchmarks/laya_mps/results/http_C3o_s*.jsonl --ref C3o
+```
 
 All scripts are run as `python benchmarks/laya_mps/<script>` from the repository root; `--summarize`
 rebuilds a paired or lengths table from its JSONL. The published paired runs were made with the earlier

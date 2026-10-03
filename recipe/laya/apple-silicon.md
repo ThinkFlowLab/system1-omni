@@ -46,9 +46,9 @@ Laya loads another checkpoint when a request names it (`"model": "multilingual"`
 (a non-English state). The worker prepares that checkpoint the same way inside that first request; other
 requests wait behind it, `/health` names it under `preparing` meanwhile and lists it afterwards. On the
 M1 Pro that first request took 5–10 s without the options and 19–22 s with `--compile` (plus the download
-the first time, 680 MB for `multilingual`). Under heavy load it once took 71 s; the frontend gives a
-backend 60 s, so it answered that request with 504 while the worker finished preparing, and the same
-request sent again took 35 ms. To be safe, send one request for each further checkpoint straight to the
+the first time, 680 MB for `multilingual`). With a second worker holding memory on the same GPU it once
+took 71 s; the frontend gives a backend 60 s, so it answered that request with 504 while the worker
+finished preparing, and the same request sent again took 35 ms. To be safe, send one request for each further checkpoint straight to the
 worker after startup. Each resident checkpoint needs its own memory (see Troubleshooting).
 
 With `--require-device`, a checkpoint that does not land on the requested device is unloaded again and
@@ -102,9 +102,8 @@ The latencies above are for requests sent back to back. Measured on the M1 Pro:
   has slowed down in the meantime. For a short one-question request (25 ms back to back with the options,
   40 ms without) it took about 50 ms after 0.2–1 s of idle and 105–115 ms after 2–5 s (60–68 ms and
   114–127 ms without the options). This is also why the first request after ready costs more than a warm
-  one. An agent that asks once every few seconds sees these numbers, not the back-to-back ones. A
-  heartbeat of one forward pass every 0.5 s held it at about 45 ms in a probe, for 8% GPU load; the worker
-  does not do this.
+  one. An agent that asks once every few seconds sees these numbers, not the back-to-back ones. Keeping
+  the GPU busy between requests would avoid it, at the cost of power; the worker does not do this.
 - **New input lengths.** The first request of a length the worker has not seen costs about 15 ms more
   once with the options (6 ms without). It is not a recompile (`recompiled_after_ready` stays `false`).
 - **Memory grows with the lengths seen.** With `--compile`, PyTorch keeps host memory for every input

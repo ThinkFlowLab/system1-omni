@@ -87,7 +87,7 @@ BENCH_SCRIPTS = (
     "report",
     "lengths",
 )
-BENCH_SCRIPTS += ("late_load", "fallback")
+BENCH_SCRIPTS += ("late_load", "fallback", "release")
 SCRIPTS = {
     "frontend.laya_mps": "src/frontend/laya_mps.py",
     **{f"{name}.py": f"benchmarks/laya_mps/{name}.py" for name in BENCH_SCRIPTS},
@@ -413,3 +413,34 @@ def test_late_load_refuses_a_late_checkpoint_the_worker_already_serves(monkeypat
         )
         with pytest.raises(SystemExit):
             late_load.main()
+
+
+# --------------------------------------------------------------------------------------------- release.py
+def test_release_measures_memory_and_the_cost_of_lengths_run_again():
+    import release
+
+    calls, warm, memory = [], set(), {"mb": 3000.0}
+
+    def run(
+        words,
+    ):  # a length costs 10 ms more the first time; that first time adds 5 MB
+        calls.append(words)
+        if words in warm:
+            return 20.0
+        warm.add(words)
+        memory["mb"] += 5.0
+        return 30.0
+
+    def release_caches():
+        calls.append("release")
+        warm.clear()
+        memory["mb"] = 2900.0
+
+    result = release.measure(run, lambda: memory["mb"], release_caches, [10, 20, 30])
+    assert calls == [10, 10, 20, 20, 30, 30, "release", 10, 10, 20, 20, 30, 30]
+    assert result["footprint_mb"] == {
+        "before": 3000.0,
+        "after_lengths": 3015.0,
+        "after_release": 2900.0,
+    }
+    assert result["extra_ms_before_release"] == result["extra_ms_after_release"] == 10.0
