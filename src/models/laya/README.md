@@ -86,22 +86,9 @@ bundle; CPU builds need neither library. The operator bundle currently targets
 Hopper `sm_90a`. `Encoder::load` is unsafe because callers must trust the native
 code and provide a compatible GPU; hashes bind artifacts, not code trust.
 
-Reuse the [existing CUDA build entry](https://github.com/linear3735/system1-omni/blob/5ff41a5/src/backends/cuda/build.sh)
-and its model source/export tools. Export rotary tables with that version's
-`tools/export_tables.py`. Keep `liblaya_cuda.so`, `build-manifest.json`,
-`tables.json` and the four rotary table files in one bundle directory. These build
-tools are a separate dependency, not duplicated by this encoder change. Startup
-checks checkpoint and bundle hashes before loading native code.
-
-For GPU validation, supply real request fixtures to
-`recipe/laya/native/export_encoder.py CHECKPOINT REQUESTS OUTPUT`. It uses Laya
-0.3.20 and PyTorch on CUDA as the reference, independently of the Rust runtime.
-Set `LAYA_CUDA_LIBRARY`, `LAYA_CUDA_DEVICE`, `LAYA_CHECKPOINT`, `LAYA_KERNEL_BUNDLE` and
-`LAYA_ENCODER_ORACLE`, then run:
-
-```sh
-cargo test --release --locked -p omni-laya --lib real_encoder_matches_official_hidden_states -- --ignored --nocapture
-```
+Build prerequisites, bundle preparation and the GPU test commands are in the
+[native encoder validation recipe](../../../recipe/laya/README.md#native-encoder-validation).
+Startup checks checkpoint and bundle hashes before loading operator code.
 
 The test checks selected encoder intermediates, both head layers, final hidden
 states, shape changes and repeated workspace reuse. It compares valid tokens;
