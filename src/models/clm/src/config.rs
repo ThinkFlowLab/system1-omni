@@ -55,18 +55,22 @@ impl Config {
             metadata.get("format")
         );
         let cfg = metadata.get("cfg").context("metadata has no cfg")?;
-        let mut head: HeadConfig =
+        // `hidden_size` and `projection_dim` are repeated at the top level, and `cfg` may
+        // omit them: the exporter takes them from the checkpoint's own entries. They are
+        // required fields of `HeadConfig`, so they have to be filled in *before*
+        // deserializing — a fallback applied afterwards never runs, because the parse
+        // fails on the missing field first.
+        let mut raw: serde_json::Map<String, serde_json::Value> =
             serde_json::from_str(cfg).with_context(|| format!("parse cfg {cfg}"))?;
-        // hidden_size and projection_dim are repeated at the top level; prefer those
-        // when the cfg omits them so an older export still loads.
-        head.hidden_size = metadata
-            .get("hidden_size")
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(head.hidden_size);
-        head.projection_dim = metadata
-            .get("projection_dim")
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(head.projection_dim);
+        for key in ["hidden_size", "projection_dim"] {
+            if !raw.contains_key(key)
+                && let Some(value) = metadata.get(key).and_then(|v| v.parse::<usize>().ok())
+            {
+                raw.insert(key.to_string(), value.into());
+            }
+        }
+        let head: HeadConfig = serde_json::from_value(serde_json::Value::Object(raw))
+            .with_context(|| format!("parse cfg {cfg}"))?;
         let logit_scale: f32 = metadata
             .get("logit_scale")
             .context("metadata has no logit_scale")?

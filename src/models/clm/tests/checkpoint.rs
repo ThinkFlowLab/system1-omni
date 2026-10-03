@@ -1,6 +1,6 @@
 //! CPU checks for the CLM head loader. No GPU and no encoder, but the frozen export.
 use omni_clm::{
-    Kind, Question, Weights, answer, confidence, distribution, head_tensors, weights::Heads,
+    Config, Kind, Question, Weights, answer, confidence, distribution, head_tensors, weights::Heads,
 };
 use std::path::PathBuf;
 
@@ -230,4 +230,47 @@ fn synthetic(path: &std::path::Path, layernorm: bool, include_norms: bool) -> Pa
 
     serialize_to_file(tensors, Some(metadata), path).unwrap();
     path.to_path_buf()
+}
+
+/// The exporter writes the geometry at the top level and may leave it out of `cfg`, so a
+/// `cfg` without it has to be completed before deserialization rather than after.
+#[test]
+fn the_top_level_geometry_fills_in_a_cfg_that_omits_it() {
+    use std::collections::HashMap;
+
+    let geom = r#""width":3,"depth":3,"activation":"gelu","layernorm":false,"residual":false"#;
+    let meta = |cfg: String| -> HashMap<String, String> {
+        HashMap::from([
+            ("format".to_string(), "clm-heads".to_string()),
+            ("cfg".to_string(), cfg),
+            ("hidden_size".to_string(), "4".to_string()),
+            ("projection_dim".to_string(), "2".to_string()),
+            ("logit_scale".to_string(), "1.0".to_string()),
+        ])
+    };
+
+    let omitted = Config::from_metadata(Some(&meta(format!("{{{geom}}}")))).unwrap();
+    assert_eq!(omitted.head.hidden_size, 4);
+    assert_eq!(omitted.head.projection_dim, 2);
+
+    let both = meta(format!(r#"{{"hidden_size":4,"projection_dim":2,{geom}}}"#));
+    assert_eq!(Config::from_metadata(Some(&both)).unwrap().head.width, 3);
+
+    let mut neither = meta(format!("{{{geom}}}"));
+    neither.remove("hidden_size");
+    neither.remove("projection_dim");
+    assert!(Config::from_metadata(Some(&neither)).is_err());
+}
+
+/// `schema.label_of` is `max(p, key=p.__getitem__)`, which keeps the first of several
+/// equal values.
+#[test]
+fn a_tied_score_label_keeps_the_first_level() {
+    let question = Question {
+        id: "tie".into(),
+        kind: Kind::Score,
+        keys: vec!["0".into(), "1".into(), "2".into()],
+    };
+    let tied = answer(&question, &[0.5, 0.5, 0.0]).unwrap();
+    assert_eq!(tied.label(), "0");
 }

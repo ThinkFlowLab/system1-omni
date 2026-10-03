@@ -51,9 +51,15 @@ impl Answer {
         match self {
             Answer::Choice { choice, .. } => choice.clone(),
             Answer::Noul { noul } => if *noul >= 0.5 { "true" } else { "false" }.to_string(),
+            // The first maximum, as Python's `max` keeps. `max_by` would return the
+            // last of several equal values, which is a different label for the same
+            // distribution.
             Answer::Score { probabilities, .. } => probabilities
                 .iter()
-                .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+                .fold(None, |best: Option<&(String, f32)>, kv| match best {
+                    Some(b) if b.1 >= kv.1 => Some(b),
+                    _ => Some(kv),
+                })
                 .map(|(k, _)| k.clone())
                 .unwrap_or_default(),
         }
