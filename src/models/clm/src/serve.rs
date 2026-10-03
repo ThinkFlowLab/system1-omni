@@ -209,7 +209,17 @@ fn render(x: &Value, indent: usize) -> String {
         Value::String(s) => s.clone(),
         Value::Bool(true) => "true".to_string(),
         Value::Bool(false) => "false".to_string(),
-        Value::Number(n) => n.to_string(),
+        Value::Number(n) => {
+            // `json.loads` gives the reference an `int` or a `float`, and `str` renders
+            // them differently; `serde_json` keeps the same distinction for us.
+            if let Some(i) = n.as_i64() {
+                i.to_string()
+            } else if let Some(u) = n.as_u64() {
+                u.to_string()
+            } else {
+                python_float(n.as_f64().expect("a JSON number is an integer or a float"))
+            }
+        }
         Value::Object(map) => {
             let pad = " ".repeat(indent);
             let parts: Vec<String> = map
@@ -239,6 +249,57 @@ fn render(x: &Value, indent: usize) -> String {
             parts.join("\n")
         }
     }
+}
+
+/// `str(float)` as CPython writes it, which is what the reference's `to_text` produces.
+///
+/// Rust and Python disagree on both ends of the range: an integral float keeps its `.0`
+/// here but not in `serde_json`, and a float outside `[1e-4, 1e16)` is exponent form with
+/// a signed, at-least-two-digit exponent (`1e-05`, `1e+16`). The heads are trained on
+/// these strings, so a differently spelled number is a different input.
+fn python_float(x: f64) -> String {
+    // The shortest representation that round-trips, which is what `repr` uses. Rust's
+    // shortest digits agree with CPython's on *how many* there are but not always on the
+    // last one: for a value exactly between two equally short decimals CPython rounds to
+    // even and Rust away from zero. Re-rendering at that precision uses the same correct
+    // rounding as CPython's `%.*e`, so the digits agree.
+    let shortest = format!("{x:e}");
+    let (shortest_mantissa, _) = shortest
+        .split_once('e')
+        .expect("a scientific format always writes an exponent");
+    let precision = shortest_mantissa
+        .chars()
+        .filter(char::is_ascii_digit)
+        .count()
+        - 1;
+    let rendered = format!("{:.*e}", precision, x);
+    let (mantissa, exponent) = rendered
+        .split_once('e')
+        .expect("`{:e}` always writes an exponent");
+    let exponent: i32 = exponent.parse().expect("`{:e}` writes a plain exponent");
+    let sign = if mantissa.starts_with('-') { "-" } else { "" };
+    let digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
+    // CPython writes the exponent when the decimal point lands at or before -4, or past
+    // 16 digits.
+    let point = exponent + 1;
+    let body = if point <= -4 || point > 16 {
+        let (head, tail) = digits.split_at(1);
+        let e = point - 1;
+        let (esign, e) = if e < 0 { ('-', -e) } else { ('+', e) };
+        if tail.is_empty() {
+            format!("{head}e{esign}{e:02}")
+        } else {
+            format!("{head}.{tail}e{esign}{e:02}")
+        }
+    } else if point <= 0 {
+        format!("0.{}{digits}", "0".repeat(-point as usize))
+    } else if point as usize >= digits.len() {
+        format!("{digits}{}.0", "0".repeat(point as usize - digits.len()))
+    } else {
+        let (head, tail) = digits.split_at(point as usize);
+        format!("{head}.{tail}")
+    };
+    format!("{sign}{body}")
 }
 
 fn is_nonempty_container(v: &Value) -> bool {

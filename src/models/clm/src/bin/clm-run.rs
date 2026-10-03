@@ -2,6 +2,7 @@
 //! against the reference.
 //!
 //!     clm-run CHECKPOINT_DIR --emb-url http://127.0.0.1:8090/v1/embeddings [--model NAME]
+//!         [--temperature T] [--max-tokens N|none]
 //!
 //! Reads one request object per line on stdin and writes one response object per line on
 //! stdout, which is the shape the reference's own `laya-run`-style harnesses use.
@@ -17,6 +18,7 @@ fn main() -> Result<()> {
     let mut emb_url = "http://127.0.0.1:8090/v1/embeddings".to_string();
     let mut model = "qwen3-8b".to_string();
     let mut temperature = 1.0f32;
+    let mut max_tokens: Option<usize> = Some(2048);
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -34,6 +36,17 @@ fn main() -> Result<()> {
                     .context("--temperature needs a value")?
                     .parse()
                     .context("--temperature is not a number")?;
+                i += 2;
+            }
+            "--max-tokens" => {
+                max_tokens = match args
+                    .get(i + 1)
+                    .context("--max-tokens needs a value")?
+                    .as_str()
+                {
+                    "none" | "off" => None,
+                    value => Some(value.parse().context("--max-tokens is not a number")?),
+                };
                 i += 2;
             }
             other if !other.starts_with("--") => {
@@ -55,7 +68,8 @@ fn main() -> Result<()> {
         heads.config.head.projection_dim,
         heads.config.logit_scale,
     );
-    let encoder = HttpEncoder::new(emb_url.clone(), model, Duration::from_secs(90))?;
+    let encoder = HttpEncoder::new(emb_url.clone(), model, Duration::from_secs(90))?
+        .with_max_tokens(max_tokens);
     let engine = Engine::new(heads, encoder);
 
     let stdin = std::io::stdin();

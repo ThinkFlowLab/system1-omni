@@ -23,6 +23,9 @@ STATES = [
     [{"k": 1}, {"k": 2}],
     {"empty_obj": {}, "empty_arr": [], "n": 0.5},
     {"nested": {"deep": {"x": "y"}}},
+    # `str(float)` switches to exponent form outside [1e-4, 1e16) and keeps a `.0` on an
+    # integral float, so these pin the number spelling the reference produces.
+    {"tiny": 1e-5, "smaller": 1e-7, "edge": 1e-4, "round": 1e15, "huge": 1e16, "neg": -1e-6},
 ]
 
 QUESTIONS = [
@@ -38,6 +41,8 @@ QUESTIONS = [
     {"type": "choice", "instructions": "Pick a bucket",
      "criteria": {"empty_obj": {}, "empty_list": []}},
     {"type": "noul", "instructions": "Is it so?", "criteria": {"true": {}, "false": []}},
+    # Numbers are spelled by `str(float)` in criteria too, not only in the state.
+    {"type": "score", "instructions": "How much?", "criteria": [1e-5, 0.5, 1e16]},
 ]
 
 

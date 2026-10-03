@@ -5,9 +5,15 @@
 //! to it. Everything the engine owns happens after the vectors come back.
 //!
 //! The wire shape follows `src/clm/embedder.py` in the CLM reference: a POST of
-//! `{model, input, encoding_format}`, a base64 `f32` payload per input in `index` order,
-//! and an `l2` normalisation applied on receipt — the encoder is asked for raw vectors
-//! and the client normalises, so a server that already normalises is harmless.
+//! `{model, input, encoding_format, truncate_prompt_tokens}`, a base64 `f32` payload per
+//! input in `index` order, and an `l2` normalisation applied on receipt — the encoder is
+//! asked for raw vectors and the client normalises, so a server that already normalises
+//! is harmless.
+//!
+//! `truncate_prompt_tokens` is not optional in practice: the reference sends its
+//! `max_tokens` (2048 by default, matching the documented `--max-model-len 2048`), and a
+//! text longer than that is truncated there but rejected by a server asked to embed it
+//! whole.
 use anyhow::{Context, Result, bail, ensure};
 use base64::Engine as _;
 use std::time::Duration;
@@ -76,6 +82,9 @@ pub struct HttpEncoder {
     client: reqwest::blocking::Client,
     /// Batching, as `embedder.py` does: a request carries at most this many inputs.
     batch: usize,
+    /// `embedder.py`'s `max_tokens`, sent as `truncate_prompt_tokens`. `None` sends no
+    /// limit at all, which is what a reference built with `max_tokens=None` does.
+    max_tokens: Option<usize>,
 }
 
 impl HttpEncoder {
@@ -93,16 +102,33 @@ impl HttpEncoder {
             model: model.into(),
             client,
             batch: 512,
+            // The reference's default, and the deployment's `--max-model-len`.
+            max_tokens: Some(2048),
         })
     }
 
-    /// One request: its rows in `index` order, and the tokens the endpoint reported.
-    fn fetch(&self, texts: &[String]) -> Result<(Vec<Vec<f32>>, u64)> {
-        let body = serde_json::json!({
+    /// Override the truncation limit sent as `truncate_prompt_tokens`.
+    pub fn with_max_tokens(mut self, max_tokens: Option<usize>) -> Self {
+        self.max_tokens = max_tokens;
+        self
+    }
+
+    /// The request body, which is `embedder.py`'s own.
+    fn body(&self, texts: &[String]) -> serde_json::Value {
+        let mut body = serde_json::json!({
             "model": self.model,
             "input": texts,
             "encoding_format": "base64",
         });
+        if let Some(max_tokens) = self.max_tokens {
+            body["truncate_prompt_tokens"] = max_tokens.into();
+        }
+        body
+    }
+
+    /// One request: its rows in `index` order, and the tokens the endpoint reported.
+    fn fetch(&self, texts: &[String]) -> Result<(Vec<Vec<f32>>, u64)> {
+        let body = self.body(texts);
         let response = self
             .client
             .post(&self.url)
@@ -163,5 +189,34 @@ impl Encoder for HttpEncoder {
             tokens += spent;
         }
         Ok((out, tokens))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `embedder.py` sends its `max_tokens` as `truncate_prompt_tokens`; a request without
+    /// it is truncated differently on the server, or rejected instead of truncated.
+    #[test]
+    fn the_request_carries_the_truncation_limit() {
+        let encoder =
+            HttpEncoder::new("http://127.0.0.1:1/v1/embeddings", "m", Duration::ZERO).unwrap();
+        let texts = vec!["a".to_string()];
+        assert_eq!(encoder.body(&texts)["truncate_prompt_tokens"], 2048);
+
+        let unlimited = encoder.with_max_tokens(None);
+        assert!(
+            unlimited
+                .body(&texts)
+                .get("truncate_prompt_tokens")
+                .is_none()
+        );
+
+        let custom = HttpEncoder::new("http://127.0.0.1:1/v1/embeddings", "m", Duration::ZERO)
+            .unwrap()
+            .with_max_tokens(Some(64));
+        assert_eq!(custom.body(&texts)["truncate_prompt_tokens"], 64);
+        assert_eq!(custom.body(&texts)["encoding_format"], "base64");
     }
 }

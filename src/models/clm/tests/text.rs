@@ -23,6 +23,9 @@ fn states() -> Vec<Value> {
         json!([{"k": 1}, {"k": 2}]),
         json!({"empty_obj": {}, "empty_arr": [], "n": 0.5}),
         json!({"nested": {"deep": {"x": "y"}}}),
+        // `str(float)` switches to exponent form outside [1e-4, 1e16) and keeps a `.0` on
+        // an integral float, so these pin the number spelling the reference produces.
+        json!({"tiny": 1e-5, "smaller": 1e-7, "edge": 1e-4, "round": 1e15, "huge": 1e16, "neg": -1e-6}),
     ]
 }
 
@@ -63,6 +66,12 @@ fn questions() -> Vec<QuestionRequest> {
             kind: Kind::Noul,
             instructions: "Is it so?".into(),
             criteria: Some(json!({"true": {}, "false": []})),
+        },
+        // Numbers are spelled by `str(float)` in criteria too, not only in the state.
+        QuestionRequest {
+            kind: Kind::Score,
+            instructions: "How much?".into(),
+            criteria: Some(json!([1e-5, 0.5, 1e16])),
         },
     ]
 }
