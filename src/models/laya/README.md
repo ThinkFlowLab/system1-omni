@@ -35,10 +35,10 @@ excluding CUDA context and allocator overhead. Buffers keep their CUDA context a
 after the caller drops the source mapping or `Cuda`. Failed loads release partial
 allocations. Workspace, rotary tables and inference are separate modules.
 
-The ignored `real_checkpoint_residency_matches_torch` test requires
-`LAYA_CUDA_LIBRARY`, `LAYA_CUDA_DEVICE`, `LAYA_CHECKPOINT` and `LAYA_WEIGHT_ORACLE`.
-It uploads all 205 used tensors and compares readback hashes with the existing Torch
-oracle; it does not test model outputs or latency.
+The ignored GPU check uploads all 205 used tensors and compares readback hashes
+with the Torch conversion oracle; it does not test model outputs or latency.
+Prerequisites and commands are in the
+[native validation recipe](../../../recipe/laya/README.md#native-residency-and-workspace-validation).
 
 ## Inference workspace
 
@@ -66,10 +66,11 @@ At `(B,L)=(1,512)`, allocations total 22,628,896 bytes; at `(16,512)`,
 236,048,836 bytes. The caller must enforce at most `MAX_MARKERS` scored positions.
 No Graph cache, kernel launch, cuBLAS workspace or inference is included.
 
-The ignored `real_gpu_workspace_capacity_and_reuse` test requires
-`LAYA_CUDA_LIBRARY` and `LAYA_CUDA_DEVICE`. It writes and reads all 17 buffers twice
-at three shapes, including both capacity bounds, using deterministic byte patterns.
-This tests allocation and transfer, not model numerics or latency.
+The ignored GPU check writes and reads all 17 buffers twice at three shapes,
+including both capacity bounds, using deterministic byte patterns. This tests
+allocation and transfer, not model numerics or latency. Prerequisites and commands
+are in the
+[native validation recipe](../../../recipe/laya/README.md#native-residency-and-workspace-validation).
 
 ## Eager encoder
 

@@ -57,6 +57,55 @@ if the worker requires a bearer token.
 See the [frontend documentation](../../src/frontend/README.md) for configuration
 and transport behavior.
 
+## Native residency and workspace validation
+
+These opt-in Rust checks test CUDA allocations and transfers. They do not need the
+Python worker or frontend and do not test inference, model outputs or latency.
+The normal CPU tests skip them.
+
+Use a Linux host with an approved CUDA GPU, a working NVIDIA driver, the CUDA
+toolkit (`nvcc`) and Rust. Build the trusted resource library from this checkout;
+it uses ABI version 1 and needs neither TileLang nor cuBLAS. `LAYA_CUDA_DEVICE` is
+the approved device ordinal after `CUDA_VISIBLE_DEVICES` filtering.
+
+```sh
+export LAYA_CUDA_LIBRARY=/tmp/liblaya-resources.so
+export LAYA_CUDA_DEVICE=0
+nvcc -shared -Xcompiler=-fPIC -O2 src/backends/cuda/kernels/runtime.cu \
+  -o "$LAYA_CUDA_LIBRARY"
+```
+
+The workspace check needs no checkpoint. It writes and reads all 17 buffers twice
+at `(batch, sequence) = (1, 16), (1, 512), (16, 512)`, using deterministic byte
+patterns:
+
+```sh
+cargo test --release --locked -p omni-laya --lib \
+  workspace::tests::real_gpu_workspace_capacity_and_reuse \
+  -- --ignored --exact --nocapture
+```
+
+For the residency check, use an unchanged local snapshot of
+`convaiinnovations/laya` revision `55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851`,
+including `model.safetensors`. Generate the oracle from that same snapshot in a
+Python environment with PyTorch, safetensors and NumPy:
+
+```sh
+export LAYA_CHECKPOINT=/path/to/laya/snapshot
+export LAYA_WEIGHT_ORACLE=/tmp/laya-weight-oracle.json
+python recipe/laya/native/export_weights.py "$LAYA_CHECKPOINT" "$LAYA_WEIGHT_ORACLE"
+cargo test --release --locked -p omni-laya --lib \
+  resident::tests::real_checkpoint_residency_matches_torch \
+  -- --ignored --exact --nocapture
+```
+
+The residency check validates all 206 checkpoint tensors, uploads the 205 used
+tensors and compares readback hashes with the Torch conversion oracle. The legacy
+`temperature` buffer is validated but not uploaded. Reported allocation bytes
+exclude CUDA context and library overhead. See the
+[model contracts](https://github.com/linear3735/system1-omni/blob/codex/laya-encoder/src/models/laya/README.md) for storage precision,
+workspace layouts and ownership.
+
 ## Native encoder validation
 
 The Rust eager encoder runs on Hopper with the English Laya 0.3.20 checkpoint
