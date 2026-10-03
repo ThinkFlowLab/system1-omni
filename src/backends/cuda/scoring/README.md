@@ -37,21 +37,32 @@ The query norm is computed once per block rather than once per candidate.
 | --- | --- | --- |
 | `reference.py` | The oracle: float64, deliberately slow and obvious | **yes**, 17 tests |
 | `kernel_simulation.py` | The kernel's algorithm in numpy: float32, warp tree order, same norm flooring | **yes** |
-| `candidate_scoring.cu` | The kernel and its C ABI | **no — never compiled** |
+| `candidate_scoring.cu` | The kernel and its C ABI | **yes**, compiled and checked against the reference on sm_89 |
 
 ## Verification state
 
-**Verified on real hardware.** RTX 4090 (sm_89), driver 595.58.03, CUDA 13.0
+**Verified on real hardware**, on two driver stacks. RTX 4090 (sm_89), CUDA 13.0
 (V13.0.88), compiled with `./build.sh ./out 89`:
 
-```
-worst absolute difference: 1.835e-07 (tolerance 0.0001)
-all cases within tolerance
-```
+| driver | worst absolute difference (tolerance 1e-4) |
+| --- | --- |
+| 595.58.03 | 1.835e-07 |
+| 580.76.05 | 1.835e-07 |
 
-All 13 fixed cases pass, including the degenerate ones (single candidate,
-identical candidates, a zero candidate) and the one whose raw logits overflow a
-naive softmax.
+`gpu_parity.py` checks three things, and all three run:
+
+- **13 fixed cases**, including the degenerate ones (single candidate, identical
+  candidates, a zero candidate) and the one whose raw logits overflow a naive
+  softmax.
+- **The batch path**, as a grid over questions: 1, 8, 4 and 3 questions with `K`
+  up to 255 and `D` up to 256. Each row is compared with the reference and checked
+  to sum to 1. The single-question call goes through `cs_score_candidates` and the
+  rest through `cs_score_candidates_batch`, so the two entry points have to agree.
+- **Rejected arguments**: `K` above 255, `K` of zero, `D` of zero, a zero scale, a
+  negative temperature and a null query must each return an error rather than a
+  scored answer. `K` above 255 is the one that matters: the shared array is sized
+  `MAX_K`, so scoring the first 255 of a larger set would be a confident wrong
+  answer instead of a failure.
 
 ### Two defects the first GPU run found
 
@@ -96,28 +107,23 @@ good as its fidelity, and the hardware is what settles it.
 **1.835e-07**, so the declared bound has 545x of headroom and a failure is a real
 failure rather than tolerance noise. Declared in `scoring.backend.json`.
 
-## Before this can be believed
+## Reproducing
 
 On a machine with `nvcc` and an NVIDIA GPU:
 
 ```sh
-nvcc -O3 -std=c++17 -gencode "arch=compute_${ARCH},code=sm_${ARCH}" \
-     -shared -Xcompiler -fPIC -o libscoring.so candidate_scoring.cu
+src/backends/cuda/scoring/build.sh ./out 89   # or CUDA_ARCH_LIST="80 89 90"
+python3 src/backends/cuda/scoring/gpu_parity.py --library ./out/libscoring.so
+python3 src/backends/cuda/scoring/test_scoring.py   # the reference, on CPU
 ```
 
 The inputs are not committed. They are deterministic from a fixed seed, so the
-harness regenerates them (`reference.py --json vectors.json` dumps them if a run
-needs to be archived); committing a megabyte of generated floats for a kernel
-that has not been compiled yet would be weight without evidence.
+harness regenerates them on every run; `reference.py --json vectors.json` dumps
+them if a run needs to be archived. Committing a megabyte of generated floats to
+check a kernel that regenerates them is weight without evidence.
 
-Two things are specifically unproven and worth testing first:
-
-- **`K ≤ 255` and `D` up to 2560 are compile-time assumptions in spirit but
-  runtime values in the code.** The shared arrays are sized `MAX_K`; a `K` above
-  it must be rejected, which the C ABI does — but that rejection has not run.
-- **The batch path.** `cs_score_candidates_batch` indexes per question by
-  `blockIdx.x`; a batch of one and a batch of many must agree, and neither has
-  been executed.
+`gpu_parity.py` skips rather than fails when there is no library or no device, so
+a machine without a GPU reports that it could not check, not that it passed.
 
 ## Why not a generic kernel
 
