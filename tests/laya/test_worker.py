@@ -213,9 +213,8 @@ def test_health_reports_compile_off_by_default():
 
 def test_health_flags_graphs_compiled_after_ready(monkeypatch):
     monkeypatch.setattr(optimize, "compile_agent", lambda agent: None)
-    graphs = iter(
-        [4, 4, 5]
-    )  # at readiness, first /health, second /health after a new shape compiled
+    # at readiness, first /health, second /health after a new shape compiled
+    graphs = iter([4, 4, 5])
     client = TestClient(
         worker.build_app(
             FakeRouter(),
@@ -285,12 +284,10 @@ def test_compiled_paths_by_batch_rows(monkeypatch):
     assert agent.model(on_gpu(1)) == "whole model compiled"
     assert agent.model(on_gpu(3)) == ("head", "compiled encoder")
     assert agent.model(torch.zeros(1, 7)) == ("head", "eager encoder")
-    assert (
-        model.encoder(torch.zeros(1, 7)) == "eager encoder"
-    )  # the original model is left as it was
-    assert len(list(agent.model.parameters())) == len(
-        list(model.parameters())
-    )  # one set of weights
+    # the original model is left as it was
+    assert model.encoder(torch.zeros(1, 7)) == "eager encoder"
+    # one set of weights
+    assert len(list(agent.model.parameters())) == len(list(model.parameters()))
 
 
 def test_every_loaded_model_is_warmed_and_described():
@@ -492,9 +489,8 @@ def test_health_compile_active_follows_a_fallback_to_cpu(monkeypatch):
         )
     )
     assert client.get("/health").json()["compile"]["active"] is True
-    optimize.compile_agent(
-        agent
-    )  # a second name for the same agent must not compile again
+    # a second name for the same agent must not compile again
+    optimize.compile_agent(agent)
     assert len(compiles) == 2
     agent.device = "cpu"
     assert client.get("/health").json()["compile"]["active"] is False
@@ -522,10 +518,11 @@ def test_log_level_applies_to_the_workers_own_log(monkeypatch):
     )
     worker.main()
     assert (seen["level"], seen["uvicorn"]["log_level"]) == ("WARNING", "warning")
+    # local only by default
     assert (seen["uvicorn"]["host"], seen["uvicorn"]["port"]) == (
         "127.0.0.1",
         8000,
-    )  # local only by default
+    )
 
 
 def test_a_checkpoint_loaded_while_serving_is_prepared_and_described(monkeypatch):
@@ -538,9 +535,8 @@ def test_a_checkpoint_loaded_while_serving_is_prepared_and_described(monkeypatch
     before = len(router.calls)
     late = FakeAgent(device="cpu", dtype="torch.float32")
     router.load_while_serving("multilingual", late)
-    assert applied == [
-        router.agent
-    ]  # the late one is on the CPU, where the options do not apply
+    # the late one is on the CPU, where the options do not apply
+    assert applied == [router.agent]
     assert [m for _, _, m in router.calls[before:]] == ["multilingual"] * (
         len(engine.WARMUP_SHAPES) * engine.WARMUP_REPEATS
     )
@@ -877,10 +873,11 @@ def test_failed_late_loads_are_logged_with_their_cause(laya_router, caplog):
     router, revisions = laya_router
     router.preload(["english", "multilingual"])
     worker.build_app(router, "english", "mps", require_device=True, revisions=revisions)
+    # english cannot come back either
     Repository.device = {
         "typed-decisions": "cpu",
         None: "cpu",
-    }  # english cannot come back either
+    }
     with caplog.at_level("ERROR", logger="laya-worker"), pytest.raises(RuntimeError):
         router.predict(
             "refund me",
@@ -892,9 +889,8 @@ def test_failed_late_loads_are_logged_with_their_cause(laya_router, caplog):
         "english was evicted for typed-decisions and could not be loaded again"
         in caplog.text
     )
-    assert (
-        "asked for mps, typed-decisions is on cpu" in caplog.text
-    )  # the traceback of the cause
+    # the traceback of the cause
+    assert "asked for mps, typed-decisions is on cpu" in caplog.text
     assert router.loaded == ["multilingual"]
 
 
@@ -905,9 +901,10 @@ def test_a_failed_late_load_reloads_only_what_was_evicted_for_it(
     router.max_loaded = 1
     router.load("english")
     worker.build_app(router, "english", "mps", require_device=True, revisions=revisions)
+    # evicts english
     router.predict(
         "refund me", {"r": {"type": "noul", "instructions": "?"}}, model="multilingual"
-    )  # evicts english
+    )
     built = []
     original = DownloadingAgent.__init__
     monkeypatch.setattr(
@@ -933,9 +930,8 @@ def test_describe_reads_the_weight_dtype_from_the_model_as_it_is():
     import torch
 
     agent = FakeAgent()
-    assert (
-        engine.describe(agent, "mps", None)["weights_dtype"] is None
-    )  # no model to read
+    # no model to read
+    assert engine.describe(agent, "mps", None)["weights_dtype"] is None
     agent.model = torch.nn.Linear(2, 2)
     assert engine.describe(agent, "mps", None)["weights_dtype"] == "torch.float32"
     agent.model.half()

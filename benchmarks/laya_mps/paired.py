@@ -31,7 +31,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 from bench_http import Client, body_for, fetch_answers, wait_ready  # noqa: E402
-from env import footprint_mb, header, noise_problems  # noqa: E402
+from env import footprint_mb, header, read_workloads, refuse_if_noisy  # noqa: E402
 
 CHECKPOINT = "convaiinnovations/laya"
 
@@ -69,11 +69,8 @@ def stop(processes):
 
 
 def run(args):
-    problems = noise_problems(args.max_load)
-    if problems and args.run != "feasibility":
-        sys.exit("refusing a measured run: " + "; ".join(problems))
-    with open(args.workloads) as f:
-        workloads = [json.loads(line) for line in f if line.strip()]
+    problems = refuse_if_noisy(args.max_load, args.run != "feasibility")
+    workloads = read_workloads(args.workloads).values()
     bench = [
         w
         for w in workloads
@@ -149,9 +146,8 @@ def run(args):
                     ms = {}
                     for s in (first, second):
                         if args.gap:
-                            clients[
-                                s
-                            ].close()  # uvicorn drops keep-alive after 5 s idle
+                            # uvicorn drops keep-alive after 5 s idle
+                            clients[s].close()
                             time.sleep(args.gap)
                         try:
                             t, status, _ = clients[s].request(

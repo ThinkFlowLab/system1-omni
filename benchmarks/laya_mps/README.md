@@ -51,8 +51,9 @@ python benchmarks/laya_mps/paired.py --summarize benchmarks/laya_mps/results/pai
 
 Each claim in the [recipe](../../recipe/laya/apple-silicon.md) comes from one of these commands. A
 rerun on another Mac, or under different load, gives other numbers; the comparison each command makes
-(A against B in the same run) is what carries over. Every script refuses a measured run (any `--run`
-label but `feasibility`) on battery power or above `--max-load`; paired and lengths runs hold up better
+(A against B in the same run) is what carries over. Every script refuses a measured run on battery
+power or above `--max-load`: a `--run` label other than `feasibility`, or for `late_load.py`,
+`fallback.py` and `release.py` a run without `--feasibility`; paired and lengths runs hold up better
 than separate ones under the load that remains, because both sides see it. Stop the recipe's worker and
 frontend first: the scripts start their own on ports 8000, 8001 and 8080.
 
@@ -72,16 +73,20 @@ frontend first: the scripts start their own on ports 8000, 8001 and 8080.
 | where the time goes | `profile_mps.py --run p1` |
 | two commits compared | start each worker from its own checkout on its own port, then `paired.py --a-url ... --b-url ...` |
 
-Each fresh start is one `bench_http.py` run; the phases table of `report.py` then lists the first request of
-every start (one measured run per start, so it needs an idle machine):
+Each fresh start is one `bench_http.py` run, alternating the worker with the options and plain
+laya-serve; the phases table of `report.py` then lists the first request of every start on both
+sides (one measured run per start, so it needs an idle machine):
 
 ```sh
 for i in $(seq 23); do
   python benchmarks/laya_mps/bench_http.py --config C3o --run s$i --only W1 -n 1 --discard 1 \
     --concurrency 1 --spawn .venv/bin/python -m frontend.laya_mps --device {device} --model {model} \
     --compile --weights fp16 --port {port}
+  python benchmarks/laya_mps/bench_http.py --config C3 --run s$i --only W1 -n 1 --discard 1 \
+    --concurrency 1 --spawn .venv/bin/laya-serve
 done
-python benchmarks/laya_mps/report.py benchmarks/laya_mps/results/http_C3o_s*.jsonl --ref C3o
+python benchmarks/laya_mps/report.py benchmarks/laya_mps/results/http_C3o_s*.jsonl \
+  benchmarks/laya_mps/results/http_C3_s*.jsonl --ref C3
 ```
 
 All scripts are run as `python benchmarks/laya_mps/<script>` from the repository root; `--summarize`

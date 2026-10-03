@@ -39,9 +39,8 @@ def test_header_records_what_makes_two_runs_comparable(monkeypatch):
         map(str, sys.version_info[:3])
     )
     assert record["loadavg_1m"] >= 0
-    if (
-        sys.platform == "darwin"
-    ):  # the machine probes use macOS tools; elsewhere they are None (test below)
+    # the machine probes use macOS tools; elsewhere they are None (test below)
+    if sys.platform == "darwin":
         assert record["power"] and record["chip"] and record["mem_gb"] > 0
     assert record["utc"].endswith("+00:00")
 
@@ -58,14 +57,14 @@ def test_the_fixed_inputs_span_question_types_lengths_and_option_counts():
     }
     bench = [w for w in workloads if w["kind"] == "bench"]
     words = sorted(len(w["state"].split()) for w in bench)
-    assert (
-        words[0] < 20 and 100 < max(w for w in words if w < 200) and words[-1] > 300
-    )  # short, medium, near the window
+    # short, medium, near the window
+    assert words[0] < 20 and 100 < max(w for w in words if w < 200) and words[-1] > 300
+    # below and above laya's autocast threshold of 5 rows
     assert {len(w["questions"]) for w in bench} >= {
         1,
         3,
         6,
-    }  # below and above laya's autocast threshold of 5 rows
+    }
     parity = [w for w in workloads if w["kind"] == "parity"]
     assert {q["type"] for w in parity for q in w["questions"].values()} == {
         "choice",
@@ -145,9 +144,8 @@ def test_the_header_degrades_to_none_where_macos_tools_are_missing(monkeypatch):
     monkeypatch.setattr(
         bench_env, "_run", lambda *cmd: None if cmd[0] in macos_only else run(*cmd)
     )
-    record = bench_env.header(
-        "some/repo"
-    )  # what a Linux machine records: no failure, the probes are None
+    # what a Linux machine records: no failure, the probes are None
+    record = bench_env.header("some/repo")
     assert (record["power"], record["chip"], record["gpu_cores"], record["mem_gb"]) == (
         None,
         None,
@@ -240,11 +238,12 @@ import lengths  # noqa: E402
 
 
 def test_only_lengths_the_worker_has_not_run_are_measured():
+    # laya's W1 question: tokens = words + 56
     window, overhead, warm = (
         512,
         56,
         {182, 432},
-    )  # laya's W1 question: tokens = words + 56
+    )
     requests = []
 
     def request(side, words):
@@ -355,9 +354,8 @@ def test_a_failed_late_load_is_not_followed_by_a_second_load(monkeypatch):
 
 
 def test_a_late_load_cut_off_by_a_timeout_is_still_followed_up(monkeypatch):
-    result, server = late_load_with(
-        monkeypatch, 504
-    )  # the frontend gave up; the worker did not
+    # the frontend gave up; the worker did not
+    result, server = late_load_with(monkeypatch, 504)
     assert result["first"]["status"] == 504 and result["next"]["status"] == 200
     result, _ = late_load_with(monkeypatch, None, error=TimeoutError("timed out"))
     assert (
@@ -416,31 +414,144 @@ def test_late_load_refuses_a_late_checkpoint_the_worker_already_serves(monkeypat
 
 
 # --------------------------------------------------------------------------------------------- release.py
-def test_release_measures_memory_and_the_cost_of_lengths_run_again():
+def test_release_walks_new_lengths_releases_and_runs_the_same_lengths_again():
     import release
 
-    calls, warm, memory = [], set(), {"mb": 3000.0}
+    calls, warm, memory = [], {76}, {"mb": 3000.0}
 
-    def run(
-        words,
-    ):  # a length costs 10 ms more the first time; that first time adds 5 MB
+    def run(words):
+        """W1 adds 56 tokens to the state; the window stops at 120. A cold length costs 10 ms and 5 MB."""
         calls.append(words)
-        if words in warm:
-            return 20.0
-        warm.add(words)
+        tokens = min(words + 56, 120)
+        if tokens in warm:
+            return 20.0, tokens
+        warm.add(tokens)
         memory["mb"] += 5.0
-        return 30.0
+        return 30.0, tokens
 
     def release_caches():
         calls.append("release")
         warm.clear()
         memory["mb"] = 2900.0
 
-    result = release.measure(run, lambda: memory["mb"], release_caches, [10, 20, 30])
-    assert calls == [10, 10, 20, 20, 30, 30, "release", 10, 10, 20, 20, 30, 30]
+    result = release.measure(
+        run, lambda: memory["mb"], release_caches, 10, 10, 100, seen={76}
+    )
+    # 20 words is the warmup's length, 80 is past the window
+    measured = [
+        10,
+        30,
+        40,
+        50,
+        60,
+        70,
+    ]
+    assert calls[calls.index("release") + 1 :] == [w for w in measured for _ in (0, 1)]
+    assert result["lengths"] == 6 and result["stopped"] == "window"
     assert result["footprint_mb"] == {
         "before": 3000.0,
-        "after_lengths": 3015.0,
+        "after_lengths": 3030.0,
         "after_release": 2900.0,
     }
     assert result["extra_ms_before_release"] == result["extra_ms_after_release"] == 10.0
+
+
+class FakeRouter:
+    def __init__(self, device="mps"):
+        self.asked = []
+        self.agent = type(
+            "Agent",
+            (),
+            {"device": device, "dtype": "torch.float16", "mps_amp_min_rows": 5},
+        )()
+        self.loaded, self.hooks = ["english"], []
+
+    def load(self, name):
+        return self.agent
+
+    def predict(self, state, questions, model=None):
+        self.asked.append(questions)
+        return {
+            "answers": {},
+            "usage": {"input_tokens": len(state.split()) + 56, "output_tokens": 0},
+            "routing": {"model": model, "repo": "convaiinnovations/laya"},
+        }
+
+
+def test_release_refuses_a_model_that_is_not_on_mps(monkeypatch):
+    import argparse
+
+    import release
+    from frontend import laya_mps as worker
+
+    monkeypatch.setattr(worker, "make_router", lambda device, model: FakeRouter("cpu"))
+    args = argparse.Namespace(model="english", compile=True, weights="fp16")
+    with pytest.raises(RuntimeError, match="english is on cpu"):
+        release.prepare(args)
+
+
+def test_release_asks_the_w1_question_wherever_it_is_in_the_file(monkeypatch, tmp_path):
+    import release
+
+    workloads = rows(BENCH / "workloads.jsonl")
+    path = tmp_path / "workloads.jsonl"
+    path.write_text("\n".join(json.dumps(w) for w in reversed(workloads)))
+    router = FakeRouter()
+    monkeypatch.setattr(bench_env, "noise_problems", lambda max_load: [])
+    monkeypatch.setattr(release, "prepare", lambda args: router, raising=False)
+    monkeypatch.setattr(release, "measure", lambda run, *a, **k: run(37) and {})
+    monkeypatch.setattr(sys, "argv", ["release.py", "--workloads", str(path)])
+    release.main()
+    assert (
+        router.asked[-1] == next(w for w in workloads if w["id"] == "W1")["questions"]
+    )
+
+
+def must_not_start(*args, **kwargs):
+    pytest.fail("a measured run started on a noisy machine")
+
+
+@pytest.mark.parametrize(
+    "script, argv",
+    [("late_load", []), ("fallback", ["--limit-gb", "3"]), ("release", [])],
+)
+def test_a_measured_run_is_refused_on_a_noisy_machine(monkeypatch, script, argv):
+    import importlib
+
+    import laya
+
+    module = importlib.import_module(script)
+    monkeypatch.setattr(
+        bench_env, "noise_problems", lambda max_load: ["on Battery Power"]
+    )
+    for name in ("spawn", "prepare"):
+        monkeypatch.setattr(module, name, must_not_start, raising=False)
+    monkeypatch.setattr(subprocess, "run", must_not_start)
+    monkeypatch.setattr(laya, "load", must_not_start)
+    monkeypatch.setattr(sys, "argv", [f"{script}.py", *argv])
+    with pytest.raises(SystemExit, match="refusing a measured run: on Battery Power"):
+        module.main()
+
+
+def test_fallback_says_why_the_memory_probe_failed(monkeypatch):
+    import fallback
+
+    failed = subprocess.CompletedProcess(
+        [], 1, "", "ModuleNotFoundError: No module named 'torch'\n"
+    )
+    monkeypatch.setattr(bench_env, "noise_problems", lambda max_load: [])
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: failed)
+    monkeypatch.setattr(fallback, "spawn", must_not_start)
+    monkeypatch.setattr(sys, "argv", ["fallback.py", "--limit-gb", "3"])
+    with pytest.raises(SystemExit, match="No module named 'torch'"):
+        fallback.main()
+
+
+def test_the_fresh_start_loop_starts_both_sides_the_recipe_compares():
+    import re
+
+    readme = (BENCH / "README.md").read_text()
+    loop = next(
+        b for b in re.findall(r"```sh\n(.*?)```", readme, flags=re.S) if "for i in" in b
+    )
+    assert "--config C3o" in loop and "--spawn .venv/bin/laya-serve" in loop

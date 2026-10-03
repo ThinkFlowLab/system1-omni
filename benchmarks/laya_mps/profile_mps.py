@@ -31,7 +31,7 @@ import torch  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from env import header, noise_problems  # noqa: E402
+from env import header, read_workloads, refuse_if_noisy  # noqa: E402
 
 STAGES = ["encode", "collate", "dispatch", "gpu_wait", "copy_back", "decode", "other"]
 
@@ -137,16 +137,9 @@ def main():
     parser.add_argument("--max-load", type=float, default=2.0)
     args = parser.parse_args()
 
-    problems = noise_problems(args.max_load)
-    if problems and args.run != "feasibility":
-        sys.exit("refusing a measured run: " + "; ".join(problems))
-    for problem in problems:
-        print(f"warning: {problem}", file=sys.stderr)
+    problems = refuse_if_noisy(args.max_load, args.run != "feasibility")
 
-    with open(args.workloads) as f:
-        workloads = {
-            w["id"]: w for w in (json.loads(line) for line in f if line.strip())
-        }
+    workloads = read_workloads(args.workloads)
     route = workloads["W1"]["questions"]
 
     agent = laya.load(args.checkpoint, device=args.device)

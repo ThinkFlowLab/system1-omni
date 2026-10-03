@@ -12,6 +12,7 @@ before and after. Lengths the warmup ran are skipped, and the walk stops at the 
 """
 
 import argparse
+import functools
 import json
 import statistics
 import sys
@@ -21,10 +22,19 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parents[1] / "src"))
 from bench_http import Client, body_for, wait_ready  # noqa: E402
-from env import footprint_mb, header, noise_problems  # noqa: E402
+from env import footprint_mb, header, read_workloads, refuse_if_noisy  # noqa: E402
 from paired import CHECKPOINT, spawn, stop  # noqa: E402
 
 from models.laya.engine import WARMUP_SHAPES  # noqa: E402
+
+
+def warmup_lengths(tokens_of):
+    """The input lengths the warmup ran, as `tokens_of(state, questions)` reports them."""
+    return {
+        tokens_of(" ".join(["refund"] * words), questions)
+        for words, questions in WARMUP_SHAPES
+        if len(questions) == 1
+    }
 
 
 def measure(sides, request, first_words, step, count, seen, emit):
@@ -72,12 +82,8 @@ def measure(sides, request, first_words, step, count, seen, emit):
 
 
 def run(args):
-    problems = noise_problems(args.max_load)
-    if problems and args.run != "feasibility":
-        sys.exit("refusing a measured run: " + "; ".join(problems))
-    with open(args.workloads) as f:
-        workloads = {w["id"]: w for w in map(json.loads, filter(str.strip, f))}
-    question = workloads["W1"]["questions"]
+    problems = refuse_if_noisy(args.max_load, args.run != "feasibility")
+    question = read_workloads(args.workloads)["W1"]["questions"]
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     sides = {"A": args.a} if args.b is None else {"A": args.a, "B": args.b}
@@ -102,6 +108,11 @@ def run(args):
                 sys.exit(f"{s}: status {status} at {words} words: {data[:200]!r}")
             return ms, json.loads(data)["usage"]["input_tokens"]
 
+        def tokens_of(s, state, questions):
+            body = body_for({"state": state, "questions": questions}, args.model)
+            reply = clients[s].request("POST", "/v1/systemone", body, retry=True)
+            return json.loads(reply[2])["usage"]["input_tokens"]
+
         with open(path, "w") as f:
 
             def emit(record):
@@ -118,20 +129,8 @@ def run(args):
             )
             # The lengths the warmup ran, read back from the workers: those shapes are warm already.
             seen = set()
-            for words, questions in WARMUP_SHAPES:
-                if len(questions) == 1:
-                    state = {
-                        "state": " ".join(["refund"] * words),
-                        "questions": questions,
-                    }
-                    for s in sides:
-                        reply = clients[s].request(
-                            "POST",
-                            "/v1/systemone",
-                            body_for(state, args.model),
-                            retry=True,
-                        )
-                        seen.add(json.loads(reply[2])["usage"]["input_tokens"])
+            for s in sides:
+                seen |= warmup_lengths(functools.partial(tokens_of, s))
             before = {s: footprint_mb(procs[s].pid).get("footprint_mb") for s in sides}
             measure(
                 sorted(sides),

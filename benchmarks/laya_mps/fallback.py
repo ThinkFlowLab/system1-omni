@@ -20,6 +20,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from bench_http import Client, body_for, wait_ready  # noqa: E402
+from env import read_workloads, refuse_if_noisy  # noqa: E402
 from paired import spawn, stop  # noqa: E402
 
 
@@ -33,15 +34,24 @@ def main():
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--workloads", default=str(HERE / "workloads.jsonl"))
     parser.add_argument("--out", default=str(HERE / "results"))
+    parser.add_argument("--max-load", type=float, default=2.0)
+    parser.add_argument(
+        "--feasibility",
+        action="store_true",
+        help="run on battery or under load anyway; the numbers are not measurements",
+    )
     args = parser.parse_args()
-    with open(args.workloads) as f:
-        workloads = {w["id"]: w for w in map(json.loads, filter(str.strip, f))}
+    refuse_if_noisy(args.max_load, not args.feasibility)
+    workloads = read_workloads(args.workloads)
     probe = [
         args.python,
         "-c",
         "import torch; print(torch.mps.recommended_max_memory())",
     ]
-    recommended = int(subprocess.run(probe, capture_output=True, text=True).stdout)
+    probed = subprocess.run(probe, capture_output=True, text=True)
+    if probed.returncode:
+        sys.exit(f"{args.python} cannot report the MPS memory: {probed.stderr.strip()}")
+    recommended = int(probed.stdout)
     ratio = args.limit_gb * 2**30 / recommended
     limit = {
         "PYTORCH_MPS_HIGH_WATERMARK_RATIO": f"{ratio:.4f}",

@@ -5,6 +5,7 @@ instead of failing the run.
 """
 
 import importlib.metadata
+import json
 import os
 import platform
 import subprocess
@@ -76,6 +77,22 @@ def noise_problems(max_load):
         )
         problems.append(f"1-min load {load:.1f} > {max_load} (busiest: {busiest})")
     return problems
+
+
+def refuse_if_noisy(max_load, measured):
+    """Exits when a measured run would be noisy; otherwise warns about each problem and returns them."""
+    problems = noise_problems(max_load)
+    if problems and measured:
+        sys.exit("refusing a measured run: " + "; ".join(problems))
+    for problem in problems:
+        print(f"warning: {problem}", file=sys.stderr)
+    return problems
+
+
+def read_workloads(path):
+    """The fixed inputs by id, in file order."""
+    with open(path) as f:
+        return {w["id"]: w for w in map(json.loads, filter(str.strip, f))}
 
 
 def header(checkpoint, **extra):
@@ -169,9 +186,8 @@ def footprint_mb(pid=None):
         return {}
     info = RusageInfoV4()
     libc = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
-    if (
-        libc.proc_pid_rusage(pid or os.getpid(), 4, ctypes.byref(info)) != 0
-    ):  # RUSAGE_INFO_V4
+    # RUSAGE_INFO_V4
+    if libc.proc_pid_rusage(pid or os.getpid(), 4, ctypes.byref(info)) != 0:
         return {}
     return {
         "footprint_mb": round(info.phys_footprint / 2**20),

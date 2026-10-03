@@ -34,7 +34,7 @@ from urllib.parse import urlsplit
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
-from env import footprint_mb, header, noise_problems  # noqa: E402
+from env import footprint_mb, header, read_workloads, refuse_if_noisy  # noqa: E402
 
 CHECKPOINT = "convaiinnovations/laya"  # what laya-serve's "english" model resolves to (laya/router.py)
 
@@ -118,15 +118,13 @@ def run_level(url, token, body, n, concurrency):
     """n requests split over `concurrency` threads. Returns [(thread, ms, status)], elapsed seconds."""
     per_thread = [n // concurrency + (i < n % concurrency) for i in range(concurrency)]
     results, lock = [], threading.Lock()
-    barrier = threading.Barrier(
-        concurrency + 1, timeout=120
-    )  # a thread that fails to connect breaks it
+    # a thread that fails to connect breaks it
+    barrier = threading.Barrier(concurrency + 1, timeout=120)
 
     def worker(index, count):
         client = Client(url, token)
-        client.request(
-            "POST", "/v1/systemone", body, retry=True
-        )  # connect outside the timed window
+        # connect outside the timed window
+        client.request("POST", "/v1/systemone", body, retry=True)
         barrier.wait()
         mine = []
         for _ in range(count):
@@ -211,14 +209,9 @@ def main():
     if args.frontend and urlsplit(args.url).port == args.backend_port:
         parser.error("--url and --backend-port must differ when --frontend is used")
 
-    problems = noise_problems(args.max_load)
-    if problems and args.run != "feasibility":
-        sys.exit("refusing a measured run: " + "; ".join(problems))
-    for problem in problems:
-        print(f"warning: {problem}", file=sys.stderr)
+    problems = refuse_if_noisy(args.max_load, args.run != "feasibility")
 
-    with open(args.workloads) as f:
-        workloads = [json.loads(line) for line in f if line.strip()]
+    workloads = read_workloads(args.workloads).values()
     bench = [
         w
         for w in workloads
@@ -262,9 +255,8 @@ def main():
             command = list(args.spawn)
             for placeholder, value in placeholders.items():
                 command = [arg.replace(placeholder, value) for arg in command]
-            spawn_log = open(
-                Path(args.out) / f"http_{args.config}_{args.run}.worker.log", "w"
-            )  # noqa: SIM115
+            log_path = Path(args.out) / f"http_{args.config}_{args.run}.worker.log"
+            spawn_log = open(log_path, "w")  # noqa: SIM115
             processes["worker"] = subprocess.Popen(
                 command, env=env, stdout=spawn_log, stderr=subprocess.STDOUT, cwd=REPO
             )
@@ -275,9 +267,8 @@ def main():
                 "OMNI_JEV_BIND": f"{parts.hostname}:{parts.port}",
                 "OMNI_JEV_BACKEND_URL": f"http://127.0.0.1:{args.backend_port}",
             }
-            frontend_log = open(
-                Path(args.out) / f"http_{args.config}_{args.run}.frontend.log", "w"
-            )  # noqa: SIM115
+            log_path = Path(args.out) / f"http_{args.config}_{args.run}.frontend.log"
+            frontend_log = open(log_path, "w")  # noqa: SIM115
             processes["frontend"] = subprocess.Popen(
                 [args.frontend], env=env, stdout=frontend_log, stderr=subprocess.STDOUT
             )
@@ -352,9 +343,8 @@ def main():
             for w in order:
                 body = body_for(w, args.model)
                 answers, error = fetch_answers(client, body)
-                if (
-                    error
-                ):  # the parity section of report.py reports the workload as missing
+                # the parity section of report.py reports the workload as missing
+                if error:
                     emit({"type": "answers_error", "workload": w["id"], **error})
                 else:
                     emit({"type": "answers", "workload": w["id"], "answers": answers})

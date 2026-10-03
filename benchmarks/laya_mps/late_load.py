@@ -29,6 +29,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from bench_http import Client, wait_ready  # noqa: E402
+from env import refuse_if_noisy  # noqa: E402
 from paired import spawn, stop  # noqa: E402
 
 QUESTION = {
@@ -136,6 +137,12 @@ def parser():
         default=900,
         help="seconds to wait for the late request; the first run also downloads the checkpoint",
     )
+    parser.add_argument("--max-load", type=float, default=2.0)
+    parser.add_argument(
+        "--feasibility",
+        action="store_true",
+        help="run on battery or under load anyway; the numbers are not measurements",
+    )
     return parser
 
 
@@ -146,6 +153,7 @@ def main():
     args = cli.parse_args()
     if normalise_name(args.late) == normalise_name(args.model):
         cli.error(f"--late {args.late} is the checkpoint the worker starts with")
+    refuse_if_noisy(args.max_load, not args.feasibility)
     Path(args.out).mkdir(parents=True, exist_ok=True)
     for through_frontend in (False, True) if args.frontend else (False,):
         print(json.dumps(attempt(args, through_frontend)), flush=True)

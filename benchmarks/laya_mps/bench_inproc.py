@@ -23,12 +23,7 @@ T_IMPORT = time.perf_counter() - T_START
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from env import footprint_mb, header, noise_problems  # noqa: E402
-
-
-def load_workloads(path):
-    with open(path) as f:
-        return [json.loads(line) for line in f if line.strip()]
+from env import footprint_mb, header, read_workloads, refuse_if_noisy  # noqa: E402
 
 
 def sync(device):
@@ -74,13 +69,9 @@ def main():
     )
     args = parser.parse_args()
 
-    problems = noise_problems(args.max_load)
-    if problems and args.run != "feasibility":
-        sys.exit("refusing a measured run: " + "; ".join(problems))
-    for problem in problems:
-        print(f"warning: {problem}", file=sys.stderr)
+    problems = refuse_if_noisy(args.max_load, args.run != "feasibility")
 
-    workloads = load_workloads(args.workloads)
+    workloads = read_workloads(args.workloads).values()
     bench = [
         w
         for w in workloads

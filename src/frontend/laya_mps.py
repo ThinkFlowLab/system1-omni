@@ -72,9 +72,8 @@ def build_app(
     nothing is preloaded. Raises if preparing fails, so the caller never binds a worker that cannot answer."""
     from laya.serve import create_app
 
-    resident: dict[
-        str, tuple[Any, dict[str, Any]]
-    ] = {}  # prepared checkpoints: name -> (agent, warmup result)
+    # prepared checkpoints: name -> (agent, warmup result)
+    resident: dict[str, tuple[Any, dict[str, Any]]] = {}
     preparing: set[str] = set()
     graphs_at_ready = None
 
@@ -89,9 +88,8 @@ def build_app(
         """Warm the checkpoint up and start describing it. Returns where it is if not on the requested device."""
         nonlocal graphs_at_ready
         warmed = engine.warmup(router, name)
-        warmed["revision"] = engine.loaded_revision(
-            revisions, warmed["routing"]
-        )  # fixed here: see engine
+        # fixed here: see engine
+        warmed["revision"] = engine.loaded_revision(revisions, warmed["routing"])
         resident[name] = (agent, warmed)
         autocast_rows = getattr(agent, "mps_amp_min_rows", None)
         if (
@@ -124,9 +122,8 @@ def build_app(
                 raise RuntimeError(message)
             log.warning(message)
 
-    evicted: list[
-        str
-    ] = []  # what laya dropped to make room for the checkpoint it is loading
+    # what laya dropped to make room for the checkpoint it is loading
+    evicted: list[str] = []
 
     def on_evict(ctx: Any) -> None:
         resident.pop(ctx.model, None)
@@ -156,16 +153,14 @@ def build_app(
                         ctx.model,
                     )
             if compile:
-                graphs_at_ready = (
-                    graph_counter()
-                )  # graphs the unloaded checkpoint compiled are not recompiles
+                # graphs the unloaded checkpoint compiled are not recompiles
+                graphs_at_ready = graph_counter()
             raise
         finally:
             preparing.discard(ctx.model)
 
-    names = list(router.loaded) or [
-        model
-    ]  # never load a model the worker was not asked to serve
+    # never load a model the worker was not asked to serve
+    names = list(router.loaded) or [model]
     startup = {name: router.load(name) for name in names}
     for name, agent in startup.items():
         apply_options(name, agent)

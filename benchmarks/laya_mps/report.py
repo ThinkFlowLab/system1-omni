@@ -18,12 +18,13 @@ import sys
 from collections import defaultdict
 
 GATE = 0.10
+# whichever a result file has
 PHASES = [
     "import_s",
     "load_s",
     "process_to_ready_s",
     "warmup_s",
-]  # whichever a result file has
+]
 
 
 def percentile(sorted_values, p):
@@ -35,9 +36,8 @@ def read(paths):
     for path in paths:
         with open(path) as f:
             rows = [json.loads(line) for line in f if line.strip()]
-        if any(
-            "config" not in r for r in rows
-        ):  # e.g. paired.py results: summarize those with paired.py
+        # e.g. paired.py results: summarize those with paired.py
+        if any("config" not in r for r in rows):
             print(
                 f"skipping {path}: not a bench_inproc/bench_http result",
                 file=sys.stderr,
@@ -305,9 +305,8 @@ def parity(records, ref):
         "|---|---|---|---|---|---|---|---|---|---|",
     ]
     failed = total = 0
-    for key in sorted(
-        benchmarks | answers.keys() | errors.keys()
-    ):  # a benchmark run without answers still counts
+    # a benchmark run without answers still counts
+    for key in sorted(benchmarks | answers.keys() | errors.keys()):
         if key == ref_key:
             continue
         env = envs.get(key, {})
