@@ -34,10 +34,12 @@ def measure(sides, request, first_words, step, count, seen, emit):
     length already in `seen` costs that one request and is skipped; the walk stops at the window, where a
     longer state is truncated to a length already run."""
     seen, measured, longest, words = set(seen), [], 0, first_words
+    stopped = "count"
     while len(measured) < count:
         order = sorted(sides, reverse=len(measured) % 2 == 1)
         first, tokens = request(order[0], words)
         if tokens <= longest:
+            stopped = "window"
             break
         longest = tokens
         if tokens not in seen:
@@ -58,6 +60,14 @@ def measure(sides, request, first_words, step, count, seen, emit):
             seen.add(tokens)
             measured.append((words, tokens))
         words += step
+    emit(
+        {
+            "type": "walk",
+            "lengths": len(measured),
+            "stopped": stopped,
+            "longest_tokens": longest,
+        }
+    )
     return measured
 
 
@@ -158,7 +168,14 @@ def summarize(paths):
         records = [json.loads(line) for line in Path(path).read_text().splitlines()]
         env = records[0]
         end = next((r for r in records if r["type"] == "end"), None)
-        print(f"## {env['run']}: load at start {env['loadavg_1m']}\n")
+        walk = next((r for r in records if r["type"] == "walk"), None)
+        if walk is None:
+            stopped = "stop reason not recorded" if end else "the run did not finish"
+        elif walk["stopped"] == "window":
+            stopped = f"stopped at the window, {walk['longest_tokens']} tokens"
+        else:
+            stopped = f"stopped after the {walk['lengths']} lengths asked for"
+        print(f"## {env['run']}: load at start {env['loadavg_1m']}, {stopped}\n")
         print(
             "| side | flags | lengths | extra ms on first request, median (p90) "
             "| footprint before → after MB | recompiled after ready |"

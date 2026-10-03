@@ -299,13 +299,74 @@ def test_every_option_has_a_command_that_measures_it_alone():
     assert 'paired.py --run p3 --a "" --b "--weights fp16"' in index
 
 
-def test_the_late_load_request_may_take_longer_than_the_client_default(monkeypatch):
+class FakeLateServer:
+    """Stands in for late_load's worker, frontend and HTTP client; the late request answers `status`."""
+
+    def __init__(self, status):
+        self.status, self.posts = status, []
+
+    def client(self, url, timeout=120):
+        server = self
+
+        class FakeClient:
+            def request(self, method, path, body=None, retry=False):
+                if method == "POST":
+                    server.posts.append((url, timeout))
+                    return 20.0, server.status, b"{}"
+                return 1.0, 200, json.dumps({"preparing": [], "models": {}}).encode()
+
+        return FakeClient()
+
+
+def late_load_with(monkeypatch, status, *argv):
     import late_load
 
-    clients = []
-    monkeypatch.setattr(
-        late_load, "Client", lambda url, timeout=120: clients.append(timeout)
-    )
-    monkeypatch.setattr(sys, "argv", ["late_load.py"])
-    args = late_load.parser().parse_args([])
-    assert args.timeout >= 600  # a first load also downloads the checkpoint
+    server = FakeLateServer(status)
+    monkeypatch.setattr(late_load, "Client", server.client)
+    monkeypatch.setattr(late_load, "spawn", lambda *a, **k: object())
+    monkeypatch.setattr(late_load, "wait_ready", lambda *a, **k: (0.0, {}))
+    monkeypatch.setattr(late_load, "stop", lambda processes: None)
+    args = late_load.parser().parse_args(list(argv))
+    return late_load.attempt(args, through_frontend=False), server
+
+
+def test_the_late_request_waits_as_long_as_asked(monkeypatch):
+    result, server = late_load_with(monkeypatch, 200, "--timeout", "777")
+    assert (
+        server.posts == [("http://127.0.0.1:8000", 777)] * 2
+    )  # the late request and the next one
+    assert result["first"]["status"] == 200 and result["next"]["status"] == 200
+
+
+def test_a_failed_late_load_is_not_followed_by_a_second_load(monkeypatch):
+    result, server = late_load_with(monkeypatch, 500)
+    assert result["first"]["status"] == 500
+    assert result["next"] is None and len(server.posts) == 1
+
+
+def test_the_length_walk_records_why_it_stopped():
+    def walk(cap, count):
+        records = []
+        lengths.measure(
+            ["A"],
+            lambda s, w: (30.0, min(w + 56, cap)),
+            1,
+            1,
+            count,
+            set(),
+            records.append,
+        )
+        return next(r for r in records if r["type"] == "walk")
+
+    assert walk(512, 1000) == {
+        "type": "walk",
+        "lengths": 456,
+        "stopped": "window",
+        "longest_tokens": 512,
+    }
+    assert walk(512, 10) == {
+        "type": "walk",
+        "lengths": 10,
+        "stopped": "count",
+        "longest_tokens": 66,
+    }
