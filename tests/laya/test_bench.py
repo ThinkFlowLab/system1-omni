@@ -237,10 +237,23 @@ def test_paired_summary_reports_answers_of_different_shape(tmp_path, capsys):
 import lengths  # noqa: E402
 
 
-def test_new_lengths_skip_the_warmup_lengths():
-    assert lengths.lengths(2, 4, 3) == [2, 6, 14]  # 10 is a warmup length
-    assert lengths.lengths(146, 4, 2) == [146, 154]  # and so is 150
-    assert len(set(lengths.lengths(37, 4, 477))) == 477
+def test_only_lengths_the_worker_has_not_run_are_measured():
+    window, overhead, warm = (
+        512,
+        56,
+        {182, 432},
+    )  # laya's W1 question: tokens = words + 56
+    requests = []
+
+    def request(side, words):
+        requests.append((side, words))
+        return 30.0, min(words + overhead, window)
+
+    measured = lengths.measure(["A", "B"], request, 1, 1, 1000, warm, lambda r: None)
+    tokens = [t for _, t in measured]
+    assert len(tokens) == len(set(tokens)) == window - overhead - len(warm)
+    assert not set(tokens) & warm and max(tokens) == window  # stops at the window
+    assert {side for side, _ in requests} == {"A", "B"}
 
 
 def test_lengths_summary_reports_extra_time_and_memory_per_side(tmp_path, capsys):
@@ -278,3 +291,21 @@ def test_paired_summary_says_how_requests_were_paced(tmp_path, capsys):
     path.write_text("\n".join(json.dumps(r) for r in records))
     paired.summarize([str(path)])
     assert "2.0 s idle before each request" in capsys.readouterr().out
+
+
+def test_every_option_has_a_command_that_measures_it_alone():
+    index = (BENCH / "README.md").read_text()
+    assert 'paired.py --run p2 --a "" --b=--compile' in index
+    assert 'paired.py --run p3 --a "" --b "--weights fp16"' in index
+
+
+def test_the_late_load_request_may_take_longer_than_the_client_default(monkeypatch):
+    import late_load
+
+    clients = []
+    monkeypatch.setattr(
+        late_load, "Client", lambda url, timeout=120: clients.append(timeout)
+    )
+    monkeypatch.setattr(sys, "argv", ["late_load.py"])
+    args = late_load.parser().parse_args([])
+    assert args.timeout >= 600  # a first load also downloads the checkpoint

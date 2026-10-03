@@ -12,16 +12,15 @@ depends on the Mac and the options: on a 16 GB M1 Pro, 3.5 GB without the option
 
 import argparse
 import json
-import os
 import subprocess
 import sys
 import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 from bench_http import Client, body_for, wait_ready  # noqa: E402
+from paired import spawn, stop  # noqa: E402
 
 
 def main():
@@ -44,30 +43,14 @@ def main():
     ]
     recommended = int(subprocess.run(probe, capture_output=True, text=True).stdout)
     ratio = args.limit_gb * 2**30 / recommended
-    env = {
-        **os.environ,
-        "PYTHONPATH": str(REPO / "src"),
+    limit = {
         "PYTORCH_MPS_HIGH_WATERMARK_RATIO": f"{ratio:.4f}",
         "PYTORCH_MPS_LOW_WATERMARK_RATIO": f"{ratio * 0.9:.4f}",
     }
-    command = [
-        args.python,
-        "-m",
-        "frontend.laya_mps",
-        "--device",
-        "mps",
-        "--require-device",
-        "--port",
-        str(args.port),
-        "--log-level",
-        "warning",
-        *args.flags.split(),
-    ]
     Path(args.out).mkdir(parents=True, exist_ok=True)
-    log = open(Path(args.out) / "fallback.log", "w")  # noqa: SIM115
-    worker = subprocess.Popen(
-        command, env=env, stdout=log, stderr=subprocess.STDOUT, cwd=REPO
-    )
+    flags = f"--require-device {args.flags}"
+    log = Path(args.out) / "fallback.log"
+    worker = spawn(flags, args.port, args.python, "english", log, env=limit)
     try:
         url = f"http://127.0.0.1:{args.port}"
         ready_s = wait_ready(url, {"worker": worker}, 900)[0]
@@ -101,8 +84,7 @@ def main():
             [decide(workloads["W1"]) for _ in range(3)],
         )
     finally:
-        worker.terminate()
-        worker.wait(timeout=60)
+        stop([worker])
 
 
 if __name__ == "__main__":

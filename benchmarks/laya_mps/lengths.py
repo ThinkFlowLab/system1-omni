@@ -3,9 +3,11 @@
 Starts one worker per flag set (all alive at once, like paired.py), warms each up, then sends every
 side a one-question request at each of `--lengths` lengths it has not seen, twice in a row. The
 first request's extra time is the first minus the second; memory is each worker's physical footprint
-before and after.
+before and after. Lengths the warmup ran are skipped, and the walk stops at the model's window.
 
     python benchmarks/laya_mps/lengths.py --run l1 --a "" --b "--compile --weights fp16"
+    python benchmarks/laya_mps/lengths.py --run l2 --a "" --b "--compile --weights fp16" \\
+        --first-words 1 --step 1 --lengths 1000                     # every length up to the window
     python benchmarks/laya_mps/lengths.py --summarize benchmarks/laya_mps/results/lengths_l1.jsonl
 """
 
@@ -17,19 +19,46 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE.parents[1] / "src"))
 from bench_http import Client, body_for, wait_ready  # noqa: E402
 from env import footprint_mb, header, noise_problems  # noqa: E402
 from paired import CHECKPOINT, spawn, stop  # noqa: E402
 
+from models.laya.engine import WARMUP_SHAPES  # noqa: E402
 
-def lengths(first_words, step, count):
-    """State lengths in words, none of them a warmup length (10, 150 or 400 words)."""
-    words, out = first_words, []
-    while len(out) < count:
-        if words not in (10, 150, 400):
-            out.append(words)
+
+def measure(sides, request, first_words, step, count, seen, emit):
+    """Two requests per side at each input length the workers have not run, `count` lengths at most.
+
+    `request(side, words)` returns (ms, tokens). A length is known only after its first request, so a
+    length already in `seen` costs that one request and is skipped; the walk stops at the window, where a
+    longer state is truncated to a length already run."""
+    seen, measured, longest, words = set(seen), [], 0, first_words
+    while len(measured) < count:
+        order = sorted(sides, reverse=len(measured) % 2 == 1)
+        first, tokens = request(order[0], words)
+        if tokens <= longest:
+            break
+        longest = tokens
+        if tokens not in seen:
+            for s in order:
+                if s != order[0]:
+                    first, _ = request(s, words)
+                again, _ = request(s, words)
+                emit(
+                    {
+                        "type": "length",
+                        "side": s,
+                        "words": words,
+                        "tokens": tokens,
+                        "first_ms": first,
+                        "again_ms": again,
+                    }
+                )
+            seen.add(tokens)
+            measured.append((words, tokens))
         words += step
-    return out
+    return measured
 
 
 def run(args):
@@ -77,26 +106,32 @@ def run(args):
                     noise=problems,
                 )
             )
-            for s in sides:
-                for _ in range(5):
-                    request(s, 5)
+            # The lengths the warmup ran, read back from the workers: those shapes are warm already.
+            seen = set()
+            for words, questions in WARMUP_SHAPES:
+                if len(questions) == 1:
+                    state = {
+                        "state": " ".join(["refund"] * words),
+                        "questions": questions,
+                    }
+                    for s in sides:
+                        reply = clients[s].request(
+                            "POST",
+                            "/v1/systemone",
+                            body_for(state, args.model),
+                            retry=True,
+                        )
+                        seen.add(json.loads(reply[2])["usage"]["input_tokens"])
             before = {s: footprint_mb(procs[s].pid).get("footprint_mb") for s in sides}
-            for i, words in enumerate(
-                lengths(args.first_words, args.step, args.lengths)
-            ):
-                for s in sorted(sides, reverse=i % 2 == 1):
-                    first, tokens = request(s, words)
-                    again, _ = request(s, words)
-                    emit(
-                        {
-                            "type": "length",
-                            "side": s,
-                            "words": words,
-                            "tokens": tokens,
-                            "first_ms": first,
-                            "again_ms": again,
-                        }
-                    )
+            measure(
+                sorted(sides),
+                request,
+                args.first_words,
+                args.step,
+                args.lengths,
+                seen,
+                emit,
+            )
             health = {
                 s: json.loads(clients[s].request("GET", "/health", retry=True)[2])
                 for s in sides

@@ -36,8 +36,8 @@ from env import footprint_mb, header, noise_problems  # noqa: E402
 CHECKPOINT = "convaiinnovations/laya"
 
 
-def spawn(flags, port, python, model, log_path):
-    env = {**os.environ, "PYTHONPATH": str(REPO / "src")}
+def spawn(flags, port, python, model, log_path, env=None):
+    env = {**os.environ, "PYTHONPATH": str(REPO / "src"), **(env or {})}
     command = [
         python,
         "-m",

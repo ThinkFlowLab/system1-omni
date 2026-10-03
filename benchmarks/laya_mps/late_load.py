@@ -51,7 +51,10 @@ def attempt(args, through_frontend):
                 )
             )
             wait_ready(f"http://127.0.0.1:{front}", {"frontend": procs[1]}, 60)
-        client = Client(f"http://127.0.0.1:{front if through_frontend else port}")
+        client = Client(
+            f"http://127.0.0.1:{front if through_frontend else port}",
+            timeout=args.timeout,
+        )
         body = json.dumps(
             {
                 "model": args.late,
@@ -88,7 +91,7 @@ def attempt(args, through_frontend):
         stop(procs)
 
 
-def main():
+def parser():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--flags", default="", help="frontend.laya_mps flags")
     parser.add_argument(
@@ -106,7 +109,17 @@ def main():
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--ready-timeout", type=float, default=900)
     parser.add_argument("--out", default=str(HERE / "results"))
-    args = parser.parse_args()
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=900,
+        help="seconds to wait for the late request; the first run also downloads the checkpoint",
+    )
+    return parser
+
+
+def main():
+    args = parser().parse_args()
     Path(args.out).mkdir(parents=True, exist_ok=True)
     for through_frontend in (False, True) if args.frontend else (False,):
         print(json.dumps(attempt(args, through_frontend)), flush=True)

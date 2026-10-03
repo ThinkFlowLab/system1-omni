@@ -42,10 +42,10 @@ CHECKPOINT = "convaiinnovations/laya"  # what laya-serve's "english" model resol
 class Client:
     """One keep-alive connection. Not thread-safe: one per thread."""
 
-    def __init__(self, url, token=None):
+    def __init__(self, url, token=None, timeout=120):
         parts = urlsplit(url)
         self.conn = http.client.HTTPConnection(
-            parts.hostname, parts.port or 80, timeout=120
+            parts.hostname, parts.port or 80, timeout=timeout
         )
         self.headers = {"Content-Type": "application/json"}
         if token:
