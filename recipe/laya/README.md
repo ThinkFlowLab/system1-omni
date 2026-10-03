@@ -56,3 +56,47 @@ if the worker requires a bearer token.
 
 See the [frontend documentation](../../src/frontend/README.md) for configuration
 and transport behavior.
+
+## Native CPU packing check
+
+The `omni-laya` preprocessor packs English Laya 0.3.20 requests without weights
+or a GPU.
+
+```sh
+cargo test --locked -p omni-laya --test preprocess
+```
+
+Native callers use `Request::from_json(&str)` for a single top-level JSON request,
+or `Request::from_value(Value)` for an existing structured value. `Request`
+retains its public fields and `Serialize`; it does not implement generic
+`Deserialize`. The JSON entry checks the complete request against serde_json's
+default nesting limit. The value entry preserves existing nested values without
+reparsing. Both preserve literal private Number/RawValue object keys and reject
+unknown request fields.
+
+The normal tests cover validation, JSON rendering, question and option order,
+and truncation with a small tokenizer:
+Pass raw JSON directly to `from_json`.
+
+For the official 17-case comparison, use the same pinned inputs as CPU CI.
+The test checks both files by SHA-256 before comparing:
+
+```sh
+LAYA_PACKING_DIR=$(mktemp -d)
+export LAYA_TOKENIZER="$LAYA_PACKING_DIR/tokenizer.json"
+export LAYA_PACKING_ORACLE="$LAYA_PACKING_DIR/packing-golden.json"
+curl --fail --location --retry 3 \
+  https://huggingface.co/convaiinnovations/laya/resolve/55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851/tokenizer/tokenizer.json \
+  --output "$LAYA_TOKENIZER"
+curl --fail --location --retry 3 \
+  https://raw.githubusercontent.com/linear3735/system1-omni/5e4dd4215c925ebd93bb9ce4097b27bd6375f7c0/recipe/laya/native/packing-golden.json \
+  --output "$LAYA_PACKING_ORACLE"
+cargo test --locked -p omni-laya --test packing -- --ignored
+```
+
+Existing copies of these pinned files can be supplied through `LAYA_TOKENIZER`
+and `LAYA_PACKING_ORACLE` instead. The comparison covers every token, marker,
+question type, row length, question order and usage count; it excludes backend
+padding and bucket dimensions. The [reference generator and inputs](https://github.com/linear3735/system1-omni/tree/5e4dd4215c925ebd93bb9ce4097b27bd6375f7c0/recipe/laya/native)
+use `laya==0.3.20`. Packing parity does not measure model quality or execute
+native model inference.

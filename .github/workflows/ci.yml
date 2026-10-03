@@ -26,6 +26,18 @@ jobs:
         run: cargo clippy --workspace --locked --all-targets -- -D warnings
       - name: Test
         run: cargo test --workspace --locked
+      - name: Official Laya packing parity
+        env:
+          LAYA_TOKENIZER: ${{ runner.temp }}/laya-tokenizer.json
+          LAYA_PACKING_ORACLE: ${{ runner.temp }}/laya-packing.json
+        run: |
+          curl --fail --location --retry 3 \
+            https://huggingface.co/convaiinnovations/laya/resolve/55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851/tokenizer/tokenizer.json \
+            --output "$LAYA_TOKENIZER"
+          curl --fail --location --retry 3 \
+            https://raw.githubusercontent.com/linear3735/system1-omni/5e4dd4215c925ebd93bb9ce4097b27bd6375f7c0/recipe/laya/native/packing-golden.json \
+            --output "$LAYA_PACKING_ORACLE"
+          cargo test --locked -p omni-laya --test packing -- --ignored
       - name: Build
         run: cargo build --workspace --release --locked
 

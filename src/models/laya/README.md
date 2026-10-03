@@ -8,6 +8,18 @@ The `omni-laya` crate currently reads and checks the English Laya 0.3.20 checkpo
 
 Keep checkpoint files unchanged while `Weights` holds a read-only memory mapping. This crate does not yet execute inference.
 
+`Preprocessor::load` reads a tokenizer JSON file. `prepare` packs English `choice`, `score` and `noul` questions into ordered token rows, option-marker positions and type IDs. Rows follow Laya 0.3.20's 512-token limit and 192-token head budget. Conversation lists keep the newest state tokens; other state values keep the beginning. The result includes normalized criteria for later decoding and the total input-token usage. Backends own padding, batching and resource limits.
+
+Build a request with `Request::from_json(&str)` for one top-level JSON object, or
+`Request::from_value(Value)` for an already constructed value. The JSON entry
+preserves object order and arbitrary-size integers, treats serde_json's private
+Number/RawValue keys as ordinary user keys, and applies its default nesting limit
+to the complete request. The value entry moves state and questions without
+reparsing or adding a depth limit. Both reject unknown request fields and require
+state and an object of questions. Public fields and `Serialize` remain available;
+`Request` does not implement generic `Deserialize`, so use these explicit entries
+instead of `serde_json::from_str::<Request>` or `serde_json::from_value::<Request>`.
+
 ## CPU checks
 
 The normal workspace tests cover configuration errors, malformed tensors, inventory mismatches and conversion boundaries without downloading weights.
@@ -22,6 +34,8 @@ cargo test --release --locked -p omni-laya --test weights -- --ignored
 ```
 
 These two CPU tests check all 206 tensor names and shapes, 618 conversion hashes, and the legacy temperature buffer. The normal CI job skips them because it does not download the full checkpoint.
+
+The normal tests also check input validation, question and option order, truncation and JSON rendering with a small test tokenizer. The [Laya recipe](../../../recipe/laya/README.md#native-cpu-packing-check) provides the CPU packing validation commands and pinned inputs for the official 17-case comparison. No weights or GPU are needed; packing parity does not measure model quality.
 
 ## Python worker
 

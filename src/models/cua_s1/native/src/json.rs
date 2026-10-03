@@ -10,14 +10,14 @@ use std::fmt::Write as _;
 use std::io;
 
 use serde::Serialize;
-use serde::de::{self, Deserializer, MapAccess, SeqAccess, Visitor};
+use serde::de::{self, DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde_json::{Map, Number, Value};
 
 /// Decode a request body into its top-level object; the error is the 400 message.
 pub fn parse(raw: &[u8]) -> Result<Map<String, Value>, String> {
     let mut de = serde_json::Deserializer::from_slice(raw);
-    let value = de
-        .deserialize_any(NoDuplicates)
+    let value = NoDuplicates(0)
+        .deserialize(&mut de)
         .and_then(|v| de.end().map(|()| v))
         .map_err(|e| format!("request body is not valid JSON: {e}"))?;
     match value {
@@ -27,15 +27,36 @@ pub fn parse(raw: &[u8]) -> Result<Map<String, Value>, String> {
 }
 
 /// Builds a `Value` like serde_json does, but fails on a repeated key.
-struct NoDuplicates;
+struct NoDuplicates(usize);
 
-impl<'de> de::Deserialize<'de> for Wrapped {
-    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        d.deserialize_any(NoDuplicates).map(Wrapped)
+impl<'de> DeserializeSeed<'de> for NoDuplicates {
+    type Value = Value;
+
+    fn deserialize<D: Deserializer<'de>>(self, d: D) -> Result<Value, D::Error> {
+        let raw = <&serde_json::value::RawValue as de::Deserialize>::deserialize(d)?;
+        let text = raw.get();
+        // Another workspace member may enable arbitrary_precision. Read number
+        // tokens directly so its private map encoding cannot become user data.
+        if matches!(text.as_bytes()[0], b'-' | b'0'..=b'9') {
+            if text != "-0" {
+                if let Ok(n) = text.parse::<i64>() {
+                    return self.visit_i64(n);
+                }
+                if let Ok(n) = text.parse::<u64>() {
+                    return self.visit_u64(n);
+                }
+            }
+            let n = serde_json::from_str::<f64>(text).map_err(de::Error::custom)?;
+            return self.visit_f64(n);
+        }
+        if self.0 >= 127 && matches!(text.as_bytes()[0], b'{' | b'[') {
+            return Err(de::Error::custom("recursion limit exceeded"));
+        }
+        serde_json::Deserializer::from_str(text)
+            .deserialize_any(self)
+            .map_err(de::Error::custom)
     }
 }
-
-struct Wrapped(Value);
 
 impl<'de> Visitor<'de> for NoDuplicates {
     type Value = Value;
@@ -68,7 +89,7 @@ impl<'de> Visitor<'de> for NoDuplicates {
     }
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Value, A::Error> {
         let mut items = Vec::new();
-        while let Some(Wrapped(v)) = seq.next_element()? {
+        while let Some(v) = seq.next_element_seed(NoDuplicates(self.0 + 1))? {
             items.push(v);
         }
         Ok(Value::Array(items))
@@ -76,7 +97,7 @@ impl<'de> Visitor<'de> for NoDuplicates {
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Value, A::Error> {
         let mut obj = Map::new();
         while let Some(key) = map.next_key::<String>()? {
-            let Wrapped(v) = map.next_value()?;
+            let v = map.next_value_seed(NoDuplicates(self.0 + 1))?;
             if obj.contains_key(&key) {
                 return Err(de::Error::custom(format_args!(
                     "duplicate key {}",
@@ -107,6 +128,14 @@ pub fn dumps(value: &Value) -> String {
 struct PyFormatter;
 
 impl serde_json::ser::Formatter for PyFormatter {
+    fn write_number_str<W: ?Sized + io::Write>(&mut self, w: &mut W, n: &str) -> io::Result<()> {
+        if n.contains(['.', 'e', 'E']) {
+            let x = serde_json::from_str::<f64>(n).map_err(io::Error::other)?;
+            self.write_f64(w, x)
+        } else {
+            w.write_all(n.as_bytes())
+        }
+    }
     fn begin_array_value<W: ?Sized + io::Write>(
         &mut self,
         w: &mut W,
@@ -243,3 +272,7 @@ mod tests {
         assert!(parse(b"{\"a\": \"\xff\"}").is_err());
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../../tests/cua_s1/json.rs"]
+mod json_regression_tests;
