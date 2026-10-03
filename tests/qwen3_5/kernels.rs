@@ -3,12 +3,12 @@
 //! asked for:
 //!
 //!     CUA_S1_CUDA_LIB=$PWD/target/release/libqwen3_5_cuda.so \
-//!       cargo test --release -p omni-cua-s1-native --test kernels -- --ignored
+//!       cargo test --release -p omni-qwen3-5-native --test kernels -- --ignored
 
 use std::path::PathBuf;
 
 use half::bf16;
-use omni_cua_s1_native::cuda::{self, DeviceBuffer, Stream, api, check};
+use omni_qwen3_5_native::cuda::{self, DeviceBuffer, Stream, api, check};
 
 fn setup() -> Stream {
     let lib = std::env::var_os("CUA_S1_CUDA_LIB")
@@ -57,6 +57,142 @@ fn from_device(buf: &DeviceBuffer, n: usize, st: Stream) -> Vec<f32> {
         .iter()
         .map(|&b| bf16::from_le_bytes(b).to_f32())
         .collect()
+}
+
+#[test]
+#[ignore = "needs a GPU and CUA_S1_CUDA_LIB"]
+fn residual_rms_norm_matches_rounded_reference() {
+    let st = setup();
+    let eps = 1e-6f32;
+    // Cua-S1 and Open-Jev widths, scalar fallbacks for other widths, and a BF16
+    // element offset to check that cached loads need no packed alignment.
+    for (d, offset) in [
+        (2560usize, 0usize),
+        (5120, 0),
+        (8192, 0),
+        (257, 0),
+        (8448, 0),
+        (5120, 1),
+    ] {
+        for rows in [1usize, 3, 107] {
+            let n = rows * d;
+            let mut residual = random(n + offset, 5, 3.0);
+            let mut delta = random(n + offset, 6, 0.5);
+            let mut weights = random(d + offset, 7, 0.25);
+            // Exercise the BF16 rounding between addition and normalization.
+            residual[offset] = bf16::ONE;
+            delta[offset] = bf16::from_f32(1.0 / 256.0);
+            weights[offset + 1] = bf16::from_f32(-1.0);
+            let rounded: Vec<bf16> = residual[offset..]
+                .iter()
+                .zip(&delta[offset..])
+                .map(|(r, d)| bf16::from_f32(r.to_f32() + d.to_f32()))
+                .collect();
+            let input = to_device(&residual, st);
+            let change = to_device(&delta, st);
+            let weight = to_device(&weights, st);
+            let output = DeviceBuffer::new((n + offset) * 2).unwrap();
+            // SAFETY: complete BF16 rows and d weights after the optional one-
+            // element offset, with separate input, delta, weight, and output.
+            unsafe {
+                check(
+                    (api().cs1_add_rms_norm)(
+                        input.at(offset * 2),
+                        change.at(offset * 2),
+                        weight.at(offset * 2),
+                        output.at(offset * 2),
+                        rows as i32,
+                        d as i32,
+                        eps,
+                        st,
+                    ),
+                    "residual norm",
+                )
+                .unwrap();
+            }
+            let added = from_device(&input, n + offset, st);
+            assert_eq!(
+                added[offset..],
+                rounded.iter().map(|v| v.to_f32()).collect::<Vec<_>>(),
+                "residual addition changed BF16 rounding at d={d}, offset={offset}"
+            );
+            if offset != 0 {
+                assert_eq!(added[0], residual[0].to_f32());
+            }
+            let got = from_device(&output, n + offset, st);
+            for (row, values) in rounded.chunks_exact(d).enumerate() {
+                let ss: f64 = values.iter().map(|v| (v.to_f32() as f64).powi(2)).sum();
+                let inv = ((ss / d as f64) as f32 + eps).sqrt().recip();
+                for (i, value) in values.iter().enumerate() {
+                    let want =
+                        bf16::from_f32(value.to_f32() * inv * (1.0 + weights[offset + i].to_f32()));
+                    let actual = bf16::from_f32(got[offset + row * d + i]);
+                    assert!(actual.is_finite());
+                    // Reduction order and CUDA rsqrt may move a value by one
+                    // BF16 ULP; residual addition above must remain exact.
+                    assert!(
+                        actual.to_bits().abs_diff(want.to_bits()) <= 1,
+                        "norm mismatch d={d}, offset={offset}, row={row}, i={i}: {actual} vs {want}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "needs a GPU and CUA_S1_CUDA_LIB"]
+fn silu_mul_matches_rounded_reference() {
+    let st = setup();
+    // Packed model widths, padded rows, and scalar fallbacks for an odd width
+    // or stride. A one-element pointer offset forces the scalar path on the
+    // same inputs, which must agree exactly with packed execution.
+    for (width, ld) in [(8192usize, 16384usize), (17408, 34816), (64, 136), (37, 79)] {
+        for rows in [1usize, 3, 107] {
+            let input = random(rows * ld, 23, 12.0);
+            let mut results = Vec::new();
+            for offset in [0usize, 1] {
+                let mut padded = vec![bf16::ZERO; offset];
+                padded.extend_from_slice(&input);
+                let source = to_device(&padded, st);
+                let output = DeviceBuffer::new((rows * width + offset) * 2).unwrap();
+                // SAFETY: complete gate/up rows and an output of rows*width
+                // BF16 elements after the optional one-element offset.
+                unsafe {
+                    check(
+                        (api().cs1_silu_mul)(
+                            source.at(offset * 2),
+                            ld as i32,
+                            output.at(offset * 2),
+                            rows as i32,
+                            width as i32,
+                            st,
+                        ),
+                        "silu_mul",
+                    )
+                    .unwrap();
+                }
+                results.push(from_device(&output, rows * width + offset, st)[offset..].to_vec());
+            }
+            assert_eq!(
+                results[0], results[1],
+                "packed/scalar mismatch at {width}/{ld}"
+            );
+            for (row, values) in input.chunks_exact(ld).enumerate() {
+                for j in 0..width {
+                    let gate = values[j].to_f32() as f64;
+                    let activated = bf16::from_f64(gate / (1.0 + (-gate).exp()));
+                    let want = bf16::from_f32(activated.to_f32() * values[width + j].to_f32());
+                    let actual = bf16::from_f32(results[0][row * width + j]);
+                    assert!(actual.is_finite());
+                    assert!(
+                        actual.to_bits().abs_diff(want.to_bits()) <= 1,
+                        "SiLU rounding mismatch at {width}/{ld}, row={row}, j={j}: {actual} vs {want}"
+                    );
+                }
+            }
+        }
+    }
 }
 
 #[test]
@@ -128,6 +264,126 @@ fn graph_replay_reads_updated_inputs_after_failed_capture() {
         assert_replay(&graph, [2, 1]);
         let recovered = cuda::Graph::capture(st, embed).unwrap();
         assert_replay(&recovered, [0, 2]);
+    }
+}
+
+#[test]
+#[ignore = "needs a GPU and CUA_S1_CUDA_LIB"]
+fn fused_attention_gate_matches_separate_pass() {
+    let st = setup();
+    let dh = 256usize;
+    for (hq, hk) in [(24usize, 4usize), (16, 4), (4, 4), (16, 1)] {
+        for t in [1usize, 63, 64, 65, 139, 712, 2048] {
+            let ldv = hk * dh + 16; // exercise a strided V buffer
+            let q = to_device(&random(t * hq * dh, 1, 2.0), st);
+            let k = to_device(&random(t * hk * dh, 2, 2.0), st);
+            let v = to_device(&random(t * ldv, 3, 1.0), st);
+            let n = t * hq * dh;
+            let mut gates = random(n, 4, 12.0);
+            // Saturated sigmoid, zero, and ordinary values in every output row.
+            for row in gates.chunks_exact_mut(dh) {
+                row[0] = bf16::from_f32(-40.0);
+                row[1] = bf16::from_f32(40.0);
+                row[2] = bf16::ZERO;
+            }
+            let gate = to_device(&gates, st);
+            let separate = DeviceBuffer::new(n * 2).unwrap();
+            let fused = DeviceBuffer::new(n * 2).unwrap();
+            // SAFETY: all buffers have complete rows of the widths above, with
+            // disjoint output and gate allocations, and use the same stream.
+            unsafe {
+                check(
+                    (api().cs1_attention)(
+                        q.at(0),
+                        k.at(0),
+                        v.at(0),
+                        ldv as i32,
+                        separate.at(0),
+                        t as i32,
+                        hq as i32,
+                        hk as i32,
+                        dh as i32,
+                        0.0625,
+                        st,
+                    ),
+                    "separate attention",
+                )
+                .unwrap();
+                check(
+                    (api().cs1_sigmoid_gate)(separate.at(0), gate.at(0), n, st),
+                    "separate gate",
+                )
+                .unwrap();
+                check(
+                    (api().cs1_attention_gated)(
+                        q.at(0),
+                        k.at(0),
+                        v.at(0),
+                        ldv as i32,
+                        gate.at(0),
+                        fused.at(0),
+                        t as i32,
+                        hq as i32,
+                        hk as i32,
+                        dh as i32,
+                        0.0625,
+                        st,
+                    ),
+                    "fused attention gate",
+                )
+                .unwrap();
+            }
+            let want = from_device(&separate, n, st);
+            let got = from_device(&fused, n, st);
+            assert!(
+                got.iter().all(|x| x.is_finite()),
+                "non-finite result at t={t}"
+            );
+            assert_eq!(
+                got.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                want.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                "fused gate changed BF16 output at t={t}, hq={hq}, hk={hk}"
+            );
+        }
+    }
+    // Empty work is valid without a gate buffer; nonempty work must have one.
+    // SAFETY: these invalid/empty shapes return before any kernel is launched.
+    unsafe {
+        let null = std::ptr::null();
+        assert_eq!(
+            (api().cs1_attention_gated)(
+                null,
+                null,
+                null,
+                256,
+                null,
+                std::ptr::null_mut(),
+                0,
+                1,
+                1,
+                256,
+                0.0625,
+                st
+            ),
+            0
+        );
+        assert_ne!(
+            (api().cs1_attention_gated)(
+                null,
+                null,
+                null,
+                256,
+                null,
+                std::ptr::null_mut(),
+                1,
+                1,
+                1,
+                256,
+                0.0625,
+                st
+            ),
+            0
+        );
     }
 }
 
@@ -270,7 +526,23 @@ fn gated_delta_reference(
 fn gated_delta_rule_matches_recurrent_reference() {
     let st = setup();
     let (h, hk, d) = (4usize, 2usize, 128usize);
-    for t in [1usize, 64, 150] {
+    // Exercise inverse tile/chunk boundaries, the short model request, and
+    // accumulated state with weak decay over many chunks.
+    for (t, decay_scale) in [
+        (1usize, 1.0f32),
+        (16, 1.0),
+        (32, 1.0),
+        (63, 1.0),
+        (64, 1.0),
+        (65, 1.0),
+        (107, 1.0),
+        (127, 1.0),
+        (128, 1.0),
+        (129, 1.0),
+        (150, 1.0),
+        (107, 0.01),
+        (936, 0.01),
+    ] {
         // q close to k, so that q.k and the outputs are of order one as in the model
         let k = random(t * hk * d, 12, 1.0);
         let q: Vec<bf16> = k
@@ -282,7 +554,7 @@ fn gated_delta_rule_matches_recurrent_reference() {
         // log decays in (-2, 0) and learning rates in (0, 1), as sigmoid and -exp * softplus give
         let g: Vec<f32> = random(t * h, 14, 1.0)
             .iter()
-            .map(|x| x.to_f32() - 1.0)
+            .map(|x| (x.to_f32() - 1.0) * decay_scale)
             .collect();
         let beta: Vec<bf16> = random(t * h, 15, 0.5)
             .iter()

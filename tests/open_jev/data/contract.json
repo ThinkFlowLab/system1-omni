@@ -1,0 +1,309 @@
+[
+  {
+    "request": {
+      "state": "A customer says: I was charged twice for one order. The service is working normally. There is no sign of unauthorized access.",
+      "questions": {
+        "route": {
+          "type": "choice",
+          "instructions": "Which team should handle this issue?",
+          "criteria": {
+            "billing": "Problems with charges, invoices, refunds or payments.",
+            "security": "Unauthorized access or account compromise.",
+            "technical": "Service unavailable or a software malfunction."
+          }
+        },
+        "refund_review": {
+          "type": "noul",
+          "instructions": "Does this message describe a duplicate charge?"
+        },
+        "urgency": {
+          "type": "score",
+          "instructions": "Assess the urgency using only the given evidence.",
+          "criteria": [
+            "Routine: no service disruption or active security compromise is reported.",
+            "Urgent: an ongoing service disruption is reported.",
+            "Critical: active unauthorized access is reported."
+          ]
+        }
+      }
+    },
+    "prompts": [
+      [
+        "Context:\nA customer says: I was charged twice for one order. The service is working normally. There is no sign of unauthorized access.\n\nQuestion: Which team should handle this issue?\nProposed answer: billing: Problems with charges, invoices, refunds or payments.\nIs this proposed answer correct? Answer Yes or No.",
+        "Context:\nA customer says: I was charged twice for one order. The service is working normally. There is no sign of unauthorized access.\n\nQuestion: Which team should handle this issue?\nProposed answer: security: Unauthorized access or account compromise.\nIs this proposed answer correct? Answer Yes or No.",
+        "Context:\nA customer says: I was charged twice for one order. The service is working normally. There is no sign of unauthorized access.\n\nQuestion: Which team should handle this issue?\nProposed answer: technical: Service unavailable or a software malfunction.\nIs this proposed answer correct? Answer Yes or No."
+      ],
+      [
+        "Context:\nA customer says: I was charged twice for one order. The service is working normally. There is no sign of unauthorized access.\n\nQuestion: Does this message describe a duplicate charge?\nIs the answer to this question yes? Answer Yes or No."
+      ],
+      [
+        "Context:\nA customer says: I was charged twice for one order. The service is working normally. There is no sign of unauthorized access.\n\nQuestion: Assess the urgency using only the given evidence.\nProposed answer: Routine: no service disruption or active security compromise is reported.\nIs this proposed answer correct? Answer Yes or No.",
+        "Context:\nA customer says: I was charged twice for one order. The service is working normally. There is no sign of unauthorized access.\n\nQuestion: Assess the urgency using only the given evidence.\nProposed answer: Urgent: an ongoing service disruption is reported.\nIs this proposed answer correct? Answer Yes or No.",
+        "Context:\nA customer says: I was charged twice for one order. The service is working normally. There is no sign of unauthorized access.\n\nQuestion: Assess the urgency using only the given evidence.\nProposed answer: Critical: active unauthorized access is reported.\nIs this proposed answer correct? Answer Yes or No."
+      ]
+    ],
+    "logits": [
+      [
+        -2.0,
+        -1.0,
+        0.0
+      ],
+      [
+        -2.0,
+        -1.0
+      ],
+      [
+        -2.0,
+        -1.0,
+        0.0
+      ]
+    ],
+    "temperature": 2.5343690298472983,
+    "response": {
+      "answers": {
+        "route": {
+          "type": "choice",
+          "choice": "technical",
+          "probabilities": {
+            "billing": 0.21343437444688138,
+            "security": 0.3166841593736535,
+            "technical": 0.4698814661794651
+          },
+          "confidence": 0.20482219926919762
+        },
+        "refund_review": {
+          "type": "noul",
+          "noul": 0.5973836777434065
+        },
+        "urgency": {
+          "type": "score",
+          "score": 1.2564470917325836,
+          "probabilities": {
+            "0": 0.21343437444688138,
+            "1": 0.3166841593736535,
+            "2": 0.4698814661794651
+          },
+          "confidence": 0.0,
+          "legend": {
+            "0": "Routine: no service disruption or active security compromise is reported.",
+            "1": "Urgent: an ongoing service disruption is reported.",
+            "2": "Critical: active unauthorized access is reported."
+          }
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "state": {
+        "z": [
+          1.0,
+          1e+16,
+          -0.0,
+          true,
+          null,
+          "猫"
+        ],
+        "a": {
+          "β": "z",
+          "a": "first"
+        }
+      },
+      "questions": {
+        "kept-id": {
+          "type": "choice",
+          "instructions": {
+            "z": 1,
+            "a": "choose"
+          },
+          "criteria": {
+            "z-last": null,
+            "a-first": [
+              "A",
+              {
+                "z": 2,
+                "a": 1
+              }
+            ]
+          }
+        }
+      }
+    },
+    "prompts": [
+      [
+        "Context:\n{\"a\": {\"a\": \"first\", \"β\": \"z\"}, \"z\": [1.0, 1e+16, -0.0, true, null, \"猫\"]}\n\nQuestion: {\"a\": \"choose\", \"z\": 1}\nProposed answer: z-last\nIs this proposed answer correct? Answer Yes or No.",
+        "Context:\n{\"a\": {\"a\": \"first\", \"β\": \"z\"}, \"z\": [1.0, 1e+16, -0.0, true, null, \"猫\"]}\n\nQuestion: {\"a\": \"choose\", \"z\": 1}\nProposed answer: a-first: [\"A\", {\"a\": 1, \"z\": 2}]\nIs this proposed answer correct? Answer Yes or No."
+      ]
+    ],
+    "logits": [
+      [
+        -2.0,
+        -1.0
+      ]
+    ],
+    "temperature": 2.5343690298472983,
+    "response": {
+      "answers": {
+        "kept-id": {
+          "type": "choice",
+          "choice": "a-first",
+          "probabilities": {
+            "z-last": 0.4026163222565936,
+            "a-first": 0.5973836777434065
+          },
+          "confidence": 0.194767355486813
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "state": [
+        "café",
+        {
+          "b": false,
+          "a": 1e-05
+        }
+      ],
+      "questions": {
+        "score": {
+          "type": "score",
+          "instructions": "Rate.",
+          "criteria": [
+            "low",
+            "middle",
+            "high"
+          ]
+        },
+        "binary": {
+          "type": "noul",
+          "instructions": [
+            "Ready?",
+            {
+              "b": 2,
+              "a": 1
+            }
+          ],
+          "criteria": {
+            "true": {
+              "z": 1,
+              "a": "yes"
+            },
+            "false": [
+              "no",
+              "later"
+            ]
+          }
+        }
+      }
+    },
+    "prompts": [
+      [
+        "Context:\n[\"café\", {\"a\": 1e-05, \"b\": false}]\n\nQuestion: Rate.\nProposed answer: low\nIs this proposed answer correct? Answer Yes or No.",
+        "Context:\n[\"café\", {\"a\": 1e-05, \"b\": false}]\n\nQuestion: Rate.\nProposed answer: middle\nIs this proposed answer correct? Answer Yes or No.",
+        "Context:\n[\"café\", {\"a\": 1e-05, \"b\": false}]\n\nQuestion: Rate.\nProposed answer: high\nIs this proposed answer correct? Answer Yes or No."
+      ],
+      [
+        "Context:\n[\"café\", {\"a\": 1e-05, \"b\": false}]\n\nQuestion: [\"Ready?\", {\"a\": 1, \"b\": 2}]\nYes means: {\"a\": \"yes\", \"z\": 1}\nNo means: [\"no\", \"later\"]\nIs the answer to this question yes? Answer Yes or No."
+      ]
+    ],
+    "logits": [
+      [
+        -2.0,
+        -1.0,
+        0.0
+      ],
+      [
+        -2.0,
+        -1.0
+      ]
+    ],
+    "temperature": 2.5343690298472983,
+    "response": {
+      "answers": {
+        "score": {
+          "type": "score",
+          "score": 1.2564470917325836,
+          "probabilities": {
+            "0": 0.21343437444688138,
+            "1": 0.3166841593736535,
+            "2": 0.4698814661794651
+          },
+          "confidence": 0.0,
+          "legend": {
+            "0": "low",
+            "1": "middle",
+            "2": "high"
+          }
+        },
+        "binary": {
+          "type": "noul",
+          "noul": 0.5973836777434065
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "model": "open-jev-27b-v1.1",
+      "state": "Anything",
+      "questions": {
+        "one": {
+          "type": "choice",
+          "instructions": "Pick",
+          "criteria": {
+            "only": null
+          }
+        },
+        "tie": {
+          "type": "choice",
+          "instructions": "Pick",
+          "criteria": {
+            "first": "first",
+            "second": "second"
+          }
+        }
+      }
+    },
+    "prompts": [
+      [
+        "Context:\nAnything\n\nQuestion: Pick\nProposed answer: only\nIs this proposed answer correct? Answer Yes or No."
+      ],
+      [
+        "Context:\nAnything\n\nQuestion: Pick\nProposed answer: first: first\nIs this proposed answer correct? Answer Yes or No.",
+        "Context:\nAnything\n\nQuestion: Pick\nProposed answer: second: second\nIs this proposed answer correct? Answer Yes or No."
+      ]
+    ],
+    "logits": [
+      [
+        0.0
+      ],
+      [
+        0.0,
+        0.0
+      ]
+    ],
+    "temperature": 2.5343690298472983,
+    "response": {
+      "answers": {
+        "one": {
+          "type": "choice",
+          "choice": "only",
+          "probabilities": {
+            "only": 1.0
+          },
+          "confidence": 1.0
+        },
+        "tie": {
+          "type": "choice",
+          "choice": "first",
+          "probabilities": {
+            "first": 0.5,
+            "second": 0.5
+          },
+          "confidence": 0.0
+        }
+      }
+    }
+  }
+]

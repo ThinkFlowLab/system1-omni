@@ -9,7 +9,7 @@ use std::sync::OnceLock;
 use anyhow::{Context, Result, bail, ensure};
 
 /// `CS1_ABI_VERSION` in ops.h.
-const ABI_VERSION: u32 = 3;
+const ABI_VERSION: u32 = 4;
 pub const LIBRARY: &str = "libqwen3_5_cuda.so";
 
 /// A `cudaStream_t`.
@@ -94,6 +94,10 @@ api! {
     cs1_attention(
         q: *const c_void, k: *const c_void, v: *const c_void, ldv: c_int, out: *mut c_void, t: c_int, hq: c_int,
         hk: c_int, dh: c_int, scale: f32, stream: Stream,
+    ) -> c_int;
+    cs1_attention_gated(
+        q: *const c_void, k: *const c_void, v: *const c_void, ldv: c_int, gate: *const c_void,
+        out: *mut c_void, t: c_int, hq: c_int, hk: c_int, dh: c_int, scale: f32, stream: Stream,
     ) -> c_int;
     cs1_sigmoid_gate(x: *mut c_void, gate: *const c_void, n: usize, stream: Stream) -> c_int;
     cs1_silu_mul(gate_up: *const c_void, ld: c_int, out: *mut c_void, t: c_int, i: c_int, stream: Stream) -> c_int;

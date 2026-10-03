@@ -1,0 +1,23 @@
+[package]
+name = "omni-qwen3-5-native"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Shared Qwen3.5/3.8 prefill implementation for native decision workers"
+
+[dependencies]
+anyhow = "1.0.100"
+half = "2.7.1"
+libloading = "0.8"
+memmap2 = "0.9.9"
+safetensors = "0.8.0"
+serde = "1"
+serde_json = { version = "1.0.149", features = ["float_roundtrip", "preserve_order"] }
+
+[[test]]
+name = "config"
+path = "../../../../tests/qwen3_5/config.rs"
+
+[[test]]
+name = "kernels"
+path = "../../../../tests/qwen3_5/kernels.rs"

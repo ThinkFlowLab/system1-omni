@@ -1,4 +1,4 @@
-//! The Qwen3.5 text model (the language model of Qwen/Qwen3.5-4B), prefill only: one
+//! The Qwen3.5/3.8 text backbone, prefill only: one
 //! forward pass over a prompt, returning the final-norm hidden state of the last
 //! position. The layer loop and buffers live here; the operations are the CUDA
 //! kernels in `src/backends/cuda/qwen3_5`.
@@ -218,7 +218,7 @@ impl Weights {
             .enumerate()
             .flat_map(|(i, st)| st.names().into_iter().map(move |n| (i, n.to_string())))
             .collect();
-        let prefix = ["model.language_model.", "model."]
+        let prefix = ["model.language_model.", "model.", ""]
             .into_iter()
             .find(|p| {
                 names
@@ -662,7 +662,7 @@ impl Model {
                 cuda::synchronize(self.stream)?;
                 match cuda::Graph::capture(self.stream, || self.run(s, t)) {
                     Ok(graph) => {
-                        if self.graphs.len() == 8 {
+                        if self.graphs.len() == 64 {
                             self.graphs.pop_front();
                         }
                         self.graphs.push_back((t, graph));
@@ -830,11 +830,12 @@ impl Model {
                             "attention prep",
                         )?;
                         check(
-                            (cuda::api().cs1_attention)(
+                            (cuda::api().cs1_attention_gated)(
                                 p(s.aq),
                                 p(s.ak),
                                 p(v),
                                 ld,
+                                p(s.agate),
                                 p(s.ao),
                                 ti,
                                 hq,
@@ -843,16 +844,7 @@ impl Model {
                                 (cfg.head_dim as f32).powf(-0.5),
                                 st,
                             ),
-                            "attention",
-                        )?;
-                        check(
-                            (cuda::api().cs1_sigmoid_gate)(
-                                p(s.ao),
-                                p(s.agate),
-                                t * cfg.heads * cfg.head_dim,
-                                st,
-                            ),
-                            "attention gate",
+                            "gated attention",
                         )?;
                     }
                     self.gemm(s, s.ao, &fa.o, s.delta, t)?;
