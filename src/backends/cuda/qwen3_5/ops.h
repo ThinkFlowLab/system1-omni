@@ -13,7 +13,7 @@
 #include <stdint.h>
 
 // Bumped whenever a signature below changes.
-#define CS1_ABI_VERSION 3
+#define CS1_ABI_VERSION 4
 
 #ifdef __cplusplus
 extern "C" {
@@ -28,6 +28,7 @@ int cs1_malloc(void** ptr, size_t bytes);
 int cs1_free(void* ptr);
 int cs1_stream_create(void** stream);
 int cs1_stream_sync(void* stream);
+int cs1_stream_destroy(void* stream);
 int cs1_graph_begin(void* stream);
 int cs1_graph_end(void* stream, void** exec);
 int cs1_graph_launch(void* exec, void* stream);
@@ -93,6 +94,21 @@ void* cs1_gemm_create(size_t workspace_bytes);
 void cs1_gemm_destroy(void* gemm);
 int cs1_gemm(void* gemm, const void* x, const void* w, void* y, int M, int N, int K, int ldy,
              void* stream);
+
+// ---- vision: single image, 1024 hidden, 16 heads of 64; all BF16 except explicit float pointers ----
+int cs1_vision_linear(void* gemm, const void* x, const void* w, const void* bias, void* y, int M, int N, int K, void* stream);
+int cs1_gemm_f32(void* gemm, const float* x, const float* w, float* y, int M, int N, int K, void* stream);
+int cs1_vision_norm(const void* x, const void* w, const void* b, void* y, int rows, int d, void* stream);
+// indices/weights [N,4], 48x48 learned table; FP32 rotary cos/sin [N,32].
+int cs1_vision_position(void* x, const void* table, const int* indices, const float* weights, int n, void* stream);
+int cs1_vision_rope(const void* qkv, const float* co, const float* si, void* q, void* k, int n, void* stream);
+// q/k [N,1024], V is a slice in qkv [N,3072]. No causal mask, O(N) memory.
+int cs1_vision_attention(const void* q, const void* k, const void* v, void* out, int n, void* stream);
+int cs1_vision_bias(void* x, const void* bias, size_t n, int d, void* stream);
+int cs1_vision_gelu(void* x, size_t n, int exact, void* stream);
+int cs1_vision_add(void* x, const void* delta, size_t n, void* stream);
+int cs1_vision_to_float(const void* x, float* out, size_t n, void* stream);
+int cs1_vision_lora_add(void* x, const float* delta, size_t n, float scale, void* stream);
 
 #ifdef __cplusplus
 }

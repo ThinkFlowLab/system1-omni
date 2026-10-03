@@ -9,7 +9,7 @@ use std::sync::OnceLock;
 use anyhow::{Context, Result, bail, ensure};
 
 /// `CS1_ABI_VERSION` in ops.h.
-const ABI_VERSION: u32 = 3;
+const ABI_VERSION: u32 = 4;
 pub const LIBRARY: &str = "libqwen3_5_cuda.so";
 
 /// A `cudaStream_t`.
@@ -48,6 +48,17 @@ macro_rules! api {
 }
 
 api! {
+    cs1_vision_linear(gemm: *mut c_void, x: *const c_void, w: *const c_void, bias: *const c_void, y: *mut c_void, m: c_int, n: c_int, k: c_int, stream: Stream) -> c_int;
+    cs1_gemm_f32(gemm: *mut c_void, x: *const f32, w: *const f32, y: *mut f32, m: c_int, n: c_int, k: c_int, stream: Stream) -> c_int;
+    cs1_vision_norm(x: *const c_void, w: *const c_void, b: *const c_void, y: *mut c_void, rows: c_int, d: c_int, stream: Stream) -> c_int;
+    cs1_vision_position(x: *mut c_void, table: *const c_void, indices: *const i32, weights: *const f32, n: c_int, stream: Stream) -> c_int;
+    cs1_vision_rope(qkv: *const c_void, co: *const f32, si: *const f32, q: *mut c_void, k: *mut c_void, n: c_int, stream: Stream) -> c_int;
+    cs1_vision_attention(q: *const c_void, k: *const c_void, v: *const c_void, out: *mut c_void, n: c_int, stream: Stream) -> c_int;
+    cs1_vision_bias(x: *mut c_void, bias: *const c_void, n: usize, d: c_int, stream: Stream) -> c_int;
+    cs1_vision_gelu(x: *mut c_void, n: usize, exact: c_int, stream: Stream) -> c_int;
+    cs1_vision_add(x: *mut c_void, delta: *const c_void, n: usize, stream: Stream) -> c_int;
+    cs1_vision_to_float(x: *const c_void, out: *mut f32, n: usize, stream: Stream) -> c_int;
+    cs1_vision_lora_add(x: *mut c_void, delta: *const f32, n: usize, scale: f32, stream: Stream) -> c_int;
     cs1_abi_version() -> u32;
     cs1_error_string(code: c_int) -> *const c_char;
     cs1_set_device(device: c_int) -> c_int;
@@ -55,6 +66,7 @@ api! {
     cs1_free(ptr: *mut c_void) -> c_int;
     cs1_stream_create(stream: *mut Stream) -> c_int;
     cs1_stream_sync(stream: Stream) -> c_int;
+    cs1_stream_destroy(stream: Stream) -> c_int;
     cs1_graph_begin(stream: Stream) -> c_int;
     cs1_graph_end(stream: Stream, exec: *mut *mut c_void) -> c_int;
     cs1_graph_launch(exec: *mut c_void, stream: Stream) -> c_int;
