@@ -17,6 +17,11 @@ use axum::{
 use omni_jev::Config;
 use tokio::net::TcpListener;
 
+#[path = "../../../tests/frontend/common/mod.rs"]
+mod common;
+
+use common::{client, listen};
+
 /// What the mock worker received.
 #[derive(Clone, Debug)]
 struct Seen {
@@ -41,14 +46,6 @@ struct Reply {
 struct Worker {
     reply: Reply,
     seen: Arc<Mutex<Vec<Seen>>>,
-}
-
-async fn listen(app: Router) -> String {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    let app = app.into_make_service_with_connect_info::<SocketAddr>();
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    url
 }
 
 async fn start_worker(reply: Reply) -> (String, Arc<Mutex<Vec<Seen>>>) {
@@ -95,15 +92,6 @@ async fn start_frontend(backend_url: &str, timeout: Duration) -> String {
     let mut config = Config::new("127.0.0.1:0", backend_url).unwrap();
     config.timeout = timeout;
     listen(omni_jev::app(&config).unwrap()).await
-}
-
-fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(5))
-        .build()
-        .unwrap()
 }
 
 fn decision_request(state: &str) -> String {
@@ -365,6 +353,8 @@ async fn binary_serves_requests_and_exits_cleanly_on_sigterm() {
     let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_omni-jev"))
         .env("OMNI_JEV_BIND", "127.0.0.1:0")
         .env("OMNI_JEV_BACKEND_URL", &worker)
+        .env("OMNI_JEV_HEALTH_TIMEOUT_MS", "1000")
+        .env("OMNI_JEV_MAX_RESPONSE_BYTES", "65536")
         // A proxy that does not exist: backend traffic must bypass it.
         .env("HTTP_PROXY", "http://127.0.0.1:9")
         .env("http_proxy", "http://127.0.0.1:9")
