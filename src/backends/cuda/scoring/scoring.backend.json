@@ -23,7 +23,7 @@
     "tolerance": {
       "max_abs": 0.0001,
       "measured_max_abs": 1.835e-07,
-      "note": "13 fixed cases, all within tolerance. Measured on RTX 4090 (sm_89, built with ./build.sh ./out 89), CUDA 13.0, driver 595.58.03."
+      "note": "13 fixed cases, 4 batch configurations and 6 rejected arguments, all within tolerance. Measured on an RTX 4090 built with ./build.sh ./out 89, CUDA 13.0 (V13.0.88), under drivers 595.58.03 and 580.76.05; sm_89 is the only capability run, and the sm_80 default above is unexercised."
     }
   },
   "reference": {
