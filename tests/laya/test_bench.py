@@ -300,10 +300,11 @@ def test_every_option_has_a_command_that_measures_it_alone():
 
 
 class FakeLateServer:
-    """Stands in for late_load's worker, frontend and HTTP client; the late request answers `status`."""
+    """Stands in for late_load's worker, frontend and HTTP client. The late request answers `status`
+    (or raises `error`), after which the late checkpoint is resident or not."""
 
-    def __init__(self, status):
-        self.status, self.posts = status, []
+    def __init__(self, status, resident, error=None):
+        self.status, self.resident, self.error, self.posts = status, resident, error, []
 
     def client(self, url, timeout=120):
         server = self
@@ -312,16 +313,25 @@ class FakeLateServer:
             def request(self, method, path, body=None, retry=False):
                 if method == "POST":
                     server.posts.append((url, timeout))
-                    return 20.0, server.status, b"{}"
-                return 1.0, 200, json.dumps({"preparing": [], "models": {}}).encode()
+                    if server.error and len(server.posts) == 1:
+                        raise server.error
+                    return 20.0, server.status if len(server.posts) == 1 else 200, b"{}"
+                models = {"english": {}}
+                if server.posts and server.resident:
+                    models["multilingual"] = {}
+                return (
+                    1.0,
+                    200,
+                    json.dumps({"preparing": [], "models": models}).encode(),
+                )
 
         return FakeClient()
 
 
-def late_load_with(monkeypatch, status, *argv):
+def late_load_with(monkeypatch, status, *argv, resident=True, error=None):
     import late_load
 
-    server = FakeLateServer(status)
+    server = FakeLateServer(status, resident, error)
     monkeypatch.setattr(late_load, "Client", server.client)
     monkeypatch.setattr(late_load, "spawn", lambda *a, **k: object())
     monkeypatch.setattr(late_load, "wait_ready", lambda *a, **k: (0.0, {}))
@@ -332,16 +342,25 @@ def late_load_with(monkeypatch, status, *argv):
 
 def test_the_late_request_waits_as_long_as_asked(monkeypatch):
     result, server = late_load_with(monkeypatch, 200, "--timeout", "777")
-    assert (
-        server.posts == [("http://127.0.0.1:8000", 777)] * 2
-    )  # the late request and the next one
+    assert server.posts == [("http://127.0.0.1:8000", 777)] * 2  # late and next request
     assert result["first"]["status"] == 200 and result["next"]["status"] == 200
 
 
 def test_a_failed_late_load_is_not_followed_by_a_second_load(monkeypatch):
-    result, server = late_load_with(monkeypatch, 500)
+    result, server = late_load_with(monkeypatch, 500, resident=False)
     assert result["first"]["status"] == 500
     assert result["next"] is None and len(server.posts) == 1
+
+
+def test_a_late_load_cut_off_by_a_timeout_is_still_followed_up(monkeypatch):
+    result, server = late_load_with(
+        monkeypatch, 504
+    )  # the frontend gave up; the worker did not
+    assert result["first"]["status"] == 504 and result["next"]["status"] == 200
+    result, _ = late_load_with(monkeypatch, None, error=TimeoutError("timed out"))
+    assert (
+        "TimeoutError" in result["first"]["status"] and result["next"]["status"] == 200
+    )
 
 
 def test_the_length_walk_records_why_it_stopped():

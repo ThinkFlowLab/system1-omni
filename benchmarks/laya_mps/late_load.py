@@ -62,34 +62,41 @@ def attempt(args, through_frontend):
                 "questions": QUESTION,
             }
         ).encode()
+        worker = Client(url)
+
+        def health():
+            return json.loads(worker.request("GET", "/health", retry=True)[2])
+
+        resident = set(health()["models"])
         started = time.monotonic()
         try:
             first_ms, first_status, _ = client.request("POST", "/v1/systemone", body)
         except OSError as exc:
             first_ms, first_status = (time.monotonic() - started) * 1000, repr(exc)
-        worker = Client(url)
-        while json.loads(worker.request("GET", "/health", retry=True)[2])["preparing"]:
+        while health()["preparing"]:
             time.sleep(0.2)
         prepared_s = time.monotonic() - started
+        # A slow load can end in the frontend's 504 or a client timeout and still succeed; a failed one is
+        # unloaded, and a next request would only load it again.
+        loaded = bool(set(health()["models"]) - resident)
         following = None
-        if (
-            first_status == 200
-        ):  # after a failed load the next request would load it again
+        if loaded:
             next_ms, next_status, _ = client.request(
                 "POST", "/v1/systemone", body, retry=True
             )
             following = {"status": next_status, "ms": round(next_ms, 1)}
-        health = json.loads(worker.request("GET", "/health", retry=True)[2])
+        final = health()
         return {
             "through": "frontend" if through_frontend else "direct",
             "flags": args.flags,
             "late": args.late,
             "first": {"status": first_status, "ms": round(first_ms)},
             "prepared_after_s": round(prepared_s, 1),
+            "loaded": loaded,
             "next": following,
             "models": {
                 name: {k: m.get(k) for k in ("device", "revision", "warmup_ms")}
-                for name, m in health["models"].items()
+                for name, m in final["models"].items()
             },
         }
     finally:
