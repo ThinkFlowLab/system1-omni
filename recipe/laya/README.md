@@ -45,7 +45,7 @@ curl http://127.0.0.1:8080/v1/systemone \
 With both services running:
 
 ```sh
-python3 recipe/laya/compare_with_backend.py --model english \
+python3 recipe/compare_with_backend.py --model english \
   --backend http://127.0.0.1:8000 --frontend http://127.0.0.1:8080
 ```
 
