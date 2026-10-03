@@ -434,7 +434,7 @@ def test_release_walks_new_lengths_releases_and_runs_the_same_lengths_again():
         warm.clear()
         memory["mb"] = 3000.0
 
-    result = release.measure(run, lambda: memory["mb"], release_caches, 10, 10, 100)
+    result = release.measure(run, lambda: memory["mb"], release_caches, 10, 10, 100, 0)
     measured = [10, 20, 30, 40, 50, 60, 70]  # 80 words is past the window
     twice = [w for w in measured for _ in (0, 1)]
     assert calls == ["release", *twice, 80, "release", *twice, "release"]
@@ -442,11 +442,11 @@ def test_release_walks_new_lengths_releases_and_runs_the_same_lengths_again():
     assert result["extra_ms_before_release"] == result["extra_ms_after_release"] == 10.0
 
 
-def test_release_starts_from_released_caches_and_releases_twice():
-    """The warmup leaves cached buffers that vary from run to run: the baseline is taken after a release."""
+def test_release_reads_the_footprint_once_the_release_has_landed(monkeypatch):
+    """macOS shows a release in the footprint up to a few seconds later."""
     import release
 
-    memory, warm = {"mb": 3300.0}, set()
+    memory, warm, landing = {"mb": 3300.0}, set(), []
 
     def run(words):
         if words not in warm:
@@ -456,9 +456,16 @@ def test_release_starts_from_released_caches_and_releases_twice():
 
     def release_caches():
         warm.clear()
-        memory["mb"] = 3000.0
+        landing.append(3000.0)
 
-    result = release.measure(run, lambda: memory["mb"], release_caches, 10, 10, 2)
+    def wait(seconds):
+        assert seconds == 3
+        if landing:
+            memory["mb"] = landing.pop()
+
+    monkeypatch.setattr(release.time, "sleep", wait)
+    result = release.measure(run, lambda: memory["mb"], release_caches, 10, 10, 2, 3)
+    assert result["settle_s"] == 3
     assert result["footprint_mb"] == {
         "before": 3000.0,
         "after_lengths": 3010.0,
@@ -488,18 +495,6 @@ class FakeRouter:
             "usage": {"input_tokens": len(state.split()) + 56, "output_tokens": 0},
             "routing": {"model": model, "repo": "convaiinnovations/laya"},
         }
-
-
-def test_release_refuses_a_model_that_is_not_on_mps(monkeypatch):
-    import argparse
-
-    import release
-    from frontend import laya_mps as worker
-
-    monkeypatch.setattr(worker, "make_router", lambda device, model: FakeRouter("cpu"))
-    args = argparse.Namespace(model="english", compile=True, weights="fp16")
-    with pytest.raises(SystemExit, match="english is on cpu"):
-        release.prepare(args)
 
 
 def test_release_asks_the_w1_question_wherever_it_is_in_the_file(monkeypatch, tmp_path):

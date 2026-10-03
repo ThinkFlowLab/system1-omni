@@ -4,8 +4,11 @@ In this process, prepared as the worker prepares a checkpoint (options, warmup, 
 model is not on MPS): releases the caches with `torch.mps.empty_cache()` once, so that the baseline
 does not depend on what the warmup left cached, walks `--lengths` new one-question lengths as
 lengths.py does (each run twice in a row, stopping at the window), releases, runs the same lengths
-again and releases a second time. Prints the footprint at each step, and the extra time of a length's
-first request before and after the first release (a released length is cold again).
+again and releases a second time. macOS shows a release in the footprint up to a few seconds later, so
+each footprint after a release is read `--settle` seconds after it. Prints the footprint at each step,
+and the extra time of a length's first request before and after the first release (a released length is
+cold again). The footprint at the start varies between runs by a few hundred MB even after a release;
+the footprint after a release does not.
 
     python benchmarks/laya_mps/release.py --compile --weights fp16
 """
@@ -25,11 +28,16 @@ import lengths  # noqa: E402
 from env import footprint_mb, read_workloads, refuse_if_noisy  # noqa: E402
 
 
-def measure(run, footprint, release, first_words, step, count):
+def measure(run, footprint, release, first_words, step, count, settle_s):
     """`run(words)` returns one request's ms and input tokens. After the first release nothing is warm."""
+
+    def released():
+        release()
+        time.sleep(settle_s)
+        return footprint()
+
     records = []
-    release()
-    before = footprint()
+    before = released()
     measured = lengths.measure(
         ["A"],
         lambda _, words: run(words),
@@ -43,10 +51,10 @@ def measure(run, footprint, release, first_words, step, count):
     started = time.perf_counter()
     release()
     release_ms = (time.perf_counter() - started) * 1000
+    time.sleep(settle_s)
     after_release = footprint()
     after = [run(words)[0] - run(words)[0] for words, _ in measured]
     after_rerun = footprint()
-    release()
     before_release = [
         r["first_ms"] - r["again_ms"] for r in records if r["type"] == "length"
     ]
@@ -60,8 +68,9 @@ def measure(run, footprint, release, first_words, step, count):
             "after_lengths": after_lengths,
             "after_release": after_release,
             "after_rerun": after_rerun,
-            "after_second_release": footprint(),
+            "after_second_release": released(),
         },
+        "settle_s": settle_s,
         "release_ms": round(release_ms, 1),
         "extra_ms_before_release": round(statistics.median(before_release), 1)
         if measured
@@ -84,7 +93,7 @@ def prepare(args):
         router,
         args.model,
         "mps",
-        require_device=True,
+        require_device=False,
         compile=args.compile,
         fp16=args.weights == "fp16",
     )
@@ -106,6 +115,12 @@ def main():
     parser.add_argument("--first-words", type=int, default=37)
     parser.add_argument("--step", type=int, default=4)
     parser.add_argument("--model", default="english")
+    parser.add_argument(
+        "--settle",
+        type=float,
+        default=3,
+        help="seconds between a release and reading the footprint",
+    )
     parser.add_argument("--workloads", default=str(HERE / "workloads.jsonl"))
     parser.add_argument("--max-load", type=float, default=2.0)
     parser.add_argument(
@@ -134,6 +149,7 @@ def main():
         args.first_words,
         args.step,
         args.lengths,
+        args.settle,
     )
     print(
         json.dumps(

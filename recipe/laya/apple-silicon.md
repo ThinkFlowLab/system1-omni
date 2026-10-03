@@ -110,8 +110,9 @@ The latencies above are for requests sent back to back. Measured on the M1 Pro:
   length the compiled model has run, about 5 MB each (fp16 weights alone add little): the 3 GB above became
   3.3 GB after 100 new lengths and 5.2 GB after all 454 that the benchmark's one-question request can
   take (57–512 tokens), more than the 3.7 GB of a worker without the options. `torch.mps.empty_cache()`
-  gives back about 60% of it (2.77 GB, 3.27 GB after 100 new lengths, 2.97 GB after the release), and
-  those lengths then pay their first-request cost again.
+  brings it back to about 2.95 GB, near where the worker starts, however much the lengths had added
+  (2.95 GB in three runs, 2.90 GB after running the same lengths again and releasing again), and those
+  lengths then pay their first-request cost again.
 
 `/health` reports under `compile` how many graphs existed when the worker became ready and how many
 exist now; `recompiled_after_ready: true` means a request shape was not covered by the warmup.
