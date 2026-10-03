@@ -11,9 +11,11 @@ This is the readout both models that need it share the shape of:
 | CLM ([#9](https://github.com/ThinkFlowLab/system1-omni/issues/9)) | `exp(logit_scale) * cos(state_head(s), action_head(c))` | cosine, so `normalize = 1` |
 
 They differ in the similarity and in whether a projection happens first; what
-they share is the primitive. `#9` asks for exactly this ("normalize, dot,
-temperature, softmax in one pass over the candidate matrix"), and `#19`'s
-`gemm.cu` does not have it.
+they share is the primitive. `#9` describes CLM's answer as "the softmax over the
+question's candidates" of `exp(logit_scale) * cos(state_head(s), action_head(c))`,
+and `#27` describes Kev's as `scale * (k(h_opts) @ q(h_decide))` with
+`scale = 1/sqrt(256)`, softmaxed over that question's candidates. Neither is in
+`#19`'s `gemm.cu`, which is a bf16 cuBLASLt GEMM.
 
 ## What is fused, precisely
 
