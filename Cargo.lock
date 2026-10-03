@@ -959,6 +959,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "omni-cuda"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "libloading",
+ "tempfile",
+]
+
+[[package]]
 name = "omni-jev"
 version = "0.1.0"
 dependencies = [
