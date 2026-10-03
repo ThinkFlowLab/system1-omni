@@ -269,20 +269,38 @@ fn gated_delta_reference(
 #[ignore = "needs a GPU and CUA_S1_CUDA_LIB"]
 fn gated_delta_rule_matches_recurrent_reference() {
     let st = setup();
-    let (h, hk, d) = (4usize, 2usize, 128usize);
-    for t in [1usize, 64, 150] {
+    let d = 128usize;
+    // Tile/chunk boundaries, weak decay, grouped heads, and near-zero q/k.
+    // Keep the float64 recurrent reference and its tolerance.
+    for (t, h, hk, decay_scale, qk_amp) in [
+        (1usize, 4usize, 2usize, 1.0f32, 1.0f32),
+        (16, 4, 2, 1.0, 1.0),
+        (17, 4, 2, 1.0, 1.0),
+        (32, 4, 2, 1.0, 1.0),
+        (33, 4, 2, 1.0, 1.0),
+        (63, 4, 2, 1.0, 1.0),
+        (64, 4, 2, 1.0, 1.0),
+        (65, 4, 2, 1.0, 1.0),
+        (107, 4, 2, 1.0, 1.0),
+        (150, 4, 2, 1.0, 1.0),
+        (936, 6, 2, 0.01, 1.0),
+        (3399, 3, 1, 0.01, 1.0),
+        (65, 4, 2, 0.01, 1e-9),
+        (65, 4, 2, 0.01, 1e-18),
+        (65, 4, 2, 0.01, 0.0),
+    ] {
         // q close to k, so that q.k and the outputs are of order one as in the model
-        let k = random(t * hk * d, 12, 1.0);
+        let k = random(t * hk * d, 12, qk_amp);
         let q: Vec<bf16> = k
             .iter()
-            .zip(random(t * hk * d, 11, 1.0))
+            .zip(random(t * hk * d, 11, qk_amp))
             .map(|(k, n)| bf16::from_f32(0.8 * k.to_f32() + 0.2 * n.to_f32()))
             .collect();
         let v = random(t * h * d, 13, 1.0);
         // log decays in (-2, 0) and learning rates in (0, 1), as sigmoid and -exp * softplus give
         let g: Vec<f32> = random(t * h, 14, 1.0)
             .iter()
-            .map(|x| x.to_f32() - 1.0)
+            .map(|x| (x.to_f32() - 1.0) * decay_scale)
             .collect();
         let beta: Vec<bf16> = random(t * h, 15, 0.5)
             .iter()
@@ -322,6 +340,10 @@ fn gated_delta_rule_matches_recurrent_reference() {
             .unwrap();
         }
         let got = from_device(&o, t * h * d, st);
+        assert!(
+            got.iter().all(|x| x.is_finite()),
+            "non-finite GDN at t = {t}"
+        );
         let scale = want.iter().fold(0f64, |m, x| m.max(x.abs()));
         let worst = got
             .iter()
@@ -329,7 +351,7 @@ fn gated_delta_rule_matches_recurrent_reference() {
             .map(|(a, b)| (*a as f64 - b).abs())
             .fold(0f64, f64::max);
         eprintln!(
-            "gated delta t = {t}: largest difference {worst:.2e}, largest |reference| {scale:.2}"
+            "gated delta t = {t}, amplitude {qk_amp}: largest difference {worst:.2e}, largest |reference| {scale:.2e}"
         );
         assert!(worst <= 2e-2 * scale, "t = {t}: {worst} vs scale {scale}");
     }

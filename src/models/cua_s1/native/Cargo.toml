@@ -5,6 +5,10 @@ edition = "2024"
 publish = false
 description = "Native /v1/systemone worker for Cua-S1 4B 0.2 (text adapter)"
 
+[[test]]
+name = "kernels"
+path = "../../../../tests/qwen3_5/kernels.rs"
+
 [[bin]]
 name = "omni-cua-s1-native"
 path = "src/main.rs"
