@@ -40,3 +40,15 @@ jobs:
           cargo test --locked -p omni-laya --test packing -- --ignored
       - name: Build
         run: cargo build --workspace --release --locked
+
+  benchmarks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -r benchmarks/requirements.txt
+      - run: python benchmarks/bench.py validate benchmarks/smoke.jsonl
+      - run: python -m unittest discover -s tests/benchmarks -p 'test_*.py' -v
