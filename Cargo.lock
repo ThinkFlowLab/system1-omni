@@ -959,6 +959,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "omni-cuda"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "libloading",
+ "tempfile",
+]
+
+[[package]]
 name = "omni-jev"
 version = "0.1.0"
 dependencies = [
@@ -974,7 +983,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "half",
+ "libloading",
  "memmap2",
+ "omni-cuda",
  "safetensors 0.6.2",
  "serde",
  "serde_json",

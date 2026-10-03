@@ -6,7 +6,7 @@ GPU operations and kernel implementations belong in [`backends/cuda/`](../../bac
 
 The `omni-laya` crate currently reads and checks the English Laya 0.3.20 checkpoint. `Config::load` validates the architecture and temperatures; `Weights` checks tensor names and shapes and converts FP32, FP16 and BF16 values. `checkpoint_tensors()` lists the 206 expected tensors. Each backend chooses its own storage precision.
 
-Keep checkpoint files unchanged while `Weights` holds a read-only memory mapping. This crate does not yet execute inference.
+Keep checkpoint files unchanged while `Weights` holds a read-only memory mapping. The eager encoder is described below; complete request-to-result inference is not yet implemented.
 
 ## CPU checks
 
@@ -23,10 +23,84 @@ cargo test --release --locked -p omni-laya --test weights -- --ignored
 
 These two CPU tests check all 206 tensor names and shapes, 618 conversion hashes, and the legacy temperature buffer. The normal CI job skips them because it does not download the full checkpoint.
 
+## GPU weight residency
+
+`ResidentWeights::upload(&cuda, &weights)` validates the checkpoint inventory and
+uploads the weights once. Embeddings use FP16; encoder norms, head norms and biases,
+and the scorer input norm use FP32; other weights use BF16. Layouts stay unchanged.
+The legacy `temperature` buffer is validated but not uploaded.
+
+`get(name)` returns the resident buffer. `bytes()` reports weight allocations only,
+excluding CUDA context and allocator overhead. Buffers keep their CUDA context alive
+after the caller drops the source mapping or `Cuda`. Failed loads release partial
+allocations. Workspace, rotary tables and inference are separate modules.
+
+The ignored GPU check uploads all 205 used tensors and compares readback hashes
+with the Torch conversion oracle; it does not test model outputs or latency.
+Prerequisites and commands are in the
+[native validation recipe](../../../recipe/laya/README.md#native-residency-and-workspace-validation).
+
+## Inference workspace
+
+`Workspace::new(&cuda, batch, sequence)` allocates fixed scratch buffers for one
+shape. Batch must be 1, 2, 4, 8 or 16; sequence must be a multiple of 16 in 16..=512.
+Invalid shapes fail before any allocation; a failed allocation releases the partial
+workspace. Contents are uninitialized and must be written before use.
+
+`buffers()` borrows the named buffers without allowing allocations to be replaced.
+The workspace outlives the caller's `Cuda` handle. `bytes()` reports scratch
+allocations only, excluding resident weights and CUDA overhead.
+
+Let `B` be batch, `L` sequence, `D=1024`, and `M=MAX_MARKERS=2048`. Layouts are:
+
+| Buffers | Shape and dtype |
+| --- | --- |
+| ids / lengths / types | `[B,L]` int64 / `[B]` int32 / `[B]` int64 |
+| residual / hidden / attention | `[B,L,D]` FP32 / BF16 / BF16 |
+| qkv / gated / feed_forward | `[B,L,3D]` / `[B,L,2624]` / `[B,L,4096]`, BF16 |
+| indices / offsets | `[M]` / `[B+1]`, int32 |
+| markers / scored / logits | `[M,D]` / `[M,D]` / `[M]`, BF16 |
+| features / action_hidden / actions | `[B,1028]` / `[B,256]` / `[B,2]`, BF16 |
+
+At `(B,L)=(1,512)`, allocations total 22,628,896 bytes; at `(16,512)`,
+236,048,836 bytes. The caller must enforce at most `MAX_MARKERS` scored positions.
+No Graph cache, kernel launch, cuBLAS workspace or inference is included.
+
+The ignored GPU check writes and reads all 17 buffers twice at three shapes,
+including both capacity bounds, using deterministic byte patterns. This tests
+allocation and transfer, not model numerics or latency. Prerequisites and commands
+are in the
+[native validation recipe](../../../recipe/laya/README.md#native-residency-and-workspace-validation).
+
+## Eager encoder
+
+`Encoder::load(&cuda, checkpoint, bundle)` loads the existing trusted native Laya
+bundle and resident weights. `run(ids, lengths, types, &workspace)` executes all
+28 encoder layers and both decision transformer layers, synchronizes, and leaves
+FP32 hidden states in `workspace.buffers().residual`. Padded rows have length zero.
+IDs must be within the vocabulary; lengths and types are checked before upload.
+
+This uses the existing original RoPE entry point and dynamic full/local attention.
+No Scorer, output decoding, HTTP service, Graph capture or cache is included.
+The resource library supplied to `Cuda::load` remains separate from the operator
+bundle; CPU builds need neither library. The operator bundle currently targets
+Hopper `sm_90a`. `Encoder::load` is unsafe because callers must trust the native
+code and provide a compatible GPU; hashes bind artifacts, not code trust.
+
+Build prerequisites, bundle preparation and the GPU test commands are in the
+[native encoder validation recipe](../../../recipe/laya/README.md#native-encoder-validation).
+Startup checks checkpoint and bundle hashes before loading operator code.
+
+The test checks selected encoder intermediates, both head layers, final hidden
+states, shape changes and repeated workspace reuse. It compares valid tokens;
+empty-key padding differs intentionally from the original attention. Candidate
+padding must still be finite. This is numerical parity, not model quality or a
+performance benchmark. The intermediate capture hooks compile only in tests.
+
 ## Python worker
 
 The Python worker serves LAYA through laya-serve on CPU and Apple Silicon (PyTorch MPS,
-validated on an M1 Pro and, by another contributor, an M5). No native CUDA or Metal backend yet.
+validated on an M1 Pro and, by another contributor, an M5). This worker uses PyTorch for model execution.
 
 - [`src/frontend/laya_mps.py`](../../frontend/laya_mps.py): the HTTP worker. laya-serve (`laya[serve]==0.3.20`)
   with its request handling unchanged, started as `PYTHONPATH=src python -m frontend.laya_mps --device mps`.
