@@ -10,6 +10,16 @@ Keep checkpoint files unchanged while `Weights` holds a read-only memory mapping
 
 `Preprocessor::load` reads a tokenizer JSON file. `prepare` packs English `choice`, `score` and `noul` questions into ordered token rows, option-marker positions and type IDs. Rows follow Laya 0.3.20's 512-token limit and 192-token head budget. Conversation lists keep the newest state tokens; other state values keep the beginning. The result includes normalized criteria for later decoding and the total input-token usage. Backends own padding, batching and resource limits.
 
+Build a request with `Request::from_json(&str)` for one top-level JSON object, or
+`Request::from_value(Value)` for an already constructed value. The JSON entry
+preserves object order and arbitrary-size integers, treats serde_json's private
+Number/RawValue keys as ordinary user keys, and applies its default nesting limit
+to the complete request. The value entry moves state and questions without
+reparsing or adding a depth limit. Both reject unknown request fields and require
+state and an object of questions. Public fields and `Serialize` remain available;
+`Request` does not implement generic `Deserialize`, so use these explicit entries
+instead of `serde_json::from_str::<Request>` or `serde_json::from_value::<Request>`.
+
 ## CPU checks
 
 The normal workspace tests cover configuration errors, malformed tensors, inventory mismatches and conversion boundaries without downloading weights.
@@ -25,17 +35,7 @@ cargo test --release --locked -p omni-laya --test weights -- --ignored
 
 These two CPU tests check all 206 tensor names and shapes, 618 conversion hashes, and the legacy temperature buffer. The normal CI job skips them because it does not download the full checkpoint.
 
-The normal tests also check input validation, question and option order, truncation and JSON rendering with a small test tokenizer. CPU CI separately downloads the [official tokenizer](https://huggingface.co/convaiinnovations/laya/blob/55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851/tokenizer/tokenizer.json) and a [frozen 17-case packing reference](https://github.com/linear3735/system1-omni/blob/5e4dd4215c925ebd93bb9ce4097b27bd6375f7c0/recipe/laya/native/packing-golden.json). Both files are checked by SHA-256 before comparison. No weights or GPU are needed.
-
-To run that check locally with the same files:
-
-```sh
-export LAYA_TOKENIZER=/path/to/laya/tokenizer/tokenizer.json
-export LAYA_PACKING_ORACLE=/path/to/packing-golden.json
-cargo test --locked -p omni-laya --test packing -- --ignored
-```
-
-The comparison covers every token, marker, question type, row length, question order and usage count. It excludes the reference's backend padding and bucket dimensions. The [reference generator and inputs](https://github.com/linear3735/system1-omni/tree/5e4dd4215c925ebd93bb9ce4097b27bd6375f7c0/recipe/laya/native) use `laya==0.3.20`; packing parity does not measure model quality.
+The normal tests also check input validation, question and option order, truncation and JSON rendering with a small test tokenizer. The [Laya recipe](../../../recipe/laya/README.md#native-cpu-packing-check) provides the CPU packing validation commands and pinned inputs for the official 17-case comparison. No weights or GPU are needed; packing parity does not measure model quality.
 
 ## Python worker
 
