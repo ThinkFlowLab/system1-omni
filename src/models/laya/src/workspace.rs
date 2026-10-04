@@ -37,7 +37,7 @@ pub struct WorkspaceBuffers {
 }
 
 impl Workspace {
-    pub fn new(cuda: &Cuda, batch: usize, sequence: usize) -> Result<Self> {
+    fn buffer_sizes(batch: usize, sequence: usize) -> Result<[usize; 17]> {
         ensure!(
             batch.is_power_of_two() && batch <= 16,
             "workspace batch must be 1, 2, 4, 8 or 16"
@@ -47,37 +47,62 @@ impl Workspace {
             "workspace sequence must be a multiple of 16 in 16..=512"
         );
         let tokens = batch * sequence;
-        let mut bytes = 0;
-        let mut alloc = |size| {
-            let buffer = cuda.alloc(size)?;
-            bytes += size;
-            Ok::<_, anyhow::Error>(buffer)
-        };
+        Ok([
+            tokens * 8,
+            batch * 4,
+            batch * 8,
+            tokens * D * 4,
+            tokens * D * 2,
+            tokens * D * 6,
+            tokens * D * 2,
+            tokens * 2624 * 2,
+            tokens * 4096 * 2,
+            MAX_MARKERS * 4,
+            (batch + 1) * 4,
+            MAX_MARKERS * D * 2,
+            MAX_MARKERS * D * 2,
+            MAX_MARKERS * 2,
+            batch * 1028 * 2,
+            batch * 256 * 2,
+            batch * 2 * 2,
+        ])
+    }
+
+    /// Validates the shape and returns its GPU scratch size before allocating.
+    pub fn required_bytes(batch: usize, sequence: usize) -> Result<usize> {
+        Ok(Self::buffer_sizes(batch, sequence)?.iter().sum())
+    }
+
+    pub fn new(cuda: &Cuda, batch: usize, sequence: usize) -> Result<Self> {
+        let sizes = Self::buffer_sizes(batch, sequence)?;
+        let bytes = sizes.iter().sum();
+        let mut sizes = sizes.into_iter();
+        let mut alloc = || cuda.alloc(sizes.next().expect("workspace buffer layout"));
         let buffers = WorkspaceBuffers {
-            ids: alloc(tokens * 8)?,
-            lengths: alloc(batch * 4)?,
-            types: alloc(batch * 8)?,
-            residual: alloc(tokens * D * 4)?,
-            hidden: alloc(tokens * D * 2)?,
-            qkv: alloc(tokens * D * 6)?,
-            attention: alloc(tokens * D * 2)?,
-            gated: alloc(tokens * 2624 * 2)?,
-            feed_forward: alloc(tokens * 4096 * 2)?,
-            indices: alloc(MAX_MARKERS * 4)?,
-            offsets: alloc((batch + 1) * 4)?,
-            markers: alloc(MAX_MARKERS * D * 2)?,
-            scored: alloc(MAX_MARKERS * D * 2)?,
-            logits: alloc(MAX_MARKERS * 2)?,
-            features: alloc(batch * 1028 * 2)?,
-            action_hidden: alloc(batch * 256 * 2)?,
-            actions: alloc(batch * 2 * 2)?,
+            ids: alloc()?,
+            lengths: alloc()?,
+            types: alloc()?,
+            residual: alloc()?,
+            hidden: alloc()?,
+            qkv: alloc()?,
+            attention: alloc()?,
+            gated: alloc()?,
+            feed_forward: alloc()?,
+            indices: alloc()?,
+            offsets: alloc()?,
+            markers: alloc()?,
+            scored: alloc()?,
+            logits: alloc()?,
+            features: alloc()?,
+            action_hidden: alloc()?,
+            actions: alloc()?,
         };
         Ok(Self {
             batch,
             sequence,
             bytes,
             buffers,
-            staging: RefCell::new(vec![0; tokens * 8 + batch * 12]),
+            staging: RefCell::new(vec![0; batch * sequence * 8 + batch * 12]),
         })
     }
 
