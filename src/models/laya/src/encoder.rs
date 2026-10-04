@@ -198,22 +198,7 @@ impl Encoder {
         types: &[i64],
         workspace: &Workspace,
     ) -> Result<()> {
-        validate_inputs(ids, lengths, types, workspace.batch(), workspace.sequence())?;
-        let s = workspace.buffers();
-        s.ids
-            .write(&ids.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<_>>())?;
-        s.lengths.write(
-            &lengths
-                .iter()
-                .flat_map(|x| x.to_le_bytes())
-                .collect::<Vec<_>>(),
-        )?;
-        s.types.write(
-            &types
-                .iter()
-                .flat_map(|x| x.to_le_bytes())
-                .collect::<Vec<_>>(),
-        )?;
+        workspace.upload(&self.cuda, ids, lengths, types)?;
         self.execute(workspace)?;
         self.cuda.sync()
     }
@@ -315,7 +300,13 @@ impl Encoder {
     }
 }
 
-fn validate_inputs(ids: &[i64], lengths: &[i32], types: &[i64], b: usize, l: usize) -> Result<()> {
+pub(crate) fn validate_inputs(
+    ids: &[i64],
+    lengths: &[i32],
+    types: &[i64],
+    b: usize,
+    l: usize,
+) -> Result<()> {
     ensure!(
         ids.len() == b * l && lengths.len() == b && types.len() == b,
         "encoder input shape mismatch"

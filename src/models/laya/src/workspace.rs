@@ -1,5 +1,6 @@
 use anyhow::{Result, ensure};
 use omni_cuda::{Buffer, Cuda};
+use std::cell::RefCell;
 
 pub const MAX_MARKERS: usize = 2048;
 const D: usize = 1024;
@@ -10,6 +11,7 @@ pub struct Workspace {
     sequence: usize,
     bytes: usize,
     buffers: WorkspaceBuffers,
+    staging: RefCell<Vec<u8>>,
 }
 
 /// Buffer layouts consumed by Laya's encoder, decision head and scorer.
@@ -75,6 +77,7 @@ impl Workspace {
             sequence,
             bytes,
             buffers,
+            staging: RefCell::new(vec![0; tokens * 8 + batch * 12]),
         })
     }
 
@@ -86,13 +89,42 @@ impl Workspace {
         self.sequence
     }
 
-    /// Total scratch allocation bytes, excluding weights and CUDA overhead.
+    /// GPU scratch allocation bytes, excluding weights, CUDA overhead and host staging.
     pub fn bytes(&self) -> usize {
         self.bytes
     }
 
     pub fn buffers(&self) -> &WorkspaceBuffers {
         &self.buffers
+    }
+
+    /// Validates and packs inputs into reusable host storage, then completes the
+    /// grouped upload before releasing the staging borrow.
+    pub(crate) fn upload(
+        &self,
+        cuda: &Cuda,
+        ids: &[i64],
+        lengths: &[i32],
+        types: &[i64],
+    ) -> Result<()> {
+        crate::encoder::validate_inputs(ids, lengths, types, self.batch, self.sequence)?;
+        let mut staging = self.staging.borrow_mut();
+        let (id_bytes, rest) = staging.split_at_mut(ids.len() * 8);
+        let (length_bytes, type_bytes) = rest.split_at_mut(lengths.len() * 4);
+        for (out, value) in id_bytes.as_chunks_mut::<8>().0.iter_mut().zip(ids) {
+            out.copy_from_slice(&value.to_le_bytes());
+        }
+        for (out, value) in length_bytes.as_chunks_mut::<4>().0.iter_mut().zip(lengths) {
+            out.copy_from_slice(&value.to_le_bytes());
+        }
+        for (out, value) in type_bytes.as_chunks_mut::<8>().0.iter_mut().zip(types) {
+            out.copy_from_slice(&value.to_le_bytes());
+        }
+        cuda.write_many(&[
+            (&self.buffers.ids, id_bytes),
+            (&self.buffers.lengths, length_bytes),
+            (&self.buffers.types, type_bytes),
+        ])
     }
 }
 

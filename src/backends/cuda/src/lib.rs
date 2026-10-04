@@ -130,6 +130,54 @@ impl Cuda {
         Ok(buffer)
     }
 
+    /// Uploads a validated group, synchronizing once before releasing host borrows.
+    /// Empty groups (or groups of empty slices) do not enter the runtime. This
+    /// groups transfers; it does not provide transfer/compute overlap.
+    pub fn write_many(&self, writes: &[(&Buffer, &[u8])]) -> Result<()> {
+        for (buffer, bytes) in writes {
+            ensure!(
+                Rc::ptr_eq(&self.ctx, &buffer.inner.ctx),
+                "upload buffer belongs to a different CUDA context"
+            );
+            ensure!(
+                bytes.len() <= buffer.inner.bytes,
+                "upload exceeds allocation"
+            );
+        }
+        if writes.iter().all(|(_, bytes)| bytes.is_empty()) {
+            return Ok(());
+        }
+        self.ctx.activate()?;
+        let functions = &self.ctx.functions;
+        let mut copied = 0;
+        for (buffer, bytes) in writes {
+            if bytes.is_empty() {
+                continue;
+            }
+            copied = unsafe {
+                (functions.upload)(
+                    buffer.inner.ptr,
+                    bytes.as_ptr(),
+                    bytes.len(),
+                    self.ctx.stream,
+                )
+            };
+            if copied != 0 {
+                break;
+            }
+        }
+        // A failing submission may still queue a copy. Drain even on failure,
+        // while every source slice and destination allocation is still borrowed.
+        let synced = unsafe { (functions.sync)(self.ctx.stream) };
+        match (functions.check(copied), functions.check(synced)) {
+            (Err(copy), Err(sync)) => Err(anyhow!(
+                "{copy}; stream synchronization also failed: {sync}"
+            )),
+            (Err(error), _) | (_, Err(error)) => Err(error),
+            (Ok(()), Ok(())) => Ok(()),
+        }
+    }
+
     pub fn sync(&self) -> Result<()> {
         self.ctx.sync()
     }
