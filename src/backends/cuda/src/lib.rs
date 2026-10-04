@@ -2,6 +2,7 @@
 use anyhow::{Result, anyhow, ensure};
 use libloading::Library;
 use std::{
+    cell::Cell,
     ffi::{CStr, c_char, c_void},
     path::Path,
     rc::Rc,
@@ -41,15 +42,25 @@ struct Context {
     functions: Functions,
     device: i32,
     stream: Ptr,
+    capturing: Cell<bool>,
 }
 
 impl Context {
+    fn ensure_not_capturing(&self) -> Result<()> {
+        ensure!(
+            !self.capturing.get(),
+            "operation prohibited during CUDA capture"
+        );
+        Ok(())
+    }
+
     fn activate(&self) -> Result<()> {
         self.functions
             .check(unsafe { (self.functions.set_device)(self.device) })
     }
 
     fn sync(&self) -> Result<()> {
+        self.ensure_not_capturing()?;
         self.activate()?;
         self.functions
             .check(unsafe { (self.functions.sync)(self.stream) })
@@ -103,11 +114,13 @@ impl Cuda {
                 functions,
                 device,
                 stream,
+                capturing: Cell::new(false),
             }),
         })
     }
 
     pub fn alloc(&self, bytes: usize) -> Result<Buffer> {
+        self.ctx.ensure_not_capturing()?;
         ensure!(bytes > 0, "zero CUDA allocation");
         self.ctx.activate()?;
         let mut ptr = std::ptr::null_mut();
@@ -134,6 +147,7 @@ impl Cuda {
     /// Empty groups (or groups of empty slices) do not enter the runtime. This
     /// groups transfers; it does not provide transfer/compute overlap.
     pub fn write_many(&self, writes: &[(&Buffer, &[u8])]) -> Result<()> {
+        self.ctx.ensure_not_capturing()?;
         for (buffer, bytes) in writes {
             ensure!(
                 Rc::ptr_eq(&self.ctx, &buffer.inner.ctx),
@@ -201,6 +215,7 @@ impl Buffer {
     }
 
     pub fn write(&self, bytes: &[u8]) -> Result<()> {
+        self.inner.ctx.ensure_not_capturing()?;
         ensure!(bytes.len() <= self.inner.bytes, "upload exceeds allocation");
         if bytes.is_empty() {
             return Ok(());
@@ -222,6 +237,7 @@ impl Buffer {
     }
 
     pub fn read(&self, bytes: usize) -> Result<Vec<u8>> {
+        self.inner.ctx.ensure_not_capturing()?;
         ensure!(bytes <= self.inner.bytes, "download exceeds allocation");
         let mut data = vec![0; bytes];
         if bytes == 0 {
@@ -256,3 +272,5 @@ impl Drop for Allocation {
 }
 
 pub mod kernels;
+
+pub mod graph;

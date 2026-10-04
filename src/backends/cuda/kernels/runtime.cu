@@ -62,4 +62,44 @@ int laya_stream_free(void* stream) {
   if (!stream) return invalid_argument;
   return cudaStreamDestroy(static_cast<cudaStream_t>(stream));
 }
+
+int laya_capture_begin(void* stream) {
+  if (!stream) return invalid_argument;
+  return cudaStreamBeginCapture(static_cast<cudaStream_t>(stream),
+                                cudaStreamCaptureModeThreadLocal);
+}
+
+// Always end capture and destroy the temporary graph, including on failure.
+int laya_capture_end(void* stream, void** executable) {
+  if (!executable) return invalid_argument;
+  *executable = nullptr;
+  if (!stream) return invalid_argument;
+  cudaGraph_t graph = nullptr;
+  cudaGraphExec_t created = nullptr;
+  cudaError_t status = cudaStreamEndCapture(static_cast<cudaStream_t>(stream), &graph);
+  if (status == cudaSuccess && graph)
+    status = cudaGraphInstantiate(&created, graph, nullptr, nullptr, 0);
+  if (graph) {
+    cudaError_t destroyed = cudaGraphDestroy(graph);
+    if (status == cudaSuccess) status = destroyed;
+  }
+  if (status != cudaSuccess || !created) {
+    if (created) cudaGraphExecDestroy(created);
+    return status != cudaSuccess ? status : invalid_argument;
+  }
+  *executable = created;
+  return 0;
+}
+
+int laya_graph_run(void* executable, void* stream) {
+  if (!executable || !stream) return invalid_argument;
+  return cudaGraphLaunch(static_cast<cudaGraphExec_t>(executable),
+                         static_cast<cudaStream_t>(stream));
+}
+
+int laya_graph_free(void* executable) {
+  if (!executable) return invalid_argument;
+  return cudaGraphExecDestroy(static_cast<cudaGraphExec_t>(executable));
+}
+
 }

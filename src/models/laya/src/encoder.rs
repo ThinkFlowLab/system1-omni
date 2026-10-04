@@ -199,12 +199,12 @@ impl Encoder {
         workspace: &Workspace,
     ) -> Result<()> {
         workspace.upload(&self.cuda, ids, lengths, types)?;
-        self.execute(workspace)?;
+        self.execute(workspace, true)?;
         self.cuda.sync()
     }
 
     /// Enqueues compute after validated inputs have been uploaded; does not synchronize.
-    pub(crate) fn execute(&self, workspace: &Workspace) -> Result<()> {
+    pub(crate) fn execute(&self, workspace: &Workspace, _checkpoints: bool) -> Result<()> {
         let (b, l) = (workspace.batch(), workspace.sequence());
         let s = workspace.buffers();
         let k = &self.kernels;
@@ -226,7 +226,9 @@ impl Encoder {
             ],
         )?;
         #[cfg(test)]
-        self.record("embedding", &s.residual)?;
+        if _checkpoints {
+            self.record("embedding", &s.residual)?;
+        }
         // Layer indices are consumed only by test checkpoint instrumentation.
         #[allow(clippy::unused_enumerate_index)]
         for (_i, layer) in self.layers.iter().enumerate() {
@@ -248,7 +250,7 @@ impl Encoder {
                 [&s.residual, &s.hidden, &layer.next_norm, z, &s.hidden]
             )?;
             #[cfg(test)]
-            if [0, 1, 2, 27].contains(&_i) {
+            if _checkpoints && [0, 1, 2, 27].contains(&_i) {
                 self.record(&format!("encoder{_i}"), &s.residual)?;
             }
         }
@@ -294,7 +296,9 @@ impl Encoder {
             )?;
             call!(k.residual, [&s.residual, &s.hidden])?;
             #[cfg(test)]
-            self.record(&format!("head{_i}"), &s.residual)?;
+            if _checkpoints {
+                self.record(&format!("head{_i}"), &s.residual)?;
+            }
         }
         Ok(())
     }
