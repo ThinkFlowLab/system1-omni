@@ -3,8 +3,11 @@ use crate::{
     artifacts, config::Config, resident::ResidentWeights, weights::Weights, workspace::Workspace,
 };
 use anyhow::{Result, ensure};
-use omni_cuda::{Buffer, Cuda, kernels::Kernels};
-use std::{collections::HashMap, fs, path::Path};
+use omni_cuda::{
+    Buffer, Cuda,
+    kernels::{Kernel, Kernels},
+};
+use std::{fs, path::Path};
 
 const NAMES: &[&str] = &[
     "embed",
@@ -26,11 +29,85 @@ const NAMES: &[&str] = &[
     "residual",
 ];
 
+struct EncoderKernels {
+    embed: Kernel,
+    qkv: Kernel,
+    rope_original: Kernel,
+    attn_full: Kernel,
+    attn_local: Kernel,
+    out: Kernel,
+    addln: Kernel,
+    geglu: Kernel,
+    down: Kernel,
+    type_embedding: Kernel,
+    ln_bias: Kernel,
+    head_in: Kernel,
+    head_out: Kernel,
+    addln_bias: Kernel,
+    ffn1: Kernel,
+    ffn2: Kernel,
+    residual: Kernel,
+}
+
+impl EncoderKernels {
+    fn resolve(kernels: &Kernels) -> Result<Self> {
+        Ok(Self {
+            embed: kernels.resolve("embed")?,
+            qkv: kernels.resolve("qkv")?,
+            rope_original: kernels.resolve("rope_original")?,
+            attn_full: kernels.resolve("attn_full")?,
+            attn_local: kernels.resolve("attn_local")?,
+            out: kernels.resolve("out")?,
+            addln: kernels.resolve("addln")?,
+            geglu: kernels.resolve("geglu")?,
+            down: kernels.resolve("down")?,
+            type_embedding: kernels.resolve("type")?,
+            ln_bias: kernels.resolve("ln_bias")?,
+            head_in: kernels.resolve("head_in")?,
+            head_out: kernels.resolve("head_out")?,
+            addln_bias: kernels.resolve("addln_bias")?,
+            ffn1: kernels.resolve("ffn1")?,
+            ffn2: kernels.resolve("ffn2")?,
+            residual: kernels.resolve("residual")?,
+        })
+    }
+}
+
+struct EncoderLayer {
+    qkv: Buffer,
+    out: Buffer,
+    mlp_norm: Buffer,
+    up: Buffer,
+    down: Buffer,
+    next_norm: Buffer,
+    rotary: [Buffer; 2],
+    attention: Kernel,
+}
+
+struct HeadLayer {
+    norm1: Buffer,
+    norm1_bias: Buffer,
+    qkv: Buffer,
+    qkv_bias: Buffer,
+    out: Buffer,
+    out_bias: Buffer,
+    norm2: Buffer,
+    norm2_bias: Buffer,
+    up: Buffer,
+    up_bias: Buffer,
+    down: Buffer,
+    down_bias: Buffer,
+}
+
 pub struct Encoder {
-    cuda: Cuda,
-    kernels: Kernels,
-    weights: ResidentWeights,
-    tables: HashMap<String, Buffer>,
+    pub(crate) cuda: Cuda,
+    kernels: EncoderKernels,
+    _weights: ResidentWeights,
+    embedding: Buffer,
+    embedding_norm: Buffer,
+    type_embedding: Buffer,
+    layers: Vec<EncoderLayer>,
+    head: Vec<HeadLayer>,
     zeros: Buffer,
     #[cfg(test)]
     checkpoints: tests::Checkpoints,
@@ -46,22 +123,68 @@ impl Encoder {
         let kernels = unsafe { Kernels::load(cuda, &bundle.join("liblaya_cuda.so"), NAMES) }?;
         let source = Weights::open(&checkpoint.join("model.safetensors"))?;
         let weights = ResidentWeights::upload(cuda, &source)?;
-        let mut tables = HashMap::new();
-        for kind in ["full", "local"] {
-            for part in ["cos", "sin"] {
-                let name = format!("rope_{kind}_{part}");
-                let data = fs::read(bundle.join(format!("{name}.f32")))?;
-                ensure!(data.len() == 512 * 32 * 4, "invalid rotary table size");
-                tables.insert(name, cuda.upload(&data)?);
-            }
+        let kernels = EncoderKernels::resolve(&kernels)?;
+        let table = |kind: &str, part: &str| -> Result<Buffer> {
+            let data = fs::read(bundle.join(format!("rope_{kind}_{part}.f32")))?;
+            ensure!(data.len() == 512 * 32 * 4, "invalid rotary table size");
+            cuda.upload(&data)
+        };
+        let full = [table("full", "cos")?, table("full", "sin")?];
+        let local = [table("local", "cos")?, table("local", "sin")?];
+        let w = |name: &str| weights.get(name).cloned();
+        let mut layers = Vec::with_capacity(28);
+        for i in 0..28 {
+            let layer = |name: &str| w(&format!("encoder.layers.{i}.{name}"));
+            let next_norm = if i < 27 {
+                w(&format!("encoder.layers.{}.attn_norm.weight", i + 1))?
+            } else {
+                w("encoder.final_norm.weight")?
+            };
+            let (rotary, attention) = if i % 3 == 0 {
+                (full.clone(), kernels.attn_full.clone())
+            } else {
+                (local.clone(), kernels.attn_local.clone())
+            };
+            layers.push(EncoderLayer {
+                qkv: layer("attn.Wqkv.weight")?,
+                out: layer("attn.Wo.weight")?,
+                mlp_norm: layer("mlp_norm.weight")?,
+                up: layer("mlp.Wi.weight")?,
+                down: layer("mlp.Wo.weight")?,
+                next_norm,
+                rotary,
+                attention,
+            });
+        }
+        let mut head = Vec::with_capacity(2);
+        for i in 0..2 {
+            let layer = |name: &str| w(&format!("head.layers.{i}.{name}"));
+            head.push(HeadLayer {
+                norm1: layer("norm1.weight")?,
+                norm1_bias: layer("norm1.bias")?,
+                qkv: layer("self_attn.in_proj_weight")?,
+                qkv_bias: layer("self_attn.in_proj_bias")?,
+                out: layer("self_attn.out_proj.weight")?,
+                out_bias: layer("self_attn.out_proj.bias")?,
+                norm2: layer("norm2.weight")?,
+                norm2_bias: layer("norm2.bias")?,
+                up: layer("linear1.weight")?,
+                up_bias: layer("linear1.bias")?,
+                down: layer("linear2.weight")?,
+                down_bias: layer("linear2.bias")?,
+            });
         }
         Ok(Self {
             #[cfg(test)]
             checkpoints: Default::default(),
             cuda: cuda.clone(),
             kernels,
-            weights,
-            tables,
+            embedding: w("encoder.embeddings.tok_embeddings.weight")?,
+            embedding_norm: w("encoder.embeddings.norm.weight")?,
+            type_embedding: w("type_emb.weight")?,
+            _weights: weights,
+            layers,
+            head,
             zeros: cuda.upload(&vec![0; 3072 * 4])?,
         })
     }
@@ -95,133 +218,98 @@ impl Encoder {
         self.cuda.sync()
     }
 
-    fn execute(&self, workspace: &Workspace) -> Result<()> {
+    /// Enqueues compute after validated inputs have been uploaded; does not synchronize.
+    pub(crate) fn execute(&self, workspace: &Workspace) -> Result<()> {
         let (b, l) = (workspace.batch(), workspace.sequence());
         let s = workspace.buffers();
-        let w = |name: &str| self.weights.get(name);
+        let k = &self.kernels;
         // Layouts are fixed by ResidentWeights and Workspace; indices were checked on CPU.
-        let call = |name: &str, args: &[&Buffer]| unsafe { self.kernels.launch(name, args, b, l) };
+        macro_rules! call {
+            ($kernel:expr, $args:expr $(,)?) => {
+                unsafe { $kernel.launch($args, b, l) }
+            };
+        }
         let z = &self.zeros;
-        call(
-            "embed",
-            &[
+        call!(
+            k.embed,
+            [
                 &s.ids,
-                w("encoder.embeddings.tok_embeddings.weight")?,
-                w("encoder.embeddings.norm.weight")?,
+                &self.embedding,
+                &self.embedding_norm,
                 &s.residual,
                 &s.hidden,
             ],
         )?;
         #[cfg(test)]
         self.record("embedding", &s.residual)?;
-        for i in 0..28 {
-            let prefix = format!("encoder.layers.{i}");
-            let layer = |name: &str| w(&format!("{prefix}.{name}"));
-            call("qkv", &[&s.hidden, layer("attn.Wqkv.weight")?, z, &s.qkv])?;
-            let kind = if i % 3 == 0 { "full" } else { "local" };
-            call(
-                "rope_original",
-                &[
-                    &s.qkv,
-                    &self.tables[&format!("rope_{kind}_cos")],
-                    &self.tables[&format!("rope_{kind}_sin")],
-                ],
+        // Layer indices are consumed only by test checkpoint instrumentation.
+        #[allow(clippy::unused_enumerate_index)]
+        for (_i, layer) in self.layers.iter().enumerate() {
+            call!(k.qkv, [&s.hidden, &layer.qkv, z, &s.qkv])?;
+            call!(
+                k.rope_original,
+                [&s.qkv, &layer.rotary[0], &layer.rotary[1]],
             )?;
-            call(&format!("attn_{kind}"), &[&s.qkv, &s.lengths, &s.attention])?;
-            call(
-                "out",
-                &[&s.attention, layer("attn.Wo.weight")?, z, &s.hidden],
+            call!(layer.attention, [&s.qkv, &s.lengths, &s.attention])?;
+            call!(k.out, [&s.attention, &layer.out, z, &s.hidden])?;
+            call!(
+                k.addln,
+                [&s.residual, &s.hidden, &layer.mlp_norm, z, &s.hidden],
             )?;
-            call(
-                "addln",
-                &[
-                    &s.residual,
-                    &s.hidden,
-                    layer("mlp_norm.weight")?,
-                    z,
-                    &s.hidden,
-                ],
+            call!(k.geglu, [&s.hidden, &layer.up, &s.gated])?;
+            call!(k.down, [&s.gated, &layer.down, z, &s.hidden])?;
+            call!(
+                k.addln,
+                [&s.residual, &s.hidden, &layer.next_norm, z, &s.hidden]
             )?;
-            call("geglu", &[&s.hidden, layer("mlp.Wi.weight")?, &s.gated])?;
-            call("down", &[&s.gated, layer("mlp.Wo.weight")?, z, &s.hidden])?;
-            let norm = if i < 27 {
-                format!("encoder.layers.{}.attn_norm.weight", i + 1)
-            } else {
-                "encoder.final_norm.weight".into()
-            };
-            call("addln", &[&s.residual, &s.hidden, w(&norm)?, z, &s.hidden])?;
             #[cfg(test)]
-            if [0, 1, 2, 27].contains(&i) {
-                self.record(&format!("encoder{i}"), &s.residual)?;
+            if [0, 1, 2, 27].contains(&_i) {
+                self.record(&format!("encoder{_i}"), &s.residual)?;
             }
         }
-        call(
-            "type",
-            &[&s.hidden, w("type_emb.weight")?, &s.types, &s.residual],
+        call!(
+            k.type_embedding,
+            [&s.hidden, &self.type_embedding, &s.types, &s.residual],
         )?;
-        for i in 0..2 {
-            let prefix = format!("head.layers.{i}");
-            let layer = |name: &str| w(&format!("{prefix}.{name}"));
-            call(
-                "ln_bias",
-                &[
+        #[allow(clippy::unused_enumerate_index)]
+        for (_i, layer) in self.head.iter().enumerate() {
+            call!(
+                k.ln_bias,
+                [
                     &s.residual,
                     &s.hidden,
-                    layer("norm1.weight")?,
-                    layer("norm1.bias")?,
+                    &layer.norm1,
+                    &layer.norm1_bias,
                     &s.hidden,
                 ],
             )?;
-            call(
-                "head_in",
-                &[
-                    &s.hidden,
-                    layer("self_attn.in_proj_weight")?,
-                    layer("self_attn.in_proj_bias")?,
-                    &s.qkv,
-                ],
+            call!(k.head_in, [&s.hidden, &layer.qkv, &layer.qkv_bias, &s.qkv])?;
+            call!(k.attn_full, [&s.qkv, &s.lengths, &s.attention])?;
+            call!(
+                k.head_out,
+                [&s.attention, &layer.out, &layer.out_bias, &s.hidden],
             )?;
-            call("attn_full", &[&s.qkv, &s.lengths, &s.attention])?;
-            call(
-                "head_out",
-                &[
-                    &s.attention,
-                    layer("self_attn.out_proj.weight")?,
-                    layer("self_attn.out_proj.bias")?,
-                    &s.hidden,
-                ],
-            )?;
-            call(
-                "addln_bias",
-                &[
+            call!(
+                k.addln_bias,
+                [
                     &s.residual,
                     &s.hidden,
-                    layer("norm2.weight")?,
-                    layer("norm2.bias")?,
+                    &layer.norm2,
+                    &layer.norm2_bias,
                     &s.hidden,
                 ],
             )?;
-            call(
-                "ffn1",
-                &[
-                    &s.hidden,
-                    layer("linear1.weight")?,
-                    layer("linear1.bias")?,
-                    &s.feed_forward,
-                ],
+            call!(
+                k.ffn1,
+                [&s.hidden, &layer.up, &layer.up_bias, &s.feed_forward],
             )?;
-            call(
-                "ffn2",
-                &[
-                    &s.feed_forward,
-                    layer("linear2.weight")?,
-                    layer("linear2.bias")?,
-                    &s.hidden,
-                ],
+            call!(
+                k.ffn2,
+                [&s.feed_forward, &layer.down, &layer.down_bias, &s.hidden],
             )?;
-            call("residual", &[&s.residual, &s.hidden])?;
+            call!(k.residual, [&s.residual, &s.hidden])?;
             #[cfg(test)]
-            self.record(&format!("head{i}"), &s.residual)?;
+            self.record(&format!("head{_i}"), &s.residual)?;
         }
         Ok(())
     }

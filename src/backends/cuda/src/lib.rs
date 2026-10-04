@@ -116,9 +116,11 @@ impl Cuda {
             .check(unsafe { (self.ctx.functions.alloc)(&mut ptr, bytes) })?;
         ensure!(!ptr.is_null(), "CUDA runtime returned a null allocation");
         Ok(Buffer {
-            ctx: self.ctx.clone(),
-            ptr,
-            bytes,
+            inner: Rc::new(Allocation {
+                ctx: self.ctx.clone(),
+                ptr,
+                bytes,
+            }),
         })
     }
 
@@ -133,7 +135,13 @@ impl Cuda {
     }
 }
 
+/// Clones share one allocation and keep its CUDA context alive.
+#[derive(Clone)]
 pub struct Buffer {
+    inner: Rc<Allocation>,
+}
+
+struct Allocation {
     ctx: Rc<Context>,
     ptr: Ptr,
     bytes: usize,
@@ -141,42 +149,54 @@ pub struct Buffer {
 
 impl Buffer {
     pub fn bytes(&self) -> usize {
-        self.bytes
+        self.inner.bytes
     }
 
     pub fn write(&self, bytes: &[u8]) -> Result<()> {
-        ensure!(bytes.len() <= self.bytes, "upload exceeds allocation");
+        ensure!(bytes.len() <= self.inner.bytes, "upload exceeds allocation");
         if bytes.is_empty() {
             return Ok(());
         }
-        self.ctx.activate()?;
-        let functions = &self.ctx.functions;
-        let copied =
-            unsafe { (functions.upload)(self.ptr, bytes.as_ptr(), bytes.len(), self.ctx.stream) };
+        self.inner.ctx.activate()?;
+        let functions = &self.inner.ctx.functions;
+        let copied = unsafe {
+            (functions.upload)(
+                self.inner.ptr,
+                bytes.as_ptr(),
+                bytes.len(),
+                self.inner.ctx.stream,
+            )
+        };
         // Even a failed copy may have queued work using the borrowed host memory.
-        let synced = unsafe { (functions.sync)(self.ctx.stream) };
+        let synced = unsafe { (functions.sync)(self.inner.ctx.stream) };
         functions.check(copied)?;
         functions.check(synced)
     }
 
     pub fn read(&self, bytes: usize) -> Result<Vec<u8>> {
-        ensure!(bytes <= self.bytes, "download exceeds allocation");
+        ensure!(bytes <= self.inner.bytes, "download exceeds allocation");
         let mut data = vec![0; bytes];
         if bytes == 0 {
             return Ok(data);
         }
-        self.ctx.activate()?;
-        let functions = &self.ctx.functions;
-        let copied =
-            unsafe { (functions.download)(data.as_mut_ptr(), self.ptr, bytes, self.ctx.stream) };
-        let synced = unsafe { (functions.sync)(self.ctx.stream) };
+        self.inner.ctx.activate()?;
+        let functions = &self.inner.ctx.functions;
+        let copied = unsafe {
+            (functions.download)(
+                data.as_mut_ptr(),
+                self.inner.ptr,
+                bytes,
+                self.inner.ctx.stream,
+            )
+        };
+        let synced = unsafe { (functions.sync)(self.inner.ctx.stream) };
         functions.check(copied)?;
         functions.check(synced)?;
         Ok(data)
     }
 }
 
-impl Drop for Buffer {
+impl Drop for Allocation {
     fn drop(&mut self) {
         if self.ctx.activate().is_ok() {
             unsafe {
