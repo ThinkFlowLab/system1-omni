@@ -29,6 +29,11 @@
 #include <math.h>
 #include <stdint.h>
 
+// Bumped whenever the required interface below changes. The manifest repeats it
+// as `abi_version` and the checker compares the two, so the number lives here
+// once: a manifest that drifts from this macro is reported rather than trusted.
+#define CS_SCORE_ABI_VERSION 1
+
 namespace {
 
 constexpr int WARP = 32;
@@ -171,7 +176,9 @@ bool arguments_valid(int K, int D, float scale, float temperature) {
 extern "C" {
 
 // ABI version of this library; a loader refuses a value it does not know.
-uint32_t cs_score_abi_version(void) { return 1; }
+// Returning the macro rather than a literal is what keeps it and the manifest
+// from drifting apart.
+uint32_t cs_score_abi_version(void) { return CS_SCORE_ABI_VERSION; }
 
 // Scores `questions` independent questions.
 //
