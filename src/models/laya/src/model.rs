@@ -571,7 +571,7 @@ impl Model {
                     let pointers = args.map(|arg| arg.pointer(s));
                     unsafe {
                         kernel
-                            .select(s.b, s.l)
+                            .select(s.b, s.l)?
                             .launch(&pointers[..*count], s.b, s.l)
                     }?;
                 }
