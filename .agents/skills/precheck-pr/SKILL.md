@@ -72,6 +72,12 @@ revision, hardware, configurations, baseline, raw results, and variability. Flag
 unsupported claims. Reviewing evidence does not authorize starting new benchmark
 campaigns; stay within the user's execution scope and budget.
 
+For the PR's demo/evidence section, follow the
+[self-review evidence guidance](../self-review/SKILL.md#pr-demoevidence).
+Check provenance, measurement boundaries, asset rights/redaction, and whether
+missing evidence is inapplicable or unverified. Do not require a video or GPU
+campaign for a change that does not need one.
+
 ## Report to the contributor
 
 Lead with actionable findings, ordered by severity, with file/line references,

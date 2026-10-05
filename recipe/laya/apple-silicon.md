@@ -142,8 +142,9 @@ curl http://127.0.0.1:8080/v1/systemone \
   -d '{"model":"english","state":"Please refund the duplicate charge.","questions":{"refund":{"type":"noul","instructions":"Does the customer ask for a refund?"}}}'
 ```
 
-The frontend forwards the worker's response unchanged; `compare_with_backend.py` from the
-[Laya text worker](README.md#compare-responses) recipe checks that against this setup as well.
+The frontend forwards the worker's response unchanged; the shared
+[`compare_with_backend.py`](../compare_with_backend.py), described in the
+[Laya text worker](README.md#compare-responses) recipe, checks that against this setup too.
 
 ## Test
 

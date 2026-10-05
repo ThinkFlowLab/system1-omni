@@ -10,6 +10,12 @@
   the Rust worker, export the merged weights and start the worker.
 - [Open-Jev-27B-v1.1 native text worker](open_jev/native.md): export the merged
   text backbone and trained decision head, then serve with Rust and CUDA.
+- [CLM behind the frontend](clm/README.md): run CLM's own server behind the frontend on
+  CPU with a stub encoder, and what the response comparison has to allow for.
 
 Recipes contain setup, launch commands and examples. Reusable implementation code
 belongs under `src/`.
+
+[`compare_with_backend.py`](compare_with_backend.py) checks that the frontend returns what
+the worker returned, for any recipe; [`test_compare_with_backend.py`](test_compare_with_backend.py)
+covers it without a model.
