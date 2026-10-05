@@ -21,9 +21,9 @@ def bucket_length(length, width):
 class RuleBucketRuntime(GraphRuntime):
     """Bounded cache of rule graphs, with explicit model-instance dispatch."""
 
-    def __init__(self, model, config=None):
+    def __init__(self, model, config=None, **resources):
         config = config or GraphConfig(mode="rule-bucket")
-        super().__init__(model, config)
+        super().__init__(model, config, **resources)
         self.width = config.bucket_width
         self.stats.update(
             length_checks=0,

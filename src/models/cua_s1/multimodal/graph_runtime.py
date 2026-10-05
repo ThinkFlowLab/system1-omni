@@ -45,8 +45,8 @@ class GraphConfig:
     bucket_width: int = 64
 
     def __post_init__(self):
-        if self.mode not in {"exact", "rule-bucket"}:
-            raise ValueError("graph mode must be exact or rule-bucket")
+        if self.mode not in {"exact", "rule-bucket", "auto"}:
+            raise ValueError("graph mode must be exact, rule-bucket or auto")
         if (
             type(self.bucket_width) is not int
             or self.bucket_width <= 0
@@ -55,7 +55,7 @@ class GraphConfig:
             raise ValueError("bucket width must be a positive integer multiple of 64")
         if self.mode == "exact" and self.bucket_width != 64:
             raise ValueError("bucket width is only configurable in rule-bucket mode")
-        if self.mode == "rule-bucket" and self.bucket_width > self.max_tokens:
+        if self.mode in {"rule-bucket", "auto"} and self.bucket_width > self.max_tokens:
             raise ValueError("bucket width cannot exceed graph max tokens")
         if not math.isfinite(self.capture_budget_ms):
             raise ValueError("capture time budget must be finite")
@@ -312,15 +312,29 @@ class _ShapeEntry:
 class GraphRuntime:
     """Exact-length graph cache for a loaded, immutable multimodal model."""
 
-    def __init__(self, model, config: GraphConfig | None = None):
+    def __init__(
+        self,
+        model,
+        config: GraphConfig | None = None,
+        *,
+        cache=None,
+        admission=None,
+        lock=None,
+    ):
         self.model = model
         self.config = config or GraphConfig()
-        self.cache = GraphCache(self.config.max_shapes, self.config.max_bytes)
-        self.admission = AdmissionPolicy(self.config)
+        self.cache = (
+            cache
+            if cache is not None
+            else GraphCache(self.config.max_shapes, self.config.max_bytes)
+        )
+        self.admission = (
+            admission if admission is not None else AdmissionPolicy(self.config)
+        )
         self._in_request = False
         self._closed = False
         self.disabled = OrderedDict()
-        self.lock = threading.RLock()
+        self.lock = lock if lock is not None else threading.RLock()
         self.stats = {
             "requests": 0,
             "no_request": 0,
@@ -462,6 +476,16 @@ class GraphRuntime:
         hidden = text.norm(hidden)
         return self.model.get_base_model().lm_head(hidden[:, -1:, :])[0, -1, :]
 
+    def _key(self, values):
+        return (
+            id(self.model),
+            self.model.get_base_model().model.language_model.config._attn_implementation,
+            *(
+                tensor_signature(values[name])
+                for name in ("inputs_embeds", "position_ids", "attention_mask")
+            ),
+        )
+
     def forward(self, values):
         """Return fresh logits; no static graph output escapes the runtime lock."""
         import torch
@@ -475,14 +499,7 @@ class GraphRuntime:
             if not self._supported(values):
                 self.stats["unsupported"] += 1
                 return self._eager(values)
-            key = (
-                id(self.model),
-                self.model.get_base_model().model.language_model.config._attn_implementation,
-                *(
-                    tensor_signature(values[name])
-                    for name in ("inputs_embeds", "position_ids", "attention_mask")
-                ),
-            )
+            key = self._key(values)
             if key in self.disabled:
                 self.stats["disabled"] += 1
                 return self._eager(values)

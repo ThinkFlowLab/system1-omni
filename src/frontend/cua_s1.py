@@ -131,7 +131,7 @@ def parse_args(argv=None):
     )
     p.add_argument(
         "--graph-mode",
-        choices=("exact", "rule-bucket"),
+        choices=("exact", "rule-bucket", "auto"),
         help="enable the selected Graph execution mode",
     )
     p.add_argument("--graph-bucket-width", type=int, default=None)
@@ -151,8 +151,8 @@ def parse_args(argv=None):
     p.add_argument("--graph-capture-budget-ms", type=float, default=2000.0)
     args = p.parse_args(argv)
     mode = args.graph_mode or ("exact" if args.graph else None)
-    if args.graph_bucket_width is not None and mode != "rule-bucket":
-        p.error("--graph-bucket-width requires --graph-mode rule-bucket")
+    if args.graph_bucket_width is not None and mode not in {"rule-bucket", "auto"}:
+        p.error("--graph-bucket-width requires --graph-mode rule-bucket or auto")
     try:
         graph_config = (
             GraphConfig(

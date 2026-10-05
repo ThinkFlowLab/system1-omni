@@ -161,15 +161,22 @@ class MultimodalEngine:
         if graph_config is not None:
             from .graph_runtime import GraphRuntime
 
-            if graph_config.mode == "rule-bucket":
+            if graph_config.mode in {"rule-bucket", "auto"}:
                 from .graph_buckets import RuleBucketRuntime
                 from .rule_prefill import pinned_implementation
 
                 pinned_implementation()
                 # Explicit adapter calls cannot honor offload/device-map hooks.
                 if any(p.device != self.model.device for p in self.model.parameters()):
-                    raise ValueError("rule-bucket requires one CUDA-resident model")
-                self.graph_runtime = RuleBucketRuntime(self.model, graph_config)
+                    raise ValueError(
+                        "rule-bucket/auto requires one CUDA-resident model"
+                    )
+                if graph_config.mode == "auto":
+                    from .graph_auto import AutoGraphRuntime
+
+                    self.graph_runtime = AutoGraphRuntime(self.model, graph_config)
+                else:
+                    self.graph_runtime = RuleBucketRuntime(self.model, graph_config)
             else:
                 self.graph_runtime = GraphRuntime(self.model, graph_config)
 
