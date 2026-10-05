@@ -1,0 +1,14 @@
+# The environment the Apple Silicon recipe was validated in (M1 Pro and M5, Python 3.12).
+# laya[serve] pulls in torch, transformers, fastapi and uvicorn; the pins below are the versions it resolved to.
+laya[serve]==0.3.20
+torch==2.14.0
+transformers==5.17.0
+tokenizers==0.23.2
+safetensors==0.8.0
+huggingface-hub==1.33.0
+fastapi==0.141.1
+uvicorn==0.54.0
+# For the tests and checks in the recipe's Test section.
+pytest==9.1.1
+httpx2==2.13.1
+ruff==0.16.10

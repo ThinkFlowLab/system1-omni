@@ -4,6 +4,12 @@ An Axum/Tokio server that forwards requests to a separately running model worker
 using Reqwest. The worker handles validation, media loading, preprocessing and
 inference.
 
+In the [target architecture](../../docs/architecture.md), a shared Rust worker
+runtime coordinates independent processors, a scheduler/batcher, and model
+executors. Rust handles host orchestration; CUDA/Metal handle device operations
+through backend bindings. That shared runtime is planned; the current frontend
+continues to forward requests to existing model-specific worker pipelines.
+
 ## Run
 
 Run these commands from the repository root:
@@ -42,6 +48,10 @@ text decisions against a real backend.
 From the repository root:
 
 ```sh
+# Focused CPU-only API integration suite.
+cargo test -p omni-jev --test frontend --locked
+
+# Full workspace checks.
 cargo fmt --all --check
 cargo clippy --workspace --locked --all-targets -- -D warnings
 cargo test --workspace --locked

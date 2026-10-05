@@ -1,0 +1,223 @@
+{
+  "date_utc": "2026-10-03",
+  "base_git_sha": "58b8cbe9d4738f6c217f6fe584852dc9361b2c24",
+  "source_patch_sha256": "8fe079d6580ddab0aef333f044a9a24dca18960cac17b04426b328ef8fc151bd",
+  "full_local_archives": [
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-bf16-e2e-20261003-081649",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-bf16-pairs-20261003-081356",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-fp16-e2e-20261003-082620",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-fp16-pairs-20261003-082340",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-20261003-085716",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-e2e-20261003-090732",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-ready-kernels-20261003-075757",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-ready-kernels-20261003-080129",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-rna-fp16-20261003-083233",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-rna-fp16-e2e-20261003-083539",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-tf32-direct-20261003-084132",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-tf32-inverse-20261003-080601"
+  ],
+  "files": {
+    "kernel/plan.json": {
+      "source": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/plan.json",
+      "sha256": "24f2d09b6690bbd2cafa484c228905c4fb1150b33462c703052d7e4831368607",
+      "bytes": 8303
+    },
+    "kernel/harness/compare.py": {
+      "source": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/compare.py",
+      "sha256": "00899a905c0ff9065c338d1cdad8e1f97e2959d629d40043ed8c7854b65101a3",
+      "bytes": 7050
+    },
+    "kernel/analysis/results.jsonl": {
+      "source": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/analysis/results.jsonl",
+      "sha256": "d59965ba4b4b48ab97caefe43ccfde46d3f582cb9216e8581d3775b61c043692",
+      "bytes": 5500
+    },
+    "kernel/analysis/recurrent-reference.log": {
+      "source": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/analysis/recurrent-reference.log",
+      "sha256": "b4f598578e6153d809ed2f251a52627ac99e6430a879c883b0aaf6e862829c06",
+      "bytes": 2068,
+      "source_sha256": "82a1d94dbccd2ffc790d75699b3a6997d16b7ddbc257c9ed077a9b5e4f04ef67",
+      "normalization": "Trailing blank line removed in the display copy; original log remains unchanged in the local archive."
+    },
+    "kernel/analysis/summary.json": {
+      "source": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/analysis/summary.json",
+      "sha256": "9197e1bd1201646e1e03c64791f93cfefd75037edfde85dfd570f7debd85cabe",
+      "bytes": 899
+    },
+    "e2e/plan.json": {
+      "source": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-e2e-20261003-090732/plan.json",
+      "sha256": "3e785df1f60c6f8a403caeed564bce7f7f593a1011394096ae6eeddbcdcdad41",
+      "bytes": 17549
+    },
+    "e2e/summary.json": {
+      "source": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-e2e-20261003-090732/analysis/summary.json",
+      "sha256": "d61f0cae30bf79e9263280d62d47d9442387583be6bc811ffb7e9ed5d35d9ce7",
+      "bytes": 4149
+    },
+    "e2e/cleanup.json": {
+      "source": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-e2e-20261003-090732/analysis/cleanup.json",
+      "sha256": "14fa8b5c21cfc33c629b586d97139fd3453f39643f5a946aa8b0befb8b6d539f",
+      "bytes": 737
+    },
+    "flashinfer/plan.json": {
+      "source": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-ready-kernels-20261003-080129/plan.json",
+      "sha256": "aff88d6ed4f19104102036cd9e49e329829d1824d6d825a571907f4b400dba5f",
+      "bytes": 4226
+    },
+    "flashinfer/results.jsonl": {
+      "source": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-ready-kernels-20261003-080129/analysis/results.jsonl",
+      "sha256": "637b872461d54d382b8184e167a40c4c689a6fcc720653c706dc9d1851599a73",
+      "bytes": 5697
+    },
+    "e2e/baseline-measured-1.jsonl": {
+      "source": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-e2e-20261003-090732/analysis/baseline-measured-1.jsonl",
+      "sha256": "ff0edc3cd0581b2a8374a6ed5cfb13e70c086bb027e3b04208115c62a12a1ff9",
+      "bytes": 62560
+    },
+    "e2e/baseline-measured-2.jsonl": {
+      "source": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-e2e-20261003-090732/analysis/baseline-measured-2.jsonl",
+      "sha256": "5a60b08924461e9bfe50310c21832df29be5fed83825dc58502cf6c10c39e5d0",
+      "bytes": 62566
+    },
+    "e2e/candidate-measured-1.jsonl": {
+      "source": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-e2e-20261003-090732/analysis/candidate-measured-1.jsonl",
+      "sha256": "aa11cb7a4ef76cd7551561cc50a09fa9885f11b89035f8457881376d7a024a2e",
+      "bytes": 62565
+    },
+    "e2e/candidate-measured-2.jsonl": {
+      "source": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-e2e-20261003-090732/analysis/candidate-measured-2.jsonl",
+      "sha256": "37d517470e0a2eb26f4faf956da2339c87eb9ca7e2123b4d4efa6f086b28f44e",
+      "bytes": 62560
+    },
+    "rejected-variants.json": {
+      "source": "Projection of preserved failed feasibility records",
+      "sha256": "318c1ba7dda332ec346983b8c90eee826cd35bb3afaae489211e7486f599ed53",
+      "bytes": 4649
+    }
+  },
+  "build_and_check_records": [
+    {
+      "command": [
+        "/home/hsliu2/.cargo/bin/cargo",
+        "fmt",
+        "--all",
+        "--check"
+      ],
+      "exit_code": 0,
+      "seconds": 0.24558558594435453,
+      "log": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-final-cpu-checks-20261003-090543/0.log"
+    },
+    {
+      "command": [
+        "/home/hsliu2/.cargo/bin/cargo",
+        "clippy",
+        "--workspace",
+        "--locked",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "seconds": 2.6444142553955317,
+      "log": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-final-cpu-checks-20261003-090543/1.log"
+    },
+    {
+      "command": [
+        "/home/hsliu2/.cargo/bin/cargo",
+        "test",
+        "--workspace",
+        "--locked"
+      ],
+      "exit_code": 0,
+      "seconds": 6.1790889129042625,
+      "log": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-final-cpu-checks-20261003-090543/2.log"
+    },
+    {
+      "command": [
+        "/home/hsliu2/.cargo/bin/cargo",
+        "build",
+        "--workspace",
+        "--release",
+        "--locked"
+      ],
+      "exit_code": 0,
+      "seconds": 1.5214574886485934,
+      "log": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-final-cpu-checks-20261003-090543/3.log"
+    },
+    {
+      "arch": "80",
+      "command": [
+        "bash",
+        "src/backends/cuda/qwen3_5/build.sh",
+        "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/analysis/architecture-builds/sm80",
+        "80"
+      ],
+      "exit_code": 0,
+      "seconds": 10.438040406443179
+    },
+    {
+      "arch": "89",
+      "command": [
+        "bash",
+        "src/backends/cuda/qwen3_5/build.sh",
+        "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/analysis/architecture-builds/sm89",
+        "89"
+      ],
+      "exit_code": 0,
+      "seconds": 10.547066879458725
+    },
+    {
+      "name": "baseline",
+      "reused_from": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-20261003-085716/harness/build/baseline/libqwen3_5_cuda.so",
+      "copy_seconds": 0.01750018075108528,
+      "original_build": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-fp16-pairs-20261003-082340/analysis/build.json"
+    },
+    {
+      "name": "candidate",
+      "command": [
+        "/usr/local/cuda/bin/nvcc",
+        "-O3",
+        "-std=c++17",
+        "-lineinfo",
+        "-gencode",
+        "arch=compute_90,code=[sm_90,compute_90]",
+        "-shared",
+        "-Xcompiler",
+        "-fPIC",
+        "-Xcompiler",
+        "-Wall,-Wextra",
+        "-I/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness",
+        "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/gdn-packed-tf32-k4.cu",
+        "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/attention.cu",
+        "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/elementwise.cu",
+        "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/gemm.cu",
+        "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/norm.cu",
+        "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/runtime.cu",
+        "-L/usr/local/cuda/lib64",
+        "-lcublasLt",
+        "-Xlinker",
+        "-rpath",
+        "-Xlinker",
+        "/usr/local/cuda/lib64",
+        "-o",
+        "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/build/candidate/libqwen3_5_cuda.so"
+      ],
+      "seconds": 11.332285988144577,
+      "exit_code": 0
+    },
+    {
+      "name": "validation",
+      "command": [
+        "bash",
+        "src/backends/cuda/qwen3_5/build.sh",
+        "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/build/validation",
+        "90"
+      ],
+      "seconds": 10.502563803456724,
+      "exit_code": 0
+    }
+  ],
+  "source_dataset_revision": "f8ce71361165846101d02ebc83ad44e47ae44fc3"
+}

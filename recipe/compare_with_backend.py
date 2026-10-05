@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Check that a running omni-jev frontend returns exactly what its worker returns.
+"""Check that a running omni-jev frontend returns what its worker returns.
 
 Sends the same health and decision requests to the worker directly and through
-the frontend, then compares status, Content-Type and body bytes. Covers choice,
-score and noul questions separately and together. Standard library only.
+the frontend and compares them. Byte equality is tried first; where that fails
+and both sides answered 200, the parsed ``answers`` subtrees are compared
+instead, so a response whose only difference is the ``usage`` envelope still
+passes. Covers choice, score and noul questions separately and together.
+Standard library only.
 """
 
 import argparse
@@ -48,6 +51,29 @@ def fetch(base, path, body=None):
         return response.status, response.headers.get("Content-Type"), response.read()
 
 
+def decision(body):
+    """The part of a response the frontend must not change: None when body is not a decision.
+
+    ``usage`` is deliberately excluded. A backend that reuses encoder state across requests
+    charges only for the calls it paid for, so an identical request can report different
+    ``input_tokens`` depending on whether the work was already cached -- CLM does exactly
+    this. The answer must still be identical; the envelope is reported, not asserted.
+
+    Comparing parsed answers rather than bytes also makes key order and whitespace
+    irrelevant, which is wider than "usage only" and is the intent: what the
+    frontend must not change is the decision, not its serialisation. A backend
+    whose body is a pure function is still held to byte equality, because that is
+    what is checked first.
+    """
+    try:
+        parsed = json.loads(body)
+    except ValueError:
+        return None
+    if not isinstance(parsed, dict) or "answers" not in parsed:
+        return None
+    return parsed["answers"], parsed.get("usage")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--backend", default="http://127.0.0.1:8000")
@@ -66,8 +92,17 @@ def main():
         direct = fetch(args.backend, path, body)
         proxied = fetch(args.frontend, path, body)
         ok = direct == proxied and direct[0] == 200
+        note = ""
+        if not ok and direct[0] == 200:
+            # Compare the decision itself before falling back to the byte comparison. Only a
+            # successful status relaxes the body comparison: a 500 that happens to carry
+            # equal "answers" is still a failure.
+            left, right = decision(direct[2]), decision(proxied[2])
+            if left and right and direct[:2] == proxied[:2] and left[0] == right[0]:
+                ok = True
+                note = f"  (usage {left[1]} -> {right[1]})"
         failed += not ok
-        print(f"{'PASS' if ok else 'FAIL'} {name}: status {direct[0]} -> {proxied[0]}")
+        print(f"{'PASS' if ok else 'FAIL'} {name}: status {direct[0]} -> {proxied[0]}{note}")
         if body is not None:
             print(f"     {proxied[2].decode(errors='replace')}")
     sys.exit(1 if failed else 0)

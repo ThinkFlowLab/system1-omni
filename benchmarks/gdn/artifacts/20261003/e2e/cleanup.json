@@ -1,0 +1,33 @@
+{
+  "all_task_processes_exited": true,
+  "processes": [
+    {
+      "pid": 1790620,
+      "args": [
+        "/home/hsliu2/tmp/system1-omni-open-jev-native/target/release/omni-open-jev-native"
+      ],
+      "returncode": -15
+    },
+    {
+      "pid": 1791785,
+      "args": [
+        "/home/hsliu2/tmp/system1-omni-open-jev-native/target/release/omni-jev"
+      ],
+      "returncode": 0
+    },
+    {
+      "pid": 1793269,
+      "args": [
+        "/home/hsliu2/tmp/system1-omni-open-jev-native/target/release/omni-open-jev-native"
+      ],
+      "returncode": -15
+    },
+    {
+      "pid": 1794598,
+      "args": [
+        "/home/hsliu2/tmp/system1-omni-open-jev-native/target/release/omni-jev"
+      ],
+      "returncode": 0
+    }
+  ]
+}

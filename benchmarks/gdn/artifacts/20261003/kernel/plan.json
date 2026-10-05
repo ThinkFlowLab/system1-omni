@@ -1,0 +1,90 @@
+{
+  "hypothesis": "Lossless compact TF32 staging, direct tensor-core fragment stores, and vector gate prefetch with unchanged FP32 addition order reduce GDN preparation cost while preserving every compared output bit.",
+  "independent_variable": "Only GDN preparation implementation: original float32 staging/WMMA versus three-byte TF32 component planes and explicit m16n8k4 (matching baseline HMMA.1684 accumulation) TF32 MMA, one-time RNA conversion, vector-prefetched sequential gate sum, fused normalized/decayed QK stores, and direct packed BF16 U/W writes. Shared allocation drops from 92 KiB to 72 KiB; no accumulator or workspace dtype/shape/API changes.",
+  "fixed_controls": {
+    "gpu_ids": [
+      2
+    ],
+    "gpu_uuid": "GPU-cbf66259-f4ab-0ede-1811-82037dde5924",
+    "hardware": "H200 (driver name NVIDIA L20X)",
+    "numa_node": 0,
+    "cpu_affinity": "0-15",
+    "qk_heads": 16,
+    "v_heads": 48,
+    "head_dim": 128,
+    "dtype": "BF16 Q/K/V/beta; FP32 log g",
+    "seed": 20261003,
+    "tokens": [
+      107,
+      936,
+      3399
+    ],
+    "inputs": "Seeded synthetic correlated Q/K and weak-decay gates; representative workload shapes, not captured model activations. F64 reference test also exercises grouped heads and chunk/tile edges. New recurrent-reference checks include near-zero (amplitude 1e-9) and zero Q/K. Recurrent test includes Q/K amplitude 1e-18 to exercise the full exponent range.",
+    "cache": "reuse; no shared cache drops",
+    "stream": "same eager submission on default stream"
+  },
+  "run_budget": "Run all 3 registered GPU tests once before timing. One excluded feasibility and 10 excluded warmups per shape/arm, then exactly two measured passes of 100 calls; reverse arm order for pass 2. No extra measured repetitions. Feasibility includes workspace diagnostics; no hardware stall/occupancy attribution from these timings.",
+  "acceptance": {
+    "fidelity": "All 3 existing GPU tests (GDN float64 reference tolerance unchanged) pass. All initialized compared workspace fields (u/w/qd/kd/pb/decay) and final GDN outputs match baseline bitwise in feasibility probes. Final model gate remains unchanged decisions and max probability drift <= 0.01.",
+    "latency": ">=10% lower complete GDN call latency at 936 and 3399 tokens in both measured passes, with no 107-token regression, motivates E2E. CUDA event span includes host submission bubbles.",
+    "later_e2e_gate": ">=2% lower mean warm HTTP latency, both candidate passes faster, same 74 decisions, max probability delta <= 0.01."
+  },
+  "stop": "Stop immediately on validation failure, numerical rejection, 30 minute timeout, or completion of declared budget.",
+  "git_sha": "58b8cbe9d4738f6c217f6fe584852dc9361b2c24",
+  "working_tree_patch": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/working-tree.patch",
+  "worker_source_sha": "7b935723c6fa17145e3d866675202fb6f7ea1f5d",
+  "libraries": {
+    "baseline": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/build/baseline/libqwen3_5_cuda.so",
+    "candidate": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/build/candidate/libqwen3_5_cuda.so"
+  },
+  "validation_library": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/build/validation/libqwen3_5_cuda.so",
+  "kernel_test_binary": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/target/release/deps/kernels-e1de1d464265a9b7",
+  "compiler": "CUDA 13.0 nvcc; identical ABI4 sources/options except GDN translation unit; main ABI3 validation library for Rust tests. Baseline reused byte-for-byte from the previous frozen comparison; copy time and original compilation metadata recorded separately.",
+  "packages": {
+    "torch": "2.13.0+cu129"
+  },
+  "hashes": {
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/ops.h": "776376f82c8a01aacea4ec29178714c95079ec6454dc0466a483d073fee3e06c",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/working-tree.patch": "8fe079d6580ddab0aef333f044a9a24dca18960cac17b04426b328ef8fc151bd",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/gemm.cu": "a82b6d6012c6b13d5ec8dd8ce7107bd95e17f588c76dae1d314e9cff1585274a",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/common.cuh": "ea924f7c903b6d14b0e1f10c8c33a1a9ca23806df093628a178661a303d54d55",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/elementwise.cu": "b739f1bc2f08ae67399366063cc6c42bc0c5e65e98da23d8b425f9f9ea53ea59",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/norm.cu": "756c9d4023787cc3961ec72bcc96b3f715e705d5dfcb3bf77622879980df82ab",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/attention.cu": "3d6935a8a550314815ebe6575be03ce1a7e0b1d5bd611508a4bffbc24cff3132",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/compare.py": "00899a905c0ff9065c338d1cdad8e1f97e2959d629d40043ed8c7854b65101a3",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/gdn-packed-tf32-k4.cu": "9f2642a5f6e69cd22055419ecf1f799f1ccd811f7453763a41adf4f15b07a41d",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/gdn_prefill.cu": "1c9027b6f2d3677381d8d19611ecdf7e138718459cd61f341802cc2047a582be",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/runtime.cu": "3c19d2a1167b44d3a84ffe480605e14a72c775d2c2e51d0c594af9d0db6cb69e",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/mma.cuh": "64654f8b937585805daa72b692c243ae35d34b746e2cb6b0b55c255748495764",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/build/baseline/libqwen3_5_cuda.so": "8ea954d3b18d73d9fdb530fee0ddb898cf2151bb326bb67da471e9f43ca0c69e",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/build/candidate/libqwen3_5_cuda.so": "92cbe5485926910cd16ee911a536dddf0c74b2f6d23cb4cb6694f5e742907a48",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/build/validation/libqwen3_5_cuda.so": "adabeca799005b04706b1bd00b6a107b987e936642f9c345bdc9302d014e8179",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/target/release/deps/kernels-e1de1d464265a9b7": "77c9e80d7d549c14785a1de05fb2b1eced560da7ab9966446f668326254fa18a",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/src/backends/cuda/qwen3_5/gdn_prefill.cu": "9f2642a5f6e69cd22055419ecf1f799f1ccd811f7453763a41adf4f15b07a41d",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/tests/qwen3_5/kernels.rs": "2ccd7284f212152fcccfa31cab72c6bb2be6734440c3e877fe09cfc8e2077af4",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/src/models/cua_s1/native/Cargo.toml": "cf0050ee87319ab4d33cfc6ad8d111ba1b49ac113552fc7c9c42314c99f830e1"
+  },
+  "command": [
+    "gpu",
+    "run",
+    "--gpu-ids",
+    "2",
+    "--wait",
+    "10m",
+    "--timeout",
+    "30m",
+    "--note",
+    "Open-Jev lossless packed TF32 K4 GDN comparison",
+    "--",
+    "numactl",
+    "--membind=0",
+    "--physcpubind=0-15",
+    "/home/hsliu2/tmp/venvs/open-jev-native/bin/python",
+    "-u",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/compare.py"
+  ],
+  "previous_candidate": {
+    "run": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-20261003-085716",
+    "result": "K8 feasibility failed bitwise checks; no measured runs. This candidate restores the original K4 accumulation order."
+  }
+}

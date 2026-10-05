@@ -3,7 +3,7 @@
 //! kernels of `src/backends/cuda/qwen3_5`, loaded at run time.
 
 pub mod contract;
-pub mod cuda;
+pub use omni_qwen3_5_native::{cuda, json, model};
 pub mod engine;
-pub mod json;
-pub mod model;
+pub mod executor;
+pub mod processing;

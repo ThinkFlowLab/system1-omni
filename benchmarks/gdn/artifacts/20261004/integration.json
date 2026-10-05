@@ -1,0 +1,476 @@
+{
+  "date": "2026-10-04",
+  "purpose": "PR68 integration correctness after merging main; no new latency comparison.",
+  "source": {
+    "head_before_merge": "e23d5648f791afc332ff204d43ba09b3d39e9a8f",
+    "merged_main": "579fa8f2c4f75d7099179daf95695b6aef8766b9",
+    "gdn_matches_measured_source_sha256": "9f2642a5f6e69cd22055419ecf1f799f1ccd811f7453763a41adf4f15b07a41d"
+  },
+  "source_note": "Built from the uncommitted main-merge resolution on this PR branch; the frozen source and binaries below identify the executed implementation. Subsequent tracked changes only add documentation and validation records.",
+  "host": {
+    "hostname": "dedicated-developjob-8gpu2-a029z-64896bc8cf-8p2lw",
+    "uid": 2033,
+    "account": "hsliu2",
+    "home": "/home/hsliu2",
+    "worktree_directory": "/home/hsliu2/tmp",
+    "driver": "NVRM version: NVIDIA UNIX Open Kernel Module for x86_64  570.133.20  Release Build  (dvs-builder@U22-I3-AF03-14-3)  Sun Apr 13 04:34:43 UTC 2025"
+  },
+  "fixed_controls": {
+    "gpu_ids": [
+      2
+    ],
+    "gpu_uuid": "GPU-cbf66259-f4ab-0ede-1811-82037dde5924",
+    "cpu_affinity": "0-15",
+    "numa_memory_node": 0,
+    "dtype": "BF16",
+    "max_length": 16384,
+    "native_graph": "CUA_S1_GRAPH=0",
+    "server": "one worker/frontend pair per configuration reused for all requests",
+    "frontend": "Newly built merged Rust frontend, frozen before GPU execution.",
+    "http": "localhost; concurrency 1; client body serialization and response JSON parsing excluded from timer",
+    "cache": "Prepared export and workload reused; real model warmup before worker readiness; one first inference and one fidelity pass; no cache drops.",
+    "timing_instrumentation": "Uninstrumented frozen Rust worker and frontend; no Nsight/CUPTI launcher. HTTP wall time includes response body receipt/UTF8 decode and excludes request JSON serialization/response JSON parsing.",
+    "hardware_name": "H200 (archived reported name NVIDIA L20X)",
+    "order": "Six registered GPU tests, one genuine worker/frontend startup, one first request, one 74-case validation pass."
+  },
+  "model": {
+    "base_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+    "checkpoint_revision": "28cf73067d5b337860bbef3c85b8b82ba8730956",
+    "temperature": 2.5343690298472983,
+    "max_length": 16384,
+    "weights": "Prepared merged BF16 export reused; 11 shard paths/sizes/inodes/mtimes checked, no shared cache reset."
+  },
+  "model_path": "/home/hsliu2/tmp/system1-omni-open-jev-validation/jevbench-l20x-20261001/model-16k",
+  "run_budget": "CPU probes/build/checks first; one scheduler-reserved GPU job running the full registered kernel suite and one 74-case model fidelity pass. No latency A/B campaign or new performance claim.",
+  "success": "All 6 GPU tests with 20 GDN cases pass at unchanged tolerance; first inference and 74 cases have finite probabilities, identical decisions/token usage and maximum probability delta <= 0.01 against the pinned native reference.",
+  "stop": "Stop on any failed build/probe/test/readiness/fidelity check, 30 minute timeout, or completion of the single reserved validation job. No extra latency passes.",
+  "preparation": "All binaries built and frozen before GPU use; model/workload reused with no downloads. CPU build/check times recorded separately.",
+  "preparation_checks": [
+    {
+      "name": "fmt",
+      "command": [
+        "/home/hsliu2/.cargo/bin/cargo",
+        "fmt",
+        "--all",
+        "--check"
+      ],
+      "exit_code": 0,
+      "wall_seconds": 0.33888812828809023
+    },
+    {
+      "name": "clippy",
+      "command": [
+        "/home/hsliu2/.cargo/bin/cargo",
+        "clippy",
+        "--workspace",
+        "--locked",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "wall_seconds": 4.763194548897445
+    },
+    {
+      "name": "frontend",
+      "command": [
+        "/home/hsliu2/.cargo/bin/cargo",
+        "test",
+        "-p",
+        "omni-jev",
+        "--test",
+        "frontend",
+        "--locked"
+      ],
+      "exit_code": 0,
+      "wall_seconds": 15.11605237890035
+    },
+    {
+      "name": "workspace-tests",
+      "command": [
+        "/home/hsliu2/.cargo/bin/cargo",
+        "test",
+        "--workspace",
+        "--locked"
+      ],
+      "exit_code": 0,
+      "wall_seconds": 18.021678572520614
+    },
+    {
+      "name": "release-build",
+      "command": [
+        "/home/hsliu2/.cargo/bin/cargo",
+        "build",
+        "--workspace",
+        "--release",
+        "--locked"
+      ],
+      "exit_code": 0,
+      "wall_seconds": 7.9221118446439505
+    },
+    {
+      "name": "release-kernel-test-build",
+      "command": [
+        "/home/hsliu2/.cargo/bin/cargo",
+        "test",
+        "--release",
+        "--locked",
+        "-p",
+        "omni-qwen3-5-native",
+        "--test",
+        "kernels",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "exit_code": 0,
+      "wall_seconds": 9.520545578561723
+    },
+    {
+      "name": "cargo-metadata",
+      "command": [
+        "/home/hsliu2/.cargo/bin/cargo",
+        "metadata",
+        "--locked",
+        "--no-deps",
+        "--format-version=1"
+      ],
+      "exit_code": 0,
+      "wall_seconds": 0.0702578304335475
+    },
+    {
+      "name": "cuda-sm80",
+      "command": [
+        "bash",
+        "src/backends/cuda/qwen3_5/build.sh",
+        "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/integration-20261004-150029/build/sm80",
+        "80"
+      ],
+      "exit_code": 0,
+      "wall_seconds": 11.291175990365446
+    },
+    {
+      "name": "cuda-sm89",
+      "command": [
+        "bash",
+        "src/backends/cuda/qwen3_5/build.sh",
+        "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/integration-20261004-150029/build/sm89",
+        "89"
+      ],
+      "exit_code": 0,
+      "wall_seconds": 11.31365409027785
+    },
+    {
+      "name": "cuda-sm90",
+      "command": [
+        "bash",
+        "src/backends/cuda/qwen3_5/build.sh",
+        "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/integration-20261004-150029/build/sm90",
+        "90"
+      ],
+      "exit_code": 0,
+      "wall_seconds": 11.28270135819912
+    },
+    {
+      "name": "benchmark-validate",
+      "command": [
+        "/home/hsliu2/tmp/venvs/open-jev-native/bin/python",
+        "benchmarks/bench.py",
+        "validate",
+        "benchmarks/smoke.jsonl"
+      ],
+      "exit_code": 0,
+      "wall_seconds": 0.376846618950367
+    },
+    {
+      "name": "benchmark-tests",
+      "command": [
+        "/home/hsliu2/tmp/venvs/open-jev-native/bin/python",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests/benchmarks",
+        "-p",
+        "test_*.py",
+        "-v"
+      ],
+      "exit_code": 0,
+      "wall_seconds": 0.38399252109229565
+    },
+    {
+      "name": "frontend-api-tests",
+      "command": [
+        "/home/hsliu2/.cargo/bin/cargo",
+        "test",
+        "-p",
+        "omni-jev",
+        "--test",
+        "frontend",
+        "--locked"
+      ],
+      "exit_code": 0,
+      "wall_seconds": 2.3753697806969285,
+      "note": "Distinct log filename; earlier CPU frontend log name was reused by model frontend startup."
+    },
+    {
+      "name": "docs",
+      "command": [
+        "/home/hsliu2/tmp/venvs/system1-omni-pr51-docs/bin/mkdocs",
+        "build",
+        "--strict",
+        "--site-dir",
+        "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/integration-20261004-150029/site"
+      ],
+      "exit_code": 0,
+      "build_seconds_reported": 4.25,
+      "previous_environment_attempt": "omni-docs-check lacked pymdownx; its failed log is preserved in the local run. Reused system1-omni-pr51-docs without installing or changing dependencies."
+    }
+  ],
+  "scheduler_command": [
+    "/usr/bin/gpu",
+    "run",
+    "--gpu-ids",
+    "2",
+    "--wait",
+    "10m",
+    "--timeout",
+    "30m",
+    "--note",
+    "PR68 merged GDN correctness validation",
+    "--",
+    "numactl",
+    "--membind=0",
+    "--physcpubind=0-15",
+    "/home/hsliu2/tmp/venvs/open-jev-native/bin/python",
+    "-u",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/integration-20261004-150029/harness/validate.py"
+  ],
+  "kernel_test_command": [
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/integration-20261004-150029/frozen/kernel-tests",
+    "--ignored",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "gpu_job": {
+    "command": [
+      "/usr/bin/gpu",
+      "run",
+      "--gpu-ids",
+      "2",
+      "--wait",
+      "10m",
+      "--timeout",
+      "30m",
+      "--note",
+      "PR68 merged GDN correctness validation",
+      "--",
+      "numactl",
+      "--membind=0",
+      "--physcpubind=0-15",
+      "/home/hsliu2/tmp/venvs/open-jev-native/bin/python",
+      "-u",
+      "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/integration-20261004-150029/harness/validate.py"
+    ],
+    "exit_code": 0,
+    "wall_seconds": 89.66196539532393
+  },
+  "gpu_probe": {
+    "uuid": "GPU-cbf66259-f4ab-0ede-1811-82037dde5924",
+    "capability": [
+      9,
+      0
+    ],
+    "visibility": "2",
+    "affinity": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15
+    ]
+  },
+  "reservation": {
+    "gpu_id": 2,
+    "status": "IN_USE",
+    "user": "hsliu2",
+    "duration": "0h 0m 2s",
+    "type": "RUN",
+    "note": "PR68 merged GDN correctness validation",
+    "details": "heartbeat 0h 0m 1s ago",
+    "validation": "no usage detected",
+    "gpu_model": "L20X",
+    "last_heartbeat": "2026-10-04T23:11:34.704133895+08:00",
+    "idle_timeout": "30m",
+    "idle_for": "2s"
+  },
+  "readiness": {
+    "worker": {
+      "process_to_readiness_seconds": 74.11841329559684,
+      "response": {
+        "status": "ready",
+        "model": "Qwen/Qwen3.8-27B"
+      }
+    },
+    "frontend": {
+      "process_to_readiness_seconds": 0.006730260327458382,
+      "response": {
+        "status": "ready",
+        "model": "Qwen/Qwen3.8-27B"
+      }
+    }
+  },
+  "first_inference": {
+    "id": "original-policy-01-0",
+    "latency_s": 0.032082501,
+    "probability_yes": 0.03047528794383215,
+    "probability_delta": 0.0,
+    "predicted": "no",
+    "raw": {
+      "model": "Qwen/Qwen3.8-27B",
+      "answers": {
+        "decision": {
+          "type": "noul",
+          "noul": 0.03047528794383215
+        }
+      },
+      "usage": {
+        "input_tokens": 110,
+        "output_tokens": 0
+      },
+      "metadata": {
+        "method": "native_merged_lora_decision_head",
+        "temperature": 2.5343690298472983,
+        "candidate_sequences": 1,
+        "inference_seconds": 0.031779456,
+        "base_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+        "max_length": 16384,
+        "prefix_cache": {
+          "enabled": false,
+          "mode": "independent_candidates"
+        }
+      }
+    },
+    "checks": {
+      "finite_probability": true,
+      "usage": true,
+      "decision": true,
+      "probability": true,
+      "uninstrumented": true,
+      "validation_only": true
+    },
+    "client_start_monotonic_ns": 5115476139473540,
+    "client_end_monotonic_ns": 5115476171556041
+  },
+  "summary": {
+    "status": "passed",
+    "gpu_tests": 6,
+    "gdn_cases": 20,
+    "requests": 74,
+    "first_inference_validated": true,
+    "probabilities_exact": true,
+    "max_probability_delta": 0.0,
+    "decisions_unchanged": true,
+    "token_usage_unchanged": true,
+    "performance_comparison_run": false
+  },
+  "cleanup": {
+    "all_task_processes_exited": true,
+    "processes": [
+      {
+        "pid": 1854678,
+        "args": [
+          "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/integration-20261004-150029/frozen/kernel-tests",
+          "--ignored",
+          "--nocapture",
+          "--test-threads=1"
+        ],
+        "returncode": 0
+      },
+      {
+        "pid": 1855600,
+        "args": [
+          "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/integration-20261004-150029/frozen/worker"
+        ],
+        "returncode": -15
+      },
+      {
+        "pid": 1876442,
+        "args": [
+          "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/integration-20261004-150029/frozen/frontend"
+        ],
+        "returncode": 0
+      }
+    ]
+  },
+  "gpu_after": {
+    "gpu_id": 2,
+    "status": "AVAILABLE",
+    "details": "free for 0h 2m 2s",
+    "validation": "0MB used",
+    "gpu_model": "L20X",
+    "last_released": "2026-10-04T23:13:04.204880213+08:00"
+  },
+  "frozen_hashes": {
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/integration-20261004-150029/harness/working-tree.patch": "674cd86b8860fb51943386da0f1677b037aa8e82abf953f934659adc04ab29b2",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/integration-20261004-150029/harness/lengths.json": "d40155fb353c1e3473c22abac16fb33ca582352268c3cabb58efc9b93446cc4f",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/integration-20261004-150029/harness/requests.json": "0c756a7b0b4c1f1352225f2e01770b5b3a0646fe86d5cc6930ded9e292ef37df",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/integration-20261004-150029/harness/pr.patch": "71b03064f59202c741a5820c8e3c191fafd8141f890339429c135a3cc663eeb9",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/integration-20261004-150029/harness/validate.py": "01c856270cc7b2a2ad840d04fa1a4badac5216f7567e777315bddd77e5ab04fa",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/integration-20261004-150029/frozen/libqwen3_5_cuda.so": "80bb218b6dc7d9ae6fcab3ab762924595db0d0bebec7dbf331a4f4dc1b4fc0fa",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/integration-20261004-150029/frozen/kernel-tests": "b4528ec80026b5ae7f8fa04182db1a8ad5d1df4ccf0600b8760fab4b6bd2c397",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/integration-20261004-150029/frozen/worker": "5b2642d8e950eb4b656a368c63d00c6d290fd2eb1dd3910ee72965fa1e916040",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/integration-20261004-150029/frozen/frontend": "0c40efdc61371b195267e1a22bb7824a76a15fcf15460c02fbba8dd369495086",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/integration-20261004-150029/analysis/reference.jsonl": "f964c0e61ef3877aac130b795c46070de6e73d261272c33f1a2f45f4e6e66b83",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/src/backends/cuda/qwen3_5/gemm.cu": "a82b6d6012c6b13d5ec8dd8ce7107bd95e17f588c76dae1d314e9cff1585274a",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/src/backends/cuda/qwen3_5/elementwise.cu": "b739f1bc2f08ae67399366063cc6c42bc0c5e65e98da23d8b425f9f9ea53ea59",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/src/backends/cuda/qwen3_5/norm.cu": "756c9d4023787cc3961ec72bcc96b3f715e705d5dfcb3bf77622879980df82ab",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/src/backends/cuda/qwen3_5/attention.cu": "3d6935a8a550314815ebe6575be03ce1a7e0b1d5bd611508a4bffbc24cff3132",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/src/backends/cuda/qwen3_5/gdn_prefill.cu": "9f2642a5f6e69cd22055419ecf1f799f1ccd811f7453763a41adf4f15b07a41d",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/src/backends/cuda/qwen3_5/runtime.cu": "3c19d2a1167b44d3a84ffe480605e14a72c775d2c2e51d0c594af9d0db6cb69e",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/src/backends/cuda/qwen3_5/common.cuh": "ea924f7c903b6d14b0e1f10c8c33a1a9ca23806df093628a178661a303d54d55",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/src/backends/cuda/qwen3_5/mma.cuh": "64654f8b937585805daa72b692c243ae35d34b746e2cb6b0b55c255748495764",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/src/backends/cuda/qwen3_5/ops.h": "776376f82c8a01aacea4ec29178714c95079ec6454dc0466a483d073fee3e06c",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/tests/qwen3_5/kernels.rs": "aa62464423738af2f6fb1e520010f4475f89ee631e3d637ef3c414cad0c9703e",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/src/models/qwen3_5/native/src/cuda.rs": "959f8f513adb63510a7ab6d214596fdec5efeb12e9fe6d4a7df665614b15940d",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/src/models/qwen3_5/native/src/lib.rs": "4dc5a2c1babb0e714396d9fe47f3750843036d4b7c5519a8ffe710e61ed88ade",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/src/models/qwen3_5/native/src/json.rs": "a3933459e7ccfcc8ae0782329c2607d75da0d567f1f341c1e59185aa433432ec",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/src/models/qwen3_5/native/src/model.rs": "fa0754478c35f412365d682635063cc94cf6688d656e10f515fe05600494c6d7",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/src/models/open_jev/native/src/main.rs": "ec600a8b4f246cbcad91083092a3e08f764953c8e52a27603cd54b45b8d2bf31",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/src/models/open_jev/native/src/lib.rs": "b1019dfc3fc68f5534bcb2d456aba2d8e945982f40da03fdb6ca66f4b2e9dd61",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/src/models/open_jev/native/src/engine.rs": "aec5ffe3309db3592ae73acaa3b9467eb0f30e8dad162f362dd28cdf4e16eb61",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/src/models/open_jev/native/src/contract.rs": "17ba6c61b73a86e36a931d371671c5afba083e65cf943b8335e33a0d7a7ce58a",
+    "/home/hsliu2/tmp/system1-omni-open-jev-validation/jevbench-l20x-20261001/model-16k/config.json": "193d46cdde2f62b603269f005044a9fdaf4ad6b4447997c359e16dcc7217edcd",
+    "/home/hsliu2/tmp/system1-omni-open-jev-validation/jevbench-l20x-20261001/model-16k/tokenizer_config.json": "bee8eba30f0eb4af73c0fe2cd06d0f89b657d7819941c438157ec42f7c80ea87",
+    "/home/hsliu2/tmp/system1-omni-open-jev-validation/jevbench-l20x-20261001/model-16k/chat_template.jinja": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
+    "/home/hsliu2/tmp/system1-omni-open-jev-validation/jevbench-l20x-20261001/model-16k/model.safetensors.index.json": "5af6c022747934e687d7edf362de832a7fa2c82eedc36a8679495b40bb214b6f",
+    "/home/hsliu2/tmp/system1-omni-open-jev-validation/jevbench-l20x-20261001/model-16k/tokenizer.json": "06b9509352d2af50381ab2247e083b80d32d5c0aba91c272ca9ff729b6a0e523",
+    "/home/hsliu2/tmp/system1-omni-open-jev-validation/jevbench-l20x-20261001/model-16k/open_jev_export.json": "5fca82e74d77cbbcb83b03505130dad34a923731dc083ec7616cc73997688caa"
+  },
+  "artifacts": {
+    "kernel-tests.log": {
+      "sha256": "192a416148ddb6d90ae674403461b0cf528ef95e67701905a11d392bb23aaa55",
+      "bytes": 2676
+    },
+    "validation.jsonl": {
+      "sha256": "c022efc3b7257309434bf98a1e72466c79ce097f8ce4afac6d416ec960426bb4",
+      "bytes": 67005
+    }
+  },
+  "kernel_log_normalization": {
+    "original_sha256": "3dbe25333f39aee9ed97afdc15c85845e1e06b48119ec68efce5985c3506be6d",
+    "change": "Display copy removes trailing blank lines; original log retained locally."
+  },
+  "local_raw_run": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/integration-20261004-150029"
+}

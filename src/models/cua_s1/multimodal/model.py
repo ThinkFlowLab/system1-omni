@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
+import threading
+from contextlib import nullcontext
 from pathlib import Path
 
 from .protocol import InvalidRequest, Question, Request, answer, build_messages
@@ -80,17 +83,45 @@ def verify_weights(base: Path, adapter: Path):
     for root, names in allowed.items():
         for path in root.rglob("*"):
             relative = path.relative_to(root)
-            if path.is_file() and relative.parts[0] != ".cache":
-                if relative.as_posix() not in names:
-                    raise ValueError(
-                        f"unlisted artifact may override pinned files: {relative}"
-                    )
+            if (
+                path.is_file()
+                and relative.parts[0] != ".cache"
+                and relative.as_posix() not in names
+            ):
+                raise ValueError(
+                    f"unlisted artifact may override pinned files: {relative}"
+                )
+
+
+class _RequestImageProcessor:
+    """Reuse one image result; each processor call owns its mutable mapping."""
+
+    def __init__(self, processor):
+        self.processor = processor
+        self.result = None
+
+    def __getattr__(self, name):
+        return getattr(self.processor, name)
+
+    def __call__(self, *args, **kwargs):
+        if self.result is None:
+            self.result = self.processor(*args, **kwargs)
+        # BatchFeature.to and processor token expansion can mutate mappings.
+        # Share only tensor values, which the pinned processor does not modify.
+        return type(self.result)(dict(self.result))
 
 
 class MultimodalEngine:
     def __init__(
-        self, base: str, adapter: str, device: str = "cuda", dtype: str = "bfloat16"
+        self,
+        base: str,
+        adapter: str,
+        device: str = "cuda",
+        dtype: str = "bfloat16",
+        graph_config=None,
     ):
+        self._lifecycle_lock = threading.RLock()
+        self._closed = False
         import torch
         from peft import PeftModel
         from peft.tuners.lora import LoraLayer
@@ -126,16 +157,104 @@ class MultimodalEngine:
         self.adapter_modules = len(modules)
         self.model.eval()
         self.dtype = dtype
+        self.graph_runtime = None
+        if graph_config is not None:
+            from .graph_runtime import GraphRuntime
+
+            if graph_config.mode == "rule-bucket":
+                from .graph_buckets import RuleBucketRuntime
+                from .rule_prefill import pinned_implementation
+
+                pinned_implementation()
+                # Explicit adapter calls cannot honor offload/device-map hooks.
+                if any(p.device != self.model.device for p in self.model.parameters()):
+                    raise ValueError("rule-bucket requires one CUDA-resident model")
+                self.graph_runtime = RuleBucketRuntime(self.model, graph_config)
+            else:
+                self.graph_runtime = GraphRuntime(self.model, graph_config)
 
     def prepare(self, image, question: Question):
+        return self._prepare(self.processor, image, question)
+
+    @staticmethod
+    def _prepare(processor, image, question: Question):
         messages = build_messages(question)
-        text = self.processor.apply_chat_template(
+        text = processor.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
         )
-        inputs = self.processor(text=[text], images=[image], return_tensors="pt")
+        inputs = processor(text=[text], images=[image], return_tensors="pt")
         if inputs["input_ids"].shape[-1] > MAX_TOKENS:
             raise InvalidRequest(f"processed prompt exceeds {MAX_TOKENS} tokens")
         return inputs
+
+    def prepare_reused(self, image, questions):
+        """Tokenize each question normally, preprocessing this request's image once."""
+        processor = copy.copy(self.processor)
+        processor.image_processor = _RequestImageProcessor(
+            self.processor.image_processor
+        )
+        return [self._prepare(processor, image, question) for question in questions]
+
+    def encode_image(self, inputs):
+        """Encode once through the vision modules with their active LoRA adapters."""
+        import torch
+
+        core = self.model.get_base_model().model
+        with torch.no_grad():
+            output = core.get_image_features(
+                inputs["pixel_values"].to(self.model.device),
+                inputs["image_grid_thw"].to(self.model.device),
+                return_dict=True,
+            )
+            return torch.cat(output.pooler_output, dim=0)
+
+    def score_reused(self, inputs, question: Question, features) -> list[float]:
+        """Build fresh text embeddings and 3D positions around shared image features."""
+        import torch
+
+        ids = letter_ids(self.tokenizer, len(question.keys))
+        # Keep prepared CPU inputs intact and avoid another image transfer.
+        text_inputs = {
+            key: value.to(self.model.device)
+            for key, value in inputs.items()
+            if key != "pixel_values"
+        }
+        core = self.model.get_base_model().model
+        with torch.no_grad():
+            input_ids = text_inputs.pop("input_ids")
+            embeds = core.get_input_embeddings()(input_ids)
+            image_embeds = features.to(embeds.device, embeds.dtype)
+            image_mask, _ = core.get_placeholder_mask(
+                input_ids, inputs_embeds=embeds, image_features=image_embeds
+            )
+            embeds = embeds.masked_scatter(image_mask, image_embeds)
+            position_ids, _ = core.get_rope_index(
+                input_ids=input_ids,
+                mm_token_type_ids=text_inputs.pop("mm_token_type_ids"),
+                image_grid_thw=text_inputs.pop("image_grid_thw"),
+                attention_mask=text_inputs.get("attention_mask"),
+            )
+            # Candidate scoring reads only the final position.
+            graph_runtime = getattr(self, "graph_runtime", None)
+            if graph_runtime is None:
+                output = self.model(
+                    inputs_embeds=embeds,
+                    position_ids=position_ids,
+                    logits_to_keep=1,
+                    **text_inputs,
+                )
+                logits = output.logits[0, -1, :]
+            else:
+                logits = graph_runtime.forward(
+                    {
+                        "inputs_embeds": embeds,
+                        "position_ids": position_ids,
+                        **text_inputs,
+                    }
+                )
+        return torch.softmax(
+            logits[torch.tensor(ids, device=logits.device)].float(), dim=-1
+        ).tolist()
 
     def score(self, inputs, question: Question) -> list[float]:
         import torch
@@ -149,11 +268,49 @@ class MultimodalEngine:
             logits[torch.tensor(ids, device=logits.device)].float(), dim=-1
         ).tolist()
 
-    def predict(self, request: Request) -> dict:
+    def predict_reference(self, request: Request) -> dict:
+        """Original full-processor/full-model path retained for paired experiments."""
         # Validate all processed lengths before executing any question.
         prepared = [self.prepare(request.image, q) for q in request.questions]
         answers = {
             q.name: answer(q, self.score(inputs, q))
+            for q, inputs in zip(request.questions, prepared)
+        }
+        return {
+            "model": IDENTITY,
+            "answers": answers,
+            "usage": {
+                "input_tokens": sum(x["input_ids"].shape[-1] for x in prepared),
+                "output_tokens": 0,
+            },
+        }
+
+    def predict(self, request: Request) -> dict:
+        with getattr(self, "_lifecycle_lock", nullcontext()):
+            if getattr(self, "_closed", False):
+                raise RuntimeError("multimodal engine is closed")
+            runtime = getattr(self, "graph_runtime", None)
+            with runtime.request() if runtime is not None else nullcontext():
+                return self._predict(request)
+
+    def close(self):
+        """Drain prediction before explicitly releasing captured GPU resources."""
+        with getattr(self, "_lifecycle_lock", nullcontext()):
+            if getattr(self, "_closed", False):
+                return
+            runtime = getattr(self, "graph_runtime", None)
+            if runtime is not None:
+                runtime.close()
+            self._closed = True
+
+    def _predict(self, request: Request) -> dict:
+        if len(request.questions) == 1:
+            return self.predict_reference(request)
+        # No image encoder or language model runs until every prompt is valid.
+        prepared = self.prepare_reused(request.image, request.questions)
+        features = self.encode_image(prepared[0])
+        answers = {
+            q.name: answer(q, self.score_reused(inputs, q, features))
             for q, inputs in zip(request.questions, prepared)
         }
         return {

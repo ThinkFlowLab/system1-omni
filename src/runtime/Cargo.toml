@@ -1,0 +1,17 @@
+[package]
+name = "omni-runtime"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Shared native worker execution admission and dispatch"
+
+[dependencies]
+anyhow = "1.0.100"
+tokio = { version = "1.49.0", features = ["rt", "sync"] }
+
+[dev-dependencies]
+tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread", "time"] }
+
+[[test]]
+name = "scheduler"
+path = "../../tests/runtime/scheduler.rs"
