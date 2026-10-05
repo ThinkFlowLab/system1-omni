@@ -7,6 +7,7 @@ description = "Model-independent HTTP frontend for Jev-style decision workers"
 
 [dependencies]
 axum = "0.8"
+omni-runtime = { path = "../runtime" }
 reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls", "stream"] }
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal"] }
 
@@ -17,3 +18,7 @@ tokio = { version = "1", features = ["io-util", "process", "time"] }
 [[test]]
 name = "forwarding_limits"
 path = "../../tests/frontend/forwarding_limits.rs"
+
+[[test]]
+name = "in_process"
+path = "../../tests/frontend/in_process.rs"
