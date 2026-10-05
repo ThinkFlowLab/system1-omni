@@ -1,65 +1,83 @@
+#include <cuda.h>
 #include <cuda_runtime.h>
 #include <stdint.h>
 
-namespace {
-constexpr int invalid_argument = 1000;
-}
-
 extern "C" {
-uint32_t laya_abi_version() { return 1; }
+int laya_kernels_init();
 
-const char* laya_error_string(int code) {
-  return code == invalid_argument ? "invalid runtime argument"
-                                 : cudaGetErrorString(static_cast<cudaError_t>(code));
+int laya_init(void** stream) {
+  auto e = cudaSetDevice(0);
+  if (e != cudaSuccess)
+    return e;
+  int major = 0;
+  cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, 0);
+  if (major != 9)
+    return -2;
+  e = cudaStreamCreateWithFlags(reinterpret_cast<cudaStream_t*>(stream),
+                                cudaStreamNonBlocking);
+  if (e != cudaSuccess)
+    return e;
+  int rc = laya_kernels_init();
+  if (rc) {
+    cudaStreamDestroy(*reinterpret_cast<cudaStream_t*>(stream));
+    *stream = nullptr;
+  }
+  return rc;
 }
 
-int laya_set_device(int device) { return cudaSetDevice(device); }
-
-int laya_stream_create(void** stream) {
-  if (!stream) return invalid_argument;
-  *stream = nullptr;
-  cudaStream_t created = nullptr;
-  cudaError_t status = cudaStreamCreateWithFlags(&created, cudaStreamNonBlocking);
-  if (status == cudaSuccess) *stream = created;
-  return status;
+const char* laya_error(int code) {
+  return code < 0 ? "invalid native CUDA argument or unsupported GPU"
+         : code >= 10000 ? "CUDA driver error"
+                         : cudaGetErrorString(static_cast<cudaError_t>(code));
 }
 
 int laya_alloc(void** p, size_t bytes) {
-  if (!p) return invalid_argument;
-  *p = nullptr;
-  if (!bytes) return invalid_argument;
-  void* allocated = nullptr;
-  cudaError_t status = cudaMalloc(&allocated, bytes);
-  if (status == cudaSuccess) *p = allocated;
-  return status;
+  return cudaMalloc(p, bytes);
 }
 
 int laya_free(void* p) {
-  if (!p) return invalid_argument;
   return cudaFree(p);
 }
 
 int laya_upload(void* dst, const void* src, size_t bytes, void* stream) {
-  if (!bytes) return 0;
-  if (!dst || !src || !stream) return invalid_argument;
   return cudaMemcpyAsync(dst, src, bytes, cudaMemcpyHostToDevice,
                          static_cast<cudaStream_t>(stream));
 }
 
 int laya_download(void* dst, const void* src, size_t bytes, void* stream) {
-  if (!bytes) return 0;
-  if (!dst || !src || !stream) return invalid_argument;
   return cudaMemcpyAsync(dst, src, bytes, cudaMemcpyDeviceToHost,
                          static_cast<cudaStream_t>(stream));
 }
 
 int laya_sync(void* stream) {
-  if (!stream) return invalid_argument;
   return cudaStreamSynchronize(static_cast<cudaStream_t>(stream));
 }
 
 int laya_stream_free(void* stream) {
-  if (!stream) return invalid_argument;
   return cudaStreamDestroy(static_cast<cudaStream_t>(stream));
+}
+
+int laya_capture_begin(void* stream) {
+  return cudaStreamBeginCapture(static_cast<cudaStream_t>(stream),
+                                cudaStreamCaptureModeThreadLocal);
+}
+
+int laya_capture_end(void* stream, void** executable) {
+  cudaGraph_t graph = nullptr;
+  auto e = cudaStreamEndCapture(static_cast<cudaStream_t>(stream), &graph);
+  if (e != cudaSuccess)
+    return e;
+  e = cudaGraphInstantiate(reinterpret_cast<cudaGraphExec_t*>(executable), graph, 0);
+  cudaGraphDestroy(graph);
+  return e;
+}
+
+int laya_graph_run(void* executable, void* stream) {
+  return cudaGraphLaunch(static_cast<cudaGraphExec_t>(executable),
+                         static_cast<cudaStream_t>(stream));
+}
+
+int laya_graph_free(void* executable) {
+  return cudaGraphExecDestroy(static_cast<cudaGraphExec_t>(executable));
 }
 }

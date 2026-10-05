@@ -12,7 +12,7 @@
 //   3. gdn_chunk_out, per (chunk, head): o = qd S + P v_new with mma.sync.
 // Transformers computes all of this in float32. Keeping the intermediate results in
 // bfloat16, as flash-linear-attention does, makes this kernel less precise than that
-// path; tests/kernels.rs checks it against a float64 token-by-token reference.
+// path; tests/qwen3_5/kernels.rs checks it against a float64 token-by-token reference.
 #include <cuda_bf16.h>
 #include <cuda_runtime.h>
 #include <mma.h>
@@ -32,23 +32,32 @@ constexpr int C = 64;    // chunk length
 constexpr int K = 128;   // key head dim
 constexpr int V = 128;   // value head dim
 constexpr int THREADS = 256;
-// row strides: multiples of 16 bytes as WMMA needs, and not multiples of 32 floats
-constexpr int KP = K + 4;   // float
+// Padded row strides for the shared matrices.
+constexpr int KP = K + 4;   // packed TF32 component planes
 constexpr int CP = C + 4;   // float
 constexpr int HB = K + 8;   // bfloat16
 constexpr int TB = C + 8;   // bfloat16
 
-using ATf32Row = wmma::fragment<wmma::matrix_a, 16, 16, 8, wmma::precision::tf32, wmma::row_major>;
-using BTf32Col = wmma::fragment<wmma::matrix_b, 16, 16, 8, wmma::precision::tf32, wmma::col_major>;
-using CTf32 = wmma::fragment<wmma::accumulator, 16, 16, 8, float>;
-using ABf16 = wmma::fragment<wmma::matrix_a, 16, 16, 16, __nv_bfloat16, wmma::row_major>;
-using BBf16 = wmma::fragment<wmma::matrix_b, 16, 16, 16, __nv_bfloat16, wmma::row_major>;
-using CBf16 = wmma::fragment<wmma::accumulator, 16, 16, 16, float>;
+// Store the 19 bits of converted TF32 operands in separate 16-bit and 3-bit
+// planes, using three bytes per value. Preserve the full exponent range.
+struct Tf32Row {
+    uint16_t lo[KP];
+    uint8_t hi[KP];
+};
+static_assert(sizeof(Tf32Row) == KP * 3);
 
-template <typename F>
-__device__ __forceinline__ void to_tf32(F& f) {
-#pragma unroll
-    for (int t = 0; t < f.num_elements; t++) f.x[t] = wmma::__float_to_tf32(f.x[t]);
+__device__ __forceinline__ uint32_t load_tf32(const Tf32Row* m, int row, int col) {
+    return (uint32_t(m[row].lo[col]) << 13) | (uint32_t(m[row].hi[col]) << 29);
+}
+
+// Retain the four-term accumulation used by the original TF32 WMMA path.
+// PTX m16n8k4 accumulators match cs1::mma16816.
+__device__ __forceinline__ void mma1684_tf32(float (&d)[4], const uint32_t (&a)[2], uint32_t b) {
+    asm volatile(
+        "mma.sync.aligned.m16n8k4.row.col.f32.tf32.tf32.f32 {%0,%1,%2,%3}, {%4,%5}, {%6}, "
+        "{%0,%1,%2,%3};\n"
+        : "+f"(d[0]), "+f"(d[1]), "+f"(d[2]), "+f"(d[3])
+        : "r"(a[0]), "r"(a[1]), "r"(b));
 }
 
 struct Work {
@@ -88,30 +97,31 @@ struct Layout {
 };
 
 // kernel 1 shared memory, bytes
-constexpr int R1 = 0;                     // kn float [C][KP]; later v as bf16 [C][HB]
-constexpr int R2 = R1 + C * KP * 4;       // qn float [C][KP]; later T float [C][CP] + scratch, then T as bf16
-constexpr int R3 = R2 + C * KP * 4;       // A float [C][CP]; later k exp(cum) as bf16 [C][HB]
-constexpr int R4 = R3 + C * CP * 4;       // cum, beta, exp(cum), exp(cum_last - cum)
-constexpr int R5 = R4 + 4 * C * 4;        // per-warp 16x16 float staging of u and w
-constexpr size_t SMEM1_BYTES = R5 + (THREADS / 32) * 256 * 4;
 constexpr int TBF = C * CP * 4 + 3 * 256 * 4;  // offset of T as bf16 inside R2
+constexpr int R1 = 0;                     // kn packed TF32 [C]; later v as bf16 [C][HB]
+constexpr int R2 = R1 + C * sizeof(Tf32Row); // qn packed TF32; later T + scratch, then T as bf16
+constexpr int R3 = R2 + TBF + C * TB * 2; // A float [C][CP]; later k exp(cum) as bf16 [C][HB]
+constexpr int R4 = R3 + C * CP * 4;       // cum, beta, exp(cum), exp(cum_last - cum), k norm inverse
+constexpr size_t SMEM1_BYTES = R4 + 5 * C * 4;
 static_assert(C * HB * 2 <= C * CP * 4, "k exp(cum) as bf16 fits over A");
-static_assert(TBF + C * TB * 2 <= C * KP * 4, "T as bf16 fits in R2");
+static_assert(C * sizeof(Tf32Row) <= R3 - R2, "packed qn fits in R2");
+static_assert(C * HB * 2 <= R2 - R1, "v as bf16 fits over kn");
 
 __global__ void __launch_bounds__(THREADS) gdn_chunk_prep(
     const __nv_bfloat16* __restrict__ q, const __nv_bfloat16* __restrict__ k,
     const __nv_bfloat16* __restrict__ v, const float* __restrict__ g,
     const __nv_bfloat16* __restrict__ beta, Work ws, int T, int H, int HK, float scale) {
     extern __shared__ __align__(128) unsigned char sm[];
-    float* kn = reinterpret_cast<float*>(sm + R1);
-    float* qn = reinterpret_cast<float*>(sm + R2);
-    float* tm = qn;
+    Tf32Row* kn = reinterpret_cast<Tf32Row*>(sm + R1);
+    Tf32Row* qn = reinterpret_cast<Tf32Row*>(sm + R2);
+    float* tm = reinterpret_cast<float*>(sm + R2);
     float* sc = tm + C * CP;
     float* am = reinterpret_cast<float*>(sm + R3);
     float* cum = reinterpret_cast<float*>(sm + R4);
     float* bet = cum + C;
     float* ecum = bet + C;
     float* erem = ecum + C;
+    float* kinvs = erem + C;
     __nv_bfloat16* vb = reinterpret_cast<__nv_bfloat16*>(sm + R1);
     __nv_bfloat16* tb = reinterpret_cast<__nv_bfloat16*>(sm + R2 + TBF);
     __nv_bfloat16* kw = reinterpret_cast<__nv_bfloat16*>(sm + R3);
@@ -120,7 +130,43 @@ __global__ void __launch_bounds__(THREADS) gdn_chunk_prep(
     const int hk = h / (H / HK);
     const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
 
-    // 1. load q and k rows of this chunk, L2-normalize (padding rows stay zero)
+    // 1. cumulative decays and learning rates (padding rows stay zero)
+    if (tid < C) {
+        const int t = c * C + tid;
+        cum[tid] = t < T ? g[(size_t)t * H + h] : 0.f;
+        bet[tid] = t < T ? __bfloat162float(beta[(size_t)t * H + h]) : 0.f;
+    }
+    __syncthreads();
+    if (tid == 0) {
+        float s = 0.f;
+        for (int i = 0; i < C; i += 8) {
+            // Prefetch eight gates together, retaining the sequential FP32 sum.
+            const float4 a = *reinterpret_cast<const float4*>(cum + i);
+            const float4 b = *reinterpret_cast<const float4*>(cum + i + 4);
+            float4 p, q;
+            p.x = s + a.x;
+            p.y = p.x + a.y;
+            p.z = p.y + a.z;
+            p.w = p.z + a.w;
+            q.x = p.w + b.x;
+            q.y = q.x + b.y;
+            q.z = q.y + b.z;
+            q.w = q.z + b.w;
+            s = q.w;
+            *reinterpret_cast<float4*>(cum + i) = p;
+            *reinterpret_cast<float4*>(cum + i + 4) = q;
+        }
+        ws.decay[h * NC + c] = expf(s);
+    }
+    __syncthreads();
+    if (tid < C) {
+        ecum[tid] = expf(cum[tid]);
+        erem[tid] = expf(cum[C - 1] - cum[tid]);
+    }
+    __syncthreads();
+
+    // 2. L2-normalize q/k in float32 and form decayed q/k before rounding to
+    //    bfloat16. Convert the pair-product operands to TF32 once per row.
     for (int r = warp; r < C; r += THREADS / 32) {
         const int t = c * C + r;
         float kv[4], qv[4], ks = 0.f, qs = 0.f;
@@ -140,41 +186,23 @@ __global__ void __launch_bounds__(THREADS) gdn_chunk_prep(
         ks = warp_sum(ks);
         qs = warp_sum(qs);
         const float kinv = rsqrtf(ks + 1e-6f), qinv = rsqrtf(qs + 1e-6f) * scale;
+        if (lane == 0) kinvs[r] = kinv;
 #pragma unroll
         for (int e = 0; e < 4; e++) {
             const int d = lane + 32 * e;
-            kn[r * KP + d] = kv[e] * kinv;
-            qn[r * KP + d] = qv[e] * qinv;
+            const float kx = kv[e] * kinv, qx = qv[e] * qinv;
+            const uint32_t kc = __float_as_uint(wmma::__float_to_tf32(kx)) >> 13;
+            const uint32_t qc = __float_as_uint(wmma::__float_to_tf32(qx)) >> 13;
+            kn[r].lo[d] = uint16_t(kc);
+            kn[r].hi[d] = uint8_t(kc >> 16);
+            qn[r].lo[d] = uint16_t(qc);
+            qn[r].hi[d] = uint8_t(qc >> 16);
+            const size_t row = ((size_t)h * NCC + c * C + r) * K + d;
+            ws.qd[row] = __float2bfloat16(qx * ecum[r]);
+            ws.kd[row] = __float2bfloat16(kx * erem[r]);
         }
     }
-    if (tid < C) {
-        const int t = c * C + tid;
-        cum[tid] = t < T ? g[(size_t)t * H + h] : 0.f;
-        bet[tid] = t < T ? __bfloat162float(beta[(size_t)t * H + h]) : 0.f;
-    }
     __syncthreads();
-    if (tid == 0) {
-        float s = 0.f;
-        for (int i = 0; i < C; i++) {
-            s += cum[i];
-            cum[i] = s;
-        }
-        ws.decay[h * NC + c] = expf(s);
-    }
-    __syncthreads();
-    if (tid < C) {
-        ecum[tid] = expf(cum[tid]);
-        erem[tid] = expf(cum[C - 1] - cum[tid]);
-    }
-    __syncthreads();
-
-    // 2. decayed q and k for the state and output kernels
-    for (int x = tid; x < C * K; x += THREADS) {
-        const int i = x / K, d = x % K;
-        const size_t row = ((size_t)h * NCC + c * C + i) * K + d;
-        ws.qd[row] = __float2bfloat16(qn[i * KP + d] * ecum[i]);
-        ws.kd[row] = __float2bfloat16(kn[i * KP + d] * erem[i]);
-    }
 
     // 3. pair products on tensor cores: the 10 lower 16x16 tiles of k.k (into A) and of
     //    q.k (into P, in global memory), then the masks and decays elementwise
@@ -183,24 +211,31 @@ __global__ void __launch_bounds__(THREADS) gdn_chunk_prep(
         const int tile = e % 10;
         const int it = tile < 1 ? 0 : tile < 3 ? 1 : tile < 6 ? 2 : 3;
         const int jt = tile - it * (it + 1) / 2;
-        const float* a = (e < 10 ? kn : qn) + it * 16 * KP;
-        const float* b = kn + jt * 16 * KP;
-        CTf32 acc;
-        wmma::fill_fragment(acc, 0.f);
+        const Tf32Row* asrc = e < 10 ? kn : qn;
+        const int group = lane / 4, thread = lane % 4;
+        float acc[2][4] = {};
 #pragma unroll 4
-        for (int k0 = 0; k0 < K; k0 += 8) {
-            ATf32Row fa;
-            BTf32Col fb;
-            wmma::load_matrix_sync(fa, a + k0, KP);
-            wmma::load_matrix_sync(fb, b + k0, KP);
-            to_tf32(fa);
-            to_tf32(fb);
-            wmma::mma_sync(acc, fa, fb, acc);
+        for (int k0 = 0; k0 < K; k0 += 4) {
+            uint32_t a[2] = {
+                load_tf32(asrc, it * 16 + group, k0 + thread),
+                load_tf32(asrc, it * 16 + group + 8, k0 + thread)};
+#pragma unroll
+            for (int nt = 0; nt < 2; nt++) {
+                const int col = jt * 16 + group + nt * 8;
+                const uint32_t b = load_tf32(kn, col, k0 + thread);
+                mma1684_tf32(acc[nt], a, b);
+            }
         }
-        if (e < 10)
-            wmma::store_matrix_sync(am + it * 16 * CP + jt * 16, acc, CP, wmma::mem_row_major);
-        else
-            wmma::store_matrix_sync(pout + it * 16 * C + jt * 16, acc, C, wmma::mem_row_major);
+#pragma unroll
+        for (int r = 0; r < 2; r++) {
+            const int row = it * 16 + group + r * 8;
+#pragma unroll
+            for (int nt = 0; nt < 2; nt++) {
+                const int col = jt * 16 + 2 * thread + nt * 8;
+                float* dst = (e < 10 ? am + row * CP : pout + row * C) + col;
+                *reinterpret_cast<float2*>(dst) = make_float2(acc[nt][2 * r], acc[nt][2 * r + 1]);
+            }
+        }
     }
     __syncthreads();
     __nv_bfloat16* pb = ws.pb + ((size_t)h * NC + c) * C * C;
@@ -255,7 +290,9 @@ __global__ void __launch_bounds__(THREADS) gdn_chunk_prep(
     //    u = T (beta v) and w = T (beta exp(cum) k) on tensor cores, stored as bfloat16
     for (int x = tid; x < C * K; x += THREADS) {
         const int j = x / K, d = x % K;
-        kw[j * HB + d] = __float2bfloat16(kn[j * KP + d] * ecum[j]);
+        const int t = c * C + j;
+        const float kx = t < T ? __bfloat162float(k[((size_t)t * HK + hk) * K + d]) : 0.f;
+        kw[j * HB + d] = __float2bfloat16((kx * kinvs[j]) * ecum[j]);
     }
     for (int x = tid; x < C * C; x += THREADS) {
         const int i = x / C, j = x % C;
@@ -268,25 +305,26 @@ __global__ void __launch_bounds__(THREADS) gdn_chunk_prep(
         vb[j * HB + d] = t < T ? v[((size_t)t * H + h) * V + d] : __float2bfloat16(0.f);
     }
     __syncthreads();
-    float* stage = reinterpret_cast<float*>(sm + R5) + warp * 256;
     for (int e = warp; e < 64; e += THREADS / 32) {
         const bool is_u = e < 32;
         const int it = (e % 32) / 8, dt = e % 8;
         const __nv_bfloat16* bsrc = is_u ? vb : kw;
-        CBf16 acc;
-        wmma::fill_fragment(acc, 0.f);
+        float acc[2][4] = {};
         for (int kb = 0; kb <= it; kb++) {  // T is lower triangular
-            ABf16 fa;
-            BBf16 fb;
-            wmma::load_matrix_sync(fa, tb + it * 16 * TB + kb * 16, TB);
-            wmma::load_matrix_sync(fb, bsrc + kb * 16 * HB + dt * 16, HB);
-            wmma::mma_sync(acc, fa, fb, acc);
+            uint32_t a[4], b[4];
+            cs1::load_a(a, tb, TB, it * 16, kb * 16, lane);
+            cs1::load_b_kn(b, bsrc, HB, kb * 16, dt * 16, lane);
+            cs1::mma16816(acc[0], a, b[0], b[1]);
+            cs1::mma16816(acc[1], a, b[2], b[3]);
         }
-        wmma::store_matrix_sync(stage, acc, 16, wmma::mem_row_major);
-        __syncwarp();
-        bf16* dst = (is_u ? ws.u : ws.w) + ((size_t)h * NCC + c * C + it * 16) * K + dt * 16;
-        for (int x = lane; x < 256; x += 32) dst[(x / 16) * K + x % 16] = __float2bfloat16(stage[x]);
-        __syncwarp();
+#pragma unroll
+        for (int r = 0; r < 2; r++) {
+            const int row = it * 16 + lane / 4 + r * 8;
+            bf16* dst = (is_u ? ws.u : ws.w) + ((size_t)h * NCC + c * C + row) * K + dt * 16 + 2 * (lane % 4);
+#pragma unroll
+            for (int nt = 0; nt < 2; nt++)
+                *reinterpret_cast<uint32_t*>(dst + nt * 8) = cs1::pack_bf16(acc[nt][2 * r], acc[nt][2 * r + 1]);
+        }
     }
 }
 

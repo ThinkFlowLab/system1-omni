@@ -72,6 +72,20 @@ __global__ void silu_mul_kernel(const bf16* __restrict__ gate_up, int ld, bf16* 
     out[i] = to_bf16(round_bf16(silu(f32(row[j]))) * f32(row[I + j]));
 }
 
+__global__ void silu_mul_packed_kernel(const Pack8* __restrict__ gate_up, int ld,
+                                       Pack8* __restrict__ out, int I, size_t n) {
+    const size_t i = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    const size_t t = i / I, j = i % I;
+    const Pack8* row = gate_up + t * ld;
+    const Pack8 gate = row[j], up = row[I + j];
+    Pack8 result;
+#pragma unroll
+    for (int e = 0; e < 8; e++)
+        result.v[e] = to_bf16(round_bf16(silu(f32(gate.v[e]))) * f32(up.v[e]));
+    out[i] = result;
+}
+
 unsigned blocks(size_t n) { return (unsigned)((n + THREADS - 1) / THREADS); }
 
 }  // namespace
@@ -120,7 +134,13 @@ extern "C" int cs1_silu_mul(const void* gate_up, int ld, void* out, int T, int I
     if (T < 0 || I < 0 || ld < 2 * I) return cudaErrorInvalidValue;
     const size_t n = (size_t)T * I;
     if (n == 0) return cudaSuccess;
-    silu_mul_kernel<<<blocks(n), THREADS, 0, static_cast<cudaStream_t>(stream)>>>(
-        static_cast<const bf16*>(gate_up), ld, static_cast<bf16*>(out), I, n);
+    if (I % 8 == 0 && ld % 8 == 0 &&
+        ((reinterpret_cast<uintptr_t>(gate_up) | reinterpret_cast<uintptr_t>(out)) & 15) == 0) {
+        silu_mul_packed_kernel<<<blocks(n / 8), THREADS, 0, static_cast<cudaStream_t>(stream)>>>(
+            static_cast<const Pack8*>(gate_up), ld / 8, static_cast<Pack8*>(out), I / 8, n / 8);
+    } else {
+        silu_mul_kernel<<<blocks(n), THREADS, 0, static_cast<cudaStream_t>(stream)>>>(
+            static_cast<const bf16*>(gate_up), ld, static_cast<bf16*>(out), I, n);
+    }
     return cudaGetLastError();
 }

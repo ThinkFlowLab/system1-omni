@@ -1,0 +1,245 @@
+{
+  "hypothesis": "Lossless packed TF32 staging with the original four-term MMA accumulation reduces warm HTTP latency without changing model probabilities or decisions.",
+  "independent_variable": "Only GDN preparation implementation: original float32 staging/WMMA versus three-byte TF32 component planes and explicit m16n8k4 (matching baseline HMMA.1684 accumulation) TF32 MMA, one-time RNA conversion, vector-prefetched sequential gate sum, fused normalized/decayed QK stores, and direct packed BF16 U/W writes. Shared allocation drops from 92 KiB to 72 KiB; no accumulator or workspace dtype/shape/API changes. Baseline/candidate use otherwise identical frozen PR55 ABI4 libraries.",
+  "git_sha": "58b8cbe9d4738f6c217f6fe584852dc9361b2c24",
+  "working_tree_patch": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-e2e-20261003-090732/harness/working-tree.patch",
+  "worker_git_sha": "202c0e163f868334a99d88407056ebe61dbb2dce",
+  "library_source_git_sha": "7b935723c6fa17145e3d866675202fb6f7ea1f5d",
+  "kernel_comparison": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542",
+  "host": {
+    "hostname": "dedicated-developjob-8gpu2-a029z-64896bc8cf-8p2lw",
+    "uid": 2033,
+    "account": "hsliu2",
+    "home": "/home/hsliu2",
+    "worktree_directory": "/home/hsliu2/tmp",
+    "driver": "NVRM version: NVIDIA UNIX Open Kernel Module for x86_64  570.133.20  Release Build  (dvs-builder@U22-I3-AF03-14-3)  Sun Apr 13 04:34:43 UTC 2025"
+  },
+  "fixed_controls": {
+    "gpu_ids": [
+      2
+    ],
+    "gpu_uuid": "GPU-cbf66259-f4ab-0ede-1811-82037dde5924",
+    "cpu_affinity": "0-15",
+    "numa_memory_node": 0,
+    "dtype": "BF16",
+    "max_length": 16384,
+    "native_graph": "CUA_S1_GRAPH=0",
+    "server": "one worker/frontend pair per configuration reused for all requests",
+    "frontend": "same frozen PR55 Rust binary",
+    "http": "localhost; concurrency 1; client body serialization and response JSON parsing excluded from timer",
+    "cache": "reuse prepared weights and extensions; warm-up before listening; full 74-request feasibility pass before two measured passes; no cache drops or clock changes",
+    "timing_instrumentation": "Uninstrumented frozen Rust worker and frontend; no Nsight/CUPTI launcher. HTTP wall time includes response body receipt/UTF8 decode and excludes request JSON serialization/response JSON parsing.",
+    "hardware_name": "H200 (archived reported name NVIDIA L20X)",
+    "order": "baseline then candidate, one worker/frontend pair per arm, same 74-case order and full feasibility pass."
+  },
+  "native": {
+    "worker": "/home/hsliu2/tmp/system1-omni-open-jev-native/target/release/omni-open-jev-native",
+    "model": "/home/hsliu2/tmp/system1-omni-open-jev-validation/jevbench-l20x-20261001/model-16k"
+  },
+  "frontend": "/home/hsliu2/tmp/system1-omni-open-jev-native/target/release/omni-jev",
+  "libraries": {
+    "baseline": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/build/baseline/libqwen3_5_cuda.so",
+    "candidate": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/build/candidate/libqwen3_5_cuda.so"
+  },
+  "model": {
+    "base_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+    "checkpoint_revision": "28cf73067d5b337860bbef3c85b8b82ba8730956",
+    "temperature": 2.5343690298472983,
+    "max_length": 16384,
+    "weights": "Prepared merged BF16 export reused; 11 shard paths/sizes/inodes/mtimes checked, no shared cache reset."
+  },
+  "run_budget": {
+    "order": [
+      "baseline",
+      "candidate"
+    ],
+    "feasibility_passes": 1,
+    "measured_passes": 2,
+    "requests_per_pass": 74,
+    "first_request": "Validate actual first inference after genuine worker readiness. First request and feasibility pass excluded from measured results."
+  },
+  "acceptance": {
+    "latency": "At least 2% reduction in aggregate mean warm HTTP latency; each candidate measured-pass mean below matching baseline mean. Report both pass means and variability.",
+    "fidelity": "Finite probabilities; unchanged token usage and all 74 yes/no decisions; max probability delta <= 0.01 against pinned native reference. Baseline must reproduce reference exactly."
+  },
+  "stop": "Stop on readiness failure, any request/output validation failure, 30 minute timeout, or completion of exactly the declared run budget. Preserve failed rows and clean up only task-owned processes.",
+  "preparation": "All libraries and binaries built before execution, model/requests already prepared, no downloads. Build timings preserved in the kernel comparison. Readiness and feasibility timings separate.",
+  "representatives": [
+    {
+      "tag": "short",
+      "id": "original-policy-04-0",
+      "tokens": 107
+    },
+    {
+      "tag": "medium",
+      "id": "hard-opus-c-temporal_numeric-02",
+      "tokens": 936
+    },
+    {
+      "tag": "long",
+      "id": "hard-opus-c-long_policy-11",
+      "tokens": 3399
+    }
+  ],
+  "model_files": {
+    "/home/hsliu2/tmp/system1-omni-open-jev-validation/jevbench-l20x-20261001/model-16k/config.json": {
+      "resolved": "/data/hsliu2/tmp/system1-omni-open-jev-validation/merged-pinned/config.json",
+      "size": 2739,
+      "mtime_ns": 1790775264020033494,
+      "inode": 2706300860
+    },
+    "/home/hsliu2/tmp/system1-omni-open-jev-validation/jevbench-l20x-20261001/model-16k/model-00009-of-00011.safetensors": {
+      "resolved": "/data/hsliu2/tmp/system1-omni-open-jev-validation/merged-pinned/model-00009-of-00011.safetensors",
+      "size": 4965246872,
+      "mtime_ns": 1790775290022046868,
+      "inode": 2711037874
+    },
+    "/home/hsliu2/tmp/system1-omni-open-jev-validation/jevbench-l20x-20261001/model-16k/model-00011-of-00011.safetensors": {
+      "resolved": "/data/hsliu2/tmp/system1-omni-open-jev-validation/merged-pinned/model-00011-of-00011.safetensors",
+      "size": 1689348640,
+      "mtime_ns": 1790775294085780002,
+      "inode": 2711300107
+    },
+    "/home/hsliu2/tmp/system1-omni-open-jev-validation/jevbench-l20x-20261001/model-16k/model-00004-of-00011.safetensors": {
+      "resolved": "/data/hsliu2/tmp/system1-omni-open-jev-validation/merged-pinned/model-00004-of-00011.safetensors",
+      "size": 4933767328,
+      "mtime_ns": 1790775275305772826,
+      "inode": 2707352863
+    },
+    "/home/hsliu2/tmp/system1-omni-open-jev-validation/jevbench-l20x-20261001/model-16k/tokenizer_config.json": {
+      "resolved": "/data/hsliu2/tmp/system1-omni-open-jev-validation/merged-pinned/tokenizer_config.json",
+      "size": 1123,
+      "mtime_ns": 1790775294124724606,
+      "inode": 2711564147
+    },
+    "/home/hsliu2/tmp/system1-omni-open-jev-validation/jevbench-l20x-20261001/model-16k/chat_template.jinja": {
+      "resolved": "/data/hsliu2/tmp/system1-omni-open-jev-validation/merged-pinned/chat_template.jinja",
+      "size": 8952,
+      "mtime_ns": 1790775294114896432,
+      "inode": 2711564146
+    },
+    "/home/hsliu2/tmp/system1-omni-open-jev-validation/jevbench-l20x-20261001/model-16k/model.safetensors.index.json": {
+      "resolved": "/data/hsliu2/tmp/system1-omni-open-jev-validation/merged-pinned/model.safetensors.index.json",
+      "size": 66001,
+      "mtime_ns": 1790775294102327783,
+      "inode": 2711564145
+    },
+    "/home/hsliu2/tmp/system1-omni-open-jev-validation/jevbench-l20x-20261001/model-16k/model-00007-of-00011.safetensors": {
+      "resolved": "/data/hsliu2/tmp/system1-omni-open-jev-validation/merged-pinned/model-00007-of-00011.safetensors",
+      "size": 4987283120,
+      "mtime_ns": 1790775284078534693,
+      "inode": 2711037870
+    },
+    "/home/hsliu2/tmp/system1-omni-open-jev-validation/jevbench-l20x-20261001/model-16k/model-00001-of-00011.safetensors": {
+      "resolved": "/data/hsliu2/tmp/system1-omni-open-jev-validation/merged-pinned/model-00001-of-00011.safetensors",
+      "size": 4989241624,
+      "mtime_ns": 1790775266917986837,
+      "inode": 2711564144
+    },
+    "/home/hsliu2/tmp/system1-omni-open-jev-validation/jevbench-l20x-20261001/model-16k/model-00008-of-00011.safetensors": {
+      "resolved": "/data/hsliu2/tmp/system1-omni-open-jev-validation/merged-pinned/model-00008-of-00011.safetensors",
+      "size": 4911731096,
+      "mtime_ns": 1790775287158207236,
+      "inode": 2711037880
+    },
+    "/home/hsliu2/tmp/system1-omni-open-jev-validation/jevbench-l20x-20261001/model-16k/model-00006-of-00011.safetensors": {
+      "resolved": "/data/hsliu2/tmp/system1-omni-open-jev-validation/merged-pinned/model-00006-of-00011.safetensors",
+      "size": 4911731080,
+      "mtime_ns": 1790775281095585148,
+      "inode": 2711037862
+    },
+    "/home/hsliu2/tmp/system1-omni-open-jev-validation/jevbench-l20x-20261001/model-16k/model-00002-of-00011.safetensors": {
+      "resolved": "/data/hsliu2/tmp/system1-omni-open-jev-validation/merged-pinned/model-00002-of-00011.safetensors",
+      "size": 4996683144,
+      "mtime_ns": 1790775269773373318,
+      "inode": 2706037244
+    },
+    "/home/hsliu2/tmp/system1-omni-open-jev-validation/jevbench-l20x-20261001/model-16k/model-00010-of-00011.safetensors": {
+      "resolved": "/data/hsliu2/tmp/system1-omni-open-jev-validation/merged-pinned/model-00010-of-00011.safetensors",
+      "size": 4933767328,
+      "mtime_ns": 1790775293029628030,
+      "inode": 2711037937
+    },
+    "/home/hsliu2/tmp/system1-omni-open-jev-validation/jevbench-l20x-20261001/model-16k/model-00003-of-00011.safetensors": {
+      "resolved": "/data/hsliu2/tmp/system1-omni-open-jev-validation/merged-pinned/model-00003-of-00011.safetensors",
+      "size": 4965246848,
+      "mtime_ns": 1790775272559435955,
+      "inode": 2707352813
+    },
+    "/home/hsliu2/tmp/system1-omni-open-jev-validation/jevbench-l20x-20261001/model-16k/tokenizer.json": {
+      "resolved": "/data/hsliu2/tmp/system1-omni-open-jev-validation/merged-pinned/tokenizer.json",
+      "size": 19989325,
+      "mtime_ns": 1790775294299071846,
+      "inode": 2711564148
+    },
+    "/home/hsliu2/tmp/system1-omni-open-jev-validation/jevbench-l20x-20261001/model-16k/open_jev_export.json": {
+      "resolved": "/data/hsliu2/tmp/system1-omni-open-jev-validation/jevbench-l20x-20261001/model-16k/open_jev_export.json",
+      "size": 135585,
+      "mtime_ns": 1790842306295001566,
+      "inode": 1980197732
+    },
+    "/home/hsliu2/tmp/system1-omni-open-jev-validation/jevbench-l20x-20261001/model-16k/model-00005-of-00011.safetensors": {
+      "resolved": "/data/hsliu2/tmp/system1-omni-open-jev-validation/merged-pinned/model-00005-of-00011.safetensors",
+      "size": 4965246880,
+      "mtime_ns": 1790775278128982885,
+      "inode": 2711037835
+    }
+  },
+  "hashes": {
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-e2e-20261003-090732/harness/requests.json": "0c756a7b0b4c1f1352225f2e01770b5b3a0646fe86d5cc6930ded9e292ef37df",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-e2e-20261003-090732/harness/lengths.json": "d40155fb353c1e3473c22abac16fb33ca582352268c3cabb58efc9b93446cc4f",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-e2e-20261003-090732/analysis/reference.jsonl": "f964c0e61ef3877aac130b795c46070de6e73d261272c33f1a2f45f4e6e66b83",
+    "/home/hsliu2/tmp/system1-omni-open-jev-native/target/release/omni-open-jev-native": "d91622696dbfbfb44a623b6a36fc939e78a913c3f9b4e62f501f7b093ee1df73",
+    "/home/hsliu2/tmp/system1-omni-open-jev-native/target/release/omni-jev": "0c40efdc61371b195267e1a22bb7824a76a15fcf15460c02fbba8dd369495086",
+    "/home/hsliu2/tmp/system1-omni-open-jev-validation/jevbench-l20x-20261001/model-16k/config.json": "193d46cdde2f62b603269f005044a9fdaf4ad6b4447997c359e16dcc7217edcd",
+    "/home/hsliu2/tmp/system1-omni-open-jev-validation/jevbench-l20x-20261001/model-16k/tokenizer_config.json": "bee8eba30f0eb4af73c0fe2cd06d0f89b657d7819941c438157ec42f7c80ea87",
+    "/home/hsliu2/tmp/system1-omni-open-jev-validation/jevbench-l20x-20261001/model-16k/chat_template.jinja": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
+    "/home/hsliu2/tmp/system1-omni-open-jev-validation/jevbench-l20x-20261001/model-16k/model.safetensors.index.json": "5af6c022747934e687d7edf362de832a7fa2c82eedc36a8679495b40bb214b6f",
+    "/home/hsliu2/tmp/system1-omni-open-jev-validation/jevbench-l20x-20261001/model-16k/tokenizer.json": "06b9509352d2af50381ab2247e083b80d32d5c0aba91c272ca9ff729b6a0e523",
+    "/home/hsliu2/tmp/system1-omni-open-jev-validation/jevbench-l20x-20261001/model-16k/open_jev_export.json": "5fca82e74d77cbbcb83b03505130dad34a923731dc083ec7616cc73997688caa",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-e2e-20261003-090732/harness/collect.py": "13c8eeb1002c854ceccfe33b005d1535e9b3493250bce52b2c1268666c8e41d5",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-e2e-20261003-090732/harness/working-tree.patch": "8fe079d6580ddab0aef333f044a9a24dca18960cac17b04426b328ef8fc151bd",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/ops.h": "776376f82c8a01aacea4ec29178714c95079ec6454dc0466a483d073fee3e06c",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/working-tree.patch": "8fe079d6580ddab0aef333f044a9a24dca18960cac17b04426b328ef8fc151bd",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/gemm.cu": "a82b6d6012c6b13d5ec8dd8ce7107bd95e17f588c76dae1d314e9cff1585274a",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/common.cuh": "ea924f7c903b6d14b0e1f10c8c33a1a9ca23806df093628a178661a303d54d55",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/elementwise.cu": "b739f1bc2f08ae67399366063cc6c42bc0c5e65e98da23d8b425f9f9ea53ea59",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/norm.cu": "756c9d4023787cc3961ec72bcc96b3f715e705d5dfcb3bf77622879980df82ab",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/attention.cu": "3d6935a8a550314815ebe6575be03ce1a7e0b1d5bd611508a4bffbc24cff3132",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/compare.py": "00899a905c0ff9065c338d1cdad8e1f97e2959d629d40043ed8c7854b65101a3",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/gdn-packed-tf32-k4.cu": "9f2642a5f6e69cd22055419ecf1f799f1ccd811f7453763a41adf4f15b07a41d",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/gdn_prefill.cu": "1c9027b6f2d3677381d8d19611ecdf7e138718459cd61f341802cc2047a582be",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/runtime.cu": "3c19d2a1167b44d3a84ffe480605e14a72c775d2c2e51d0c594af9d0db6cb69e",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/mma.cuh": "64654f8b937585805daa72b692c243ae35d34b746e2cb6b0b55c255748495764",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/build/baseline/libqwen3_5_cuda.so": "8ea954d3b18d73d9fdb530fee0ddb898cf2151bb326bb67da471e9f43ca0c69e",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/build/candidate/libqwen3_5_cuda.so": "92cbe5485926910cd16ee911a536dddf0c74b2f6d23cb4cb6694f5e742907a48",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-20261003-090542/harness/build/validation/libqwen3_5_cuda.so": "adabeca799005b04706b1bd00b6a107b987e936642f9c345bdc9302d014e8179",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/target/release/deps/kernels-e1de1d464265a9b7": "77c9e80d7d549c14785a1de05fb2b1eced560da7ab9966446f668326254fa18a",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/src/backends/cuda/qwen3_5/gdn_prefill.cu": "9f2642a5f6e69cd22055419ecf1f799f1ccd811f7453763a41adf4f15b07a41d",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/tests/qwen3_5/kernels.rs": "2ccd7284f212152fcccfa31cab72c6bb2be6734440c3e877fe09cfc8e2077af4",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/src/models/cua_s1/native/Cargo.toml": "cf0050ee87319ab4d33cfc6ad8d111ba1b49ac113552fc7c9c42314c99f830e1"
+  },
+  "command": [
+    "gpu",
+    "run",
+    "--gpu-ids",
+    "2",
+    "--wait",
+    "10m",
+    "--timeout",
+    "30m",
+    "--note",
+    "Open-Jev GDN packed TF32 K4 HTTP A/B",
+    "--",
+    "numactl",
+    "--membind=0",
+    "--physcpubind=0-15",
+    "/home/hsliu2/tmp/venvs/open-jev-native/bin/python",
+    "-u",
+    "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-e2e-20261003-090732/harness/collect.py"
+  ],
+  "previous_candidate": {
+    "run": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-rna-fp16-e2e-20261003-083539",
+    "result": "FP16 feasibility changed one decision and was stopped before measured candidate passes. The new TF32 K4 candidate passed strict workspace/output checks; acceptance thresholds are unchanged."
+  }
+}

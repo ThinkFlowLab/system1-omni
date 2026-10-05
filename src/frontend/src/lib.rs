@@ -19,18 +19,37 @@ pub struct Config {
     pub bind: SocketAddr,
     pub backend_url: Url,
     pub timeout: Duration,
+    pub health_timeout: Duration,
+    pub max_response_bytes: usize,
 }
 
 impl Config {
     pub const DEFAULT_BIND: &str = "127.0.0.1:8080";
     pub const DEFAULT_BACKEND_URL: &str = "http://127.0.0.1:8000";
     pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
+    pub const DEFAULT_HEALTH_TIMEOUT: Duration = Duration::from_secs(2);
+    pub const DEFAULT_MAX_RESPONSE_BYTES: usize = 16 << 20;
 
     pub fn from_env() -> Result<Self, BoxError> {
-        Self::new(
+        let mut config = Self::new(
             &env_or("OMNI_JEV_BIND", Self::DEFAULT_BIND)?,
             &env_or("OMNI_JEV_BACKEND_URL", Self::DEFAULT_BACKEND_URL)?,
-        )
+        )?;
+        config.health_timeout = Duration::from_millis(
+            env_or(
+                "OMNI_JEV_HEALTH_TIMEOUT_MS",
+                &Self::DEFAULT_HEALTH_TIMEOUT.as_millis().to_string(),
+            )?
+            .parse()
+            .map_err(|e| format!("invalid OMNI_JEV_HEALTH_TIMEOUT_MS: {e}"))?,
+        );
+        config.max_response_bytes = env_or(
+            "OMNI_JEV_MAX_RESPONSE_BYTES",
+            &Self::DEFAULT_MAX_RESPONSE_BYTES.to_string(),
+        )?
+        .parse()
+        .map_err(|e| format!("invalid OMNI_JEV_MAX_RESPONSE_BYTES: {e}"))?;
+        Ok(config)
     }
 
     pub fn new(bind: &str, backend_url: &str) -> Result<Self, BoxError> {
@@ -59,6 +78,8 @@ impl Config {
             bind,
             backend_url,
             timeout: Self::DEFAULT_TIMEOUT,
+            health_timeout: Self::DEFAULT_HEALTH_TIMEOUT,
+            max_response_bytes: Self::DEFAULT_MAX_RESPONSE_BYTES,
         })
     }
 }
@@ -67,10 +88,15 @@ impl Config {
 struct Backend {
     client: Client,
     base_url: Url,
+    health_timeout: Duration,
+    max_response_bytes: usize,
 }
 
 /// Both routes share one client and its connection pool.
 pub fn app(config: &Config) -> Result<Router, BoxError> {
+    if config.health_timeout.is_zero() || config.max_response_bytes == 0 {
+        return Err("health timeout and response byte limit must be positive".into());
+    }
     let client = Client::builder()
         .timeout(config.timeout)
         .retry(reqwest::retry::never())
@@ -81,6 +107,8 @@ pub fn app(config: &Config) -> Result<Router, BoxError> {
     let backend = Backend {
         client,
         base_url: config.backend_url.clone(),
+        health_timeout: config.health_timeout.min(config.timeout),
+        max_response_bytes: config.max_response_bytes,
     };
     Ok(Router::new()
         .route("/v1/systemone", post(forward))
@@ -105,20 +133,34 @@ async fn forward(
     remove_hop_by_hop(&mut headers);
     headers.remove(header::HOST);
 
-    let upstream = backend
+    let mut upstream = backend
         .client
         .request(parts.method, url)
         .headers(headers)
-        .body(reqwest::Body::wrap_stream(body.into_data_stream()))
-        .send()
-        .await
-        .map_err(backend_error)?;
+        .body(reqwest::Body::wrap_stream(body.into_data_stream()));
+    if parts.uri.path() == "/health" {
+        upstream = upstream.timeout(backend.health_timeout);
+    }
+    let mut upstream = upstream.send().await.map_err(backend_error)?;
 
     let status = upstream.status();
     let mut headers = upstream.headers().clone();
     remove_hop_by_hop(&mut headers);
-    // Buffer the response so a body timeout can still become a 504.
-    let body = upstream.bytes().await.map_err(backend_error)?;
+    let too_large = (StatusCode::BAD_GATEWAY, "backend response too large\n");
+    if upstream
+        .content_length()
+        .is_some_and(|length| length > backend.max_response_bytes as u64)
+    {
+        return Err(too_large);
+    }
+    // Check each chunk: a worker may omit Content-Length. Keep buffering for 504s.
+    let mut body = Vec::new();
+    while let Some(chunk) = upstream.chunk().await.map_err(backend_error)? {
+        if chunk.len() > backend.max_response_bytes - body.len() {
+            return Err(too_large);
+        }
+        body.extend_from_slice(&chunk);
+    }
 
     let mut response = Response::new(Body::from(body));
     *response.status_mut() = status;
@@ -179,6 +221,8 @@ mod tests {
         assert_eq!(config.bind.to_string(), "127.0.0.1:8080");
         assert_eq!(config.backend_url.as_str(), "http://127.0.0.1:8000/");
         assert_eq!(config.timeout, Duration::from_secs(60));
+        assert_eq!(config.health_timeout, Duration::from_secs(2));
+        assert_eq!(config.max_response_bytes, 16 << 20);
     }
 
     #[test]

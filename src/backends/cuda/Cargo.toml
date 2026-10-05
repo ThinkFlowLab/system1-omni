@@ -7,10 +7,3 @@ publish = false
 [dependencies]
 anyhow = "1"
 libloading = "0.8"
-
-[dev-dependencies]
-tempfile = "3"
-
-[[test]]
-name = "runtime"
-path = "../../../tests/backends/cuda/runtime.rs"
