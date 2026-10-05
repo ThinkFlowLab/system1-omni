@@ -1,0 +1,72 @@
+{
+  "hypothesis": "FlashInfer SM90 fused or context-parallel GDN reduces native core latency at representative Open-Jev shapes with acceptable numerical difference. Results select the next native implementation experiment, not an E2E gain claim.",
+  "independent_variable": "GDN implementation: unchanged native versus installed FlashInfer fused and CP, including required Q/K normalization and gate dtype/exp adapter work.",
+  "fixed_controls": {
+    "gpu_ids": [
+      2
+    ],
+    "gpu_uuid": "GPU-cbf66259-f4ab-0ede-1811-82037dde5924",
+    "hardware": "H200 (driver name L20X)",
+    "numa_node": 0,
+    "cpu_affinity": "0-15",
+    "qk_heads": 16,
+    "v_heads": 48,
+    "head_dim": 128,
+    "dtype": "BF16 Q/K/V/beta; FP32 log g",
+    "seed": 20261003,
+    "tokens": [
+      107,
+      936,
+      3399
+    ],
+    "inputs": "seeded synthetic correlated Q/K and weak-decay gates; actual workload shapes, not captured model activations",
+    "stream": "one default stream",
+    "cache": "reuse; no cache drops; eager submission in all arms"
+  },
+  "run_budget": "Per shape/configuration: one excluded feasibility plus 10 excluded warmups, then exactly 2 measured passes of 50 calls; second pass reverses arm order. Failed feasibility arms receive no measured calls. No extra measured repetitions.",
+  "acceptance": {
+    "initial_kernel_fidelity": "finite output, max_abs <= 0.03 and relative_l2 <= 0.02 against native; final model PR gate is unchanged 74 decisions and max probability delta <= 0.01",
+    "candidate_latency": ">=10% GDN core reduction in both measured passes motivates integration; otherwise report inconclusive or no gain",
+    "later_e2e_gate": "new isolated A/B plan: >=2% mean warm HTTP improvement and both candidate passes faster, with unchanged decisions"
+  },
+  "stop": "Stop native failure, stop each rejected candidate arm, timeout 30m, or finish declared run budget.",
+  "git_sha": "58b8cbe9d4738f6c217f6fe584852dc9361b2c24",
+  "working_tree": "",
+  "packages": {
+    "torch": "2.13.0+cu129",
+    "triton": "3.7.1",
+    "flashinfer-python": "0.6.16.post3",
+    "nvidia-cutlass-dsl": "4.6.2",
+    "cuda-python": "12.9.7"
+  },
+  "files": {
+    "/home/hsliu2/tmp/system1-omni-gdn-optimization-20261003/src/backends/cuda/qwen3_5/gdn_prefill.cu": "1c9027b6f2d3677381d8d19611ecdf7e138718459cd61f341802cc2047a582be",
+    "/home/hsliu2/tmp/venvs/pr6930/lib/python3.12/site-packages/flashinfer/gdn_prefill.py": "a486f6d4a6a59681e754a19b8d52efd14b3bbf6c8835272fb2d846bb6b06debb",
+    "/home/hsliu2/tmp/venvs/pr6930/lib/python3.12/site-packages/flashinfer/gdn_kernels/delta_rule_dsl/delta_rule_sm90.py": "c72398f8f6e57ed2d708d364dd0299ce414e75a27d044ac83c6278c0954290a4",
+    "/home/hsliu2/tmp/venvs/open-jev-native/lib/python3.12/site-packages/fla/modules/l2norm.py": "30f7feebdbfa87b8e90c143ec62a7fa0781bfd736c856c0ec69452f0c778be3f",
+    "/home/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-ready-kernels-20261003-080129/harness/compare.py": "4fa800fa321f4e79350a3d151f211397b566cf03bd0982794e1e23dfa25a6662"
+  },
+  "ncu": "Hardware counters unavailable; do not infer hardware stall/occupancy causes from timing.",
+  "command": [
+    "gpu",
+    "run",
+    "--gpu-ids",
+    "2",
+    "--wait",
+    "10m",
+    "--timeout",
+    "30m",
+    "--note",
+    "Open-Jev GDN ready-kernel comparison",
+    "--",
+    "numactl",
+    "--membind=0",
+    "--physcpubind=0-15",
+    "/home/hsliu2/tmp/venvs/open-jev-native/bin/python",
+    "-u",
+    "/home/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-ready-kernels-20261003-080129/harness/compare.py"
+  ],
+  "cpu_probe_correction": "Before any GPU execution: the installed FlashInfer does not contain its newer normalize_qk helper; use the already-installed FLA l2norm for both operands, which vLLM also uses. Preserve initial plan/probe; no configuration measured.",
+  "previous_attempt": "/home/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-ready-kernels-20261003-075757",
+  "previous_attempt_result": "Import preparation failed before CUDA initialization or feasibility/measurement: cutlass DSL files were installed but the nested environment .pth was not processed. Session 54400 exited 1 and GPU 2 released at 0 MB."
+}

@@ -1,8 +1,14 @@
-mod artifacts;
-pub mod cache;
+pub mod artifacts;
 pub mod config;
-pub mod encoder;
-pub mod graph;
-pub mod resident;
+pub mod decision;
+pub mod packing;
+pub mod preprocess;
+pub mod processing;
 pub mod weights;
-pub mod workspace;
+
+#[cfg(feature = "serve")]
+pub mod executor;
+#[cfg(feature = "cuda")]
+pub mod model;
+#[cfg(feature = "serve")]
+pub mod serve;

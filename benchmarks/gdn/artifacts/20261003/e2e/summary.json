@@ -1,0 +1,136 @@
+{
+  "completed": true,
+  "accepted_e2e_latency_gate": false,
+  "arms": {
+    "baseline": {
+      "passes": [
+        {
+          "pass": 1,
+          "requests": 74,
+          "mean_ms": 48.37519689189189,
+          "p50_ms": 25.3186545,
+          "p95_ms": 227.743904,
+          "max_probability_delta": 0.0,
+          "raw": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-e2e-20261003-090732/analysis/baseline-measured-1.jsonl"
+        },
+        {
+          "pass": 2,
+          "requests": 74,
+          "mean_ms": 48.44110141891892,
+          "p50_ms": 25.362659,
+          "p95_ms": 227.70445899999999,
+          "max_probability_delta": 0.0,
+          "raw": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-e2e-20261003-090732/analysis/baseline-measured-2.jsonl"
+        }
+      ],
+      "aggregate_mean_ms": 48.408149155405404,
+      "readiness": {
+        "worker": {
+          "process_to_readiness_seconds": 11.626411007717252,
+          "response": {
+            "status": "ready",
+            "model": "Qwen/Qwen3.8-27B"
+          }
+        },
+        "frontend": {
+          "process_to_readiness_seconds": 0.005645955912768841,
+          "response": {
+            "status": "ready",
+            "model": "Qwen/Qwen3.8-27B"
+          }
+        }
+      },
+      "first_inference": {
+        "finite_probability": true,
+        "usage": true,
+        "decision": true,
+        "probability": true,
+        "uninstrumented": true,
+        "baseline_exact": true
+      }
+    },
+    "candidate": {
+      "passes": [
+        {
+          "pass": 1,
+          "requests": 74,
+          "mean_ms": 48.10456159459459,
+          "p50_ms": 24.852269,
+          "p95_ms": 225.918293,
+          "max_probability_delta": 0.0,
+          "raw": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-e2e-20261003-090732/analysis/candidate-measured-1.jsonl"
+        },
+        {
+          "pass": 2,
+          "requests": 74,
+          "mean_ms": 48.305051418918914,
+          "p50_ms": 24.879013999999998,
+          "p95_ms": 225.79116499999998,
+          "max_probability_delta": 0.0,
+          "raw": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-packed-tf32-k4-e2e-20261003-090732/analysis/candidate-measured-2.jsonl"
+        }
+      ],
+      "aggregate_mean_ms": 48.20480650675675,
+      "readiness": {
+        "worker": {
+          "process_to_readiness_seconds": 10.620182611979544,
+          "response": {
+            "status": "ready",
+            "model": "Qwen/Qwen3.8-27B"
+          }
+        },
+        "frontend": {
+          "process_to_readiness_seconds": 0.006159857846796513,
+          "response": {
+            "status": "ready",
+            "model": "Qwen/Qwen3.8-27B"
+          }
+        }
+      },
+      "first_inference": {
+        "finite_probability": true,
+        "usage": true,
+        "decision": true,
+        "probability": true,
+        "uninstrumented": true,
+        "baseline_exact": true
+      }
+    }
+  },
+  "controls": "plan.json",
+  "cleanup": {
+    "all_task_processes_exited": true,
+    "processes": [
+      {
+        "pid": 1790620,
+        "args": [
+          "/home/hsliu2/tmp/system1-omni-open-jev-native/target/release/omni-open-jev-native"
+        ],
+        "returncode": -15
+      },
+      {
+        "pid": 1791785,
+        "args": [
+          "/home/hsliu2/tmp/system1-omni-open-jev-native/target/release/omni-jev"
+        ],
+        "returncode": 0
+      },
+      {
+        "pid": 1793269,
+        "args": [
+          "/home/hsliu2/tmp/system1-omni-open-jev-native/target/release/omni-open-jev-native"
+        ],
+        "returncode": -15
+      },
+      {
+        "pid": 1794598,
+        "args": [
+          "/home/hsliu2/tmp/system1-omni-open-jev-native/target/release/omni-jev"
+        ],
+        "returncode": 0
+      }
+    ]
+  },
+  "aggregate_reduction_percent": 0.42005871365966563,
+  "conclusion": "Standalone GDN fidelity/latency gates passed. All 74 model probabilities and decisions unchanged, but aggregate E2E gain is below 2%; no material E2E improvement claim."
+}

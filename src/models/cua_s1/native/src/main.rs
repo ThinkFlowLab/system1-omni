@@ -17,13 +17,11 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::{Value, json};
 
-use omni_cua_s1_native::contract::{self, MODEL_ID};
+use omni_cua_s1_native::contract::MODEL_ID;
 use omni_cua_s1_native::cuda;
 use omni_cua_s1_native::engine::Engine;
-use omni_cua_s1_native::json::quote;
 
 const MAX_BODY_BYTES: usize = 4 << 20;
-const MAX_PROMPT_TOKENS: usize = 16384;
 const WARMUP: &[u8] = br#"{"model": "cua-s1-4b-0.2", "state": "Dialog: Update installed.", "questions": {"q": {"type": "choice", "instructions": "Close it.", "criteria": {"ok": "OK", "wait": "Wait"}}}}"#;
 
 fn reply(status: u16, body: Value) -> Response {
@@ -32,43 +30,25 @@ fn reply(status: u16, body: Value) -> Response {
 
 /// Every prompt is tokenized and checked against the limit before any forward pass.
 async fn decide(engine: &Engine, raw: &[u8]) -> Response {
-    let (state, questions) = match contract::parse_body(raw).and_then(|b| contract::map_request(&b))
-    {
-        Ok(request) => request,
+    let prepared = match engine.processor.prepare(raw) {
+        Ok(prepared) => prepared,
         Err(e) => return reply(e.status, json!({"detail": e.message})),
     };
-    let failed = |e: anyhow::Error| {
-        eprintln!("inference failed: {e:#}");
-        reply(500, json!({"detail": "inference failed"}))
-    };
-    let mut prompts = Vec::with_capacity(questions.len());
-    for q in &questions {
-        let ids = match engine.encode(&state, q) {
-            Ok(ids) => ids,
-            Err(e) => return failed(e),
-        };
-        if ids.len() > MAX_PROMPT_TOKENS {
-            let message = format!(
-                "question {}: {} prompt tokens, over {MAX_PROMPT_TOKENS}",
-                quote(&q.name),
-                ids.len()
-            );
-            return reply(413, json!({"detail": message}));
+    let result = async {
+        let rows = engine
+            .executor
+            .execute(&engine.scheduler, prepared.inputs)
+            .await?;
+        prepared.context.finish(rows)
+    }
+    .await;
+    match result {
+        Ok(body) => reply(200, body),
+        Err(e) => {
+            eprintln!("inference failed: {e:#}");
+            reply(500, json!({"detail": "inference failed"}))
         }
-        prompts.push(ids);
     }
-    let tokens: usize = prompts.iter().map(Vec::len).sum();
-    let mut answers = serde_json::Map::new();
-    for (q, ids) in questions.iter().zip(prompts) {
-        match engine.score(ids, q.keys.len()).await {
-            Ok(probs) => answers.insert(q.name.clone(), contract::answer(q, &probs)),
-            Err(e) => return failed(e),
-        };
-    }
-    reply(
-        200,
-        json!({"model": MODEL_ID, "answers": answers, "usage": {"input_tokens": tokens, "output_tokens": 0}}),
-    )
 }
 
 async fn systemone(

@@ -4,6 +4,20 @@ This directory owns Cua-S1 4B 0.2 ([#10](https://github.com/ThinkFlowLab/system1
 
 Status: a reference worker for the `text` adapter loads the model through Hugging Face Transformers and PEFT: [`text/`](text/), served by [`src/frontend/cua_s1_text.py`](../../frontend/cua_s1_text.py), with setup in [`recipe/cua_s1/text.md`](../../../recipe/cua_s1/text.md). It is the correctness reference for the native worker in [`native/`](native/): Rust, with the Qwen3.5 forward pass on the CUDA kernels in [`src/backends/cuda/qwen3_5/`](../../backends/cuda/qwen3_5/), set up as in [`recipe/cua_s1/native.md`](../../../recipe/cua_s1/native.md). A reference worker for the `multimodal` adapter is in [`multimodal/`](multimodal/), served by [`src/frontend/cua_s1.py`](../../frontend/cua_s1.py); native execution of that adapter is not covered yet.
 
+## Integration boundary
+
+The native worker follows the [architecture contracts](../../../docs/architecture.md)
+with independent [processing](native/src/processing.rs) and
+[executor](native/src/executor.rs) modules. Preparation returns token IDs and an
+option count per question, plus a response context for identity/order and usage.
+The executor returns FP32 letter logits; response finishing owns per-question
+softmax and the choice/confidence interpretation. The engine owns a
+[shared serial scheduler](../../runtime/README.md) that admits each question's
+forward before blocking dispatch. Execution remains one prompt per question
+with a model-state mutex and CPU answer-letter projection after CUDA prefill,
+outside runtime admission. Processing orchestration and GPU batching remain
+planned. The contracts below describe its existing behavior.
+
 ## Pinned revisions
 
 | Artifact | Revision |

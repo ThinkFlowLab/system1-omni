@@ -23,12 +23,7 @@ T_IMPORT = time.perf_counter() - T_START
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from env import footprint_mb, header, noise_problems  # noqa: E402
-
-
-def load_workloads(path):
-    with open(path) as f:
-        return [json.loads(line) for line in f if line.strip()]
+from env import footprint_mb, header, read_workloads, refuse_if_noisy  # noqa: E402
 
 
 def sync(device):
@@ -57,22 +52,31 @@ def main():
     parser.add_argument("--run", required=True, help="feasibility, m1, m2, ...")
     parser.add_argument("--checkpoint", default="convaiinnovations/laya")
     parser.add_argument("--workloads", default=str(HERE / "workloads.jsonl"))
-    parser.add_argument("--only", nargs="*", help="bench workload ids to run (default: all)")
+    parser.add_argument(
+        "--only", nargs="*", help="bench workload ids to run (default: all)"
+    )
     parser.add_argument("-n", type=int, default=300, help="timed requests per workload")
-    parser.add_argument("--discard", type=int, default=20, help="warmup requests per workload")
+    parser.add_argument(
+        "--discard", type=int, default=20, help="warmup requests per workload"
+    )
     parser.add_argument("--seed", type=int, default=0, help="workload order seed")
     parser.add_argument("--out", default=str(HERE / "results"))
-    parser.add_argument("--max-load", type=float, default=2.0, help="1-min load average allowed for measured runs")
+    parser.add_argument(
+        "--max-load",
+        type=float,
+        default=2.0,
+        help="1-min load average allowed for measured runs",
+    )
     args = parser.parse_args()
 
-    problems = noise_problems(args.max_load)
-    if problems and args.run != "feasibility":
-        sys.exit("refusing a measured run: " + "; ".join(problems))
-    for problem in problems:
-        print(f"warning: {problem}", file=sys.stderr)
+    problems = refuse_if_noisy(args.max_load, args.run != "feasibility")
 
-    workloads = load_workloads(args.workloads)
-    bench = [w for w in workloads if w["kind"] == "bench" and (not args.only or w["id"] in args.only)]
+    workloads = read_workloads(args.workloads).values()
+    bench = [
+        w
+        for w in workloads
+        if w["kind"] == "bench" and (not args.only or w["id"] in args.only)
+    ]
     parity = [w for w in workloads if w["kind"] == "parity"]
 
     out = Path(args.out) / f"inproc_{args.config}_{args.device}_{args.run}.jsonl"
@@ -101,7 +105,10 @@ def main():
             )
         )
         if agent.device.type != args.device:
-            print(f"warning: asked for {args.device}, laya is on {agent.device}", file=sys.stderr)
+            print(
+                f"warning: asked for {args.device}, laya is on {agent.device}",
+                file=sys.stderr,
+            )
 
         # Warmup: the first call per workload is kept apart, it is the first-shape cost.
         started = time.perf_counter()
@@ -140,13 +147,25 @@ def main():
                     }
                 )
                 if i == 0:
-                    emit({"type": "answers", "workload": w["id"], "answers": result["answers"]})
+                    emit(
+                        {
+                            "type": "answers",
+                            "workload": w["id"],
+                            "answers": result["answers"],
+                        }
+                    )
 
         for w in parity:
             _, result = timed_call(agent, w)
             emit({"type": "answers", "workload": w["id"], "answers": result["answers"]})
 
-        emit({"type": "end", "total_s": round(time.perf_counter() - T_START, 1), **memory(agent.device)})
+        emit(
+            {
+                "type": "end",
+                "total_s": round(time.perf_counter() - T_START, 1),
+                **memory(agent.device),
+            }
+        )
     print(out)
 
 

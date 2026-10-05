@@ -72,22 +72,31 @@ def build_app(
     nothing is preloaded. Raises if preparing fails, so the caller never binds a worker that cannot answer."""
     from laya.serve import create_app
 
-    resident: dict[str, tuple[Any, dict[str, Any]]] = {}  # prepared checkpoints: name -> (agent, warmup result)
+    # prepared checkpoints: name -> (agent, warmup result)
+    resident: dict[str, tuple[Any, dict[str, Any]]] = {}
     preparing: set[str] = set()
     graphs_at_ready = None
 
     def apply_options(name: str, agent: Any) -> None:
         if (fp16 or compile) and not optimize.apply(agent, fp16=fp16, compile=compile):
-            log.warning("%s is on the CPU: --compile and --weights fp16 apply on the GPU only", name)
+            log.warning(
+                "%s is on the CPU: --compile and --weights fp16 apply on the GPU only",
+                name,
+            )
 
     def make_ready(name: str, agent: Any) -> str | None:
         """Warm the checkpoint up and start describing it. Returns where it is if not on the requested device."""
         nonlocal graphs_at_ready
         warmed = engine.warmup(router, name)
-        warmed["revision"] = engine.loaded_revision(revisions, warmed["routing"])  # fixed here: see engine
+        # fixed here: see engine
+        warmed["revision"] = engine.loaded_revision(revisions, warmed["routing"])
         resident[name] = (agent, warmed)
         autocast_rows = getattr(agent, "mps_amp_min_rows", None)
-        if str(agent.device).startswith("mps") and autocast_rows and autocast_rows > engine.WARMUP_MAX_ROWS:
+        if (
+            str(agent.device).startswith("mps")
+            and autocast_rows
+            and autocast_rows > engine.WARMUP_MAX_ROWS
+        ):
             log.warning(
                 "%s: laya autocasts from %d questions but the warmup stops at %d; the first request that "
                 "large is not warm",
@@ -97,8 +106,14 @@ def build_app(
             )
         if compile:
             graphs_at_ready = graph_counter()
-        described = engine.describe(agent, requested, warmed["routing"], warmed["revision"])
-        return f"{name} is on {described['device']}" if described["device_mismatch"] else None
+        described = engine.describe(
+            agent, requested, warmed["routing"], warmed["revision"]
+        )
+        return (
+            f"{name} is on {described['device']}"
+            if described["device_mismatch"]
+            else None
+        )
 
     def check_device(misplaced: list[str]) -> None:
         if misplaced:
@@ -107,7 +122,8 @@ def build_app(
                 raise RuntimeError(message)
             log.warning(message)
 
-    evicted: list[str] = []  # what laya dropped to make room for the checkpoint it is loading
+    # what laya dropped to make room for the checkpoint it is loading
+    evicted: list[str] = []
 
     def on_evict(ctx: Any) -> None:
         resident.pop(ctx.model, None)
@@ -131,18 +147,26 @@ def build_app(
                 try:
                     router.load(name)
                 except Exception:  # noqa: BLE001 -- the request fails for the first reason either way
-                    log.exception("%s was evicted for %s and could not be loaded again", name, ctx.model)
+                    log.exception(
+                        "%s was evicted for %s and could not be loaded again",
+                        name,
+                        ctx.model,
+                    )
             if compile:
-                graphs_at_ready = graph_counter()  # graphs the unloaded checkpoint compiled are not recompiles
+                # graphs the unloaded checkpoint compiled are not recompiles
+                graphs_at_ready = graph_counter()
             raise
         finally:
             preparing.discard(ctx.model)
 
-    names = list(router.loaded) or [model]  # never load a model the worker was not asked to serve
+    # never load a model the worker was not asked to serve
+    names = list(router.loaded) or [model]
     startup = {name: router.load(name) for name in names}
     for name, agent in startup.items():
         apply_options(name, agent)
-    check_device(list(filter(None, [make_ready(name, agent) for name, agent in startup.items()])))
+    check_device(
+        list(filter(None, [make_ready(name, agent) for name, agent in startup.items()]))
+    )
     for hook in [h for h in getattr(router, "hooks", ()) if isinstance(h, Lifecycle)]:
         router.remove_hook(hook)  # an app built earlier on this router
     router.add_hook(Lifecycle(on_load, on_evict))
@@ -151,7 +175,9 @@ def build_app(
         """The agents as they are now, not as they were at startup (see the module docstring)."""
         models = {
             name: {
-                **engine.describe(agent, requested, warmed["routing"], warmed["revision"]),
+                **engine.describe(
+                    agent, requested, warmed["routing"], warmed["revision"]
+                ),
                 "warmup_ms": warmed["warmup_ms"],
             }
             for name, (agent, warmed) in list(resident.items())
@@ -164,7 +190,9 @@ def build_app(
         }
 
     app = create_app(router)
-    app.router.routes[:] = [r for r in app.router.routes if getattr(r, "path", None) != "/health"]
+    app.router.routes[:] = [
+        r for r in app.router.routes if getattr(r, "path", None) != "/health"
+    ]
 
     @app.get("/health")
     def health() -> dict[str, Any]:
@@ -172,7 +200,10 @@ def build_app(
         if compile:
             now = graph_counter()
             compiled.update(
-                active=any(optimize.compile_active(agent) for agent, _ in list(resident.values())),
+                active=any(
+                    optimize.compile_active(agent)
+                    for agent, _ in list(resident.values())
+                ),
                 graphs_at_ready=graphs_at_ready,
                 graphs_now=now,
                 recompiled_after_ready=now > graphs_at_ready and not preparing,
@@ -199,11 +230,32 @@ def make_router(device: str | None, model: str) -> Any:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--device", default=None, help="torch device for laya: mps, cpu (default: laya's choice)")
-    parser.add_argument("--model", default="english", help="laya checkpoint to serve: english, multilingual, ...")
-    parser.add_argument("--compile", action="store_true", help="torch.compile the GPU path during warmup")
-    parser.add_argument("--weights", default="fp32", choices=["fp32", "fp16"], help="weight precision on the GPU")
-    parser.add_argument("--require-device", action="store_true", help="exit if a model is not on --device")
+    parser.add_argument(
+        "--device",
+        default=None,
+        help="torch device for laya: mps, cpu (default: laya's choice)",
+    )
+    parser.add_argument(
+        "--model",
+        default="english",
+        help="laya checkpoint to serve: english, multilingual, ...",
+    )
+    parser.add_argument(
+        "--compile",
+        action="store_true",
+        help="torch.compile the GPU path during warmup",
+    )
+    parser.add_argument(
+        "--weights",
+        default="fp32",
+        choices=["fp32", "fp16"],
+        help="weight precision on the GPU",
+    )
+    parser.add_argument(
+        "--require-device",
+        action="store_true",
+        help="exit if a model is not on --device",
+    )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument(
@@ -219,7 +271,10 @@ def main() -> None:
     logging.basicConfig(level=args.log_level.upper(), format="%(name)s: %(message)s")
     unread = [name for name in UNREAD_LAYA_SERVE_VARIABLES if os.environ.get(name)]
     if unread:
-        log.warning("%s: read by laya-serve's launcher, not by this worker; use the flags", ", ".join(unread))
+        log.warning(
+            "%s: read by laya-serve's launcher, not by this worker; use the flags",
+            ", ".join(unread),
+        )
     revisions = engine.record_snapshot_revisions()
     try:
         app = build_app(

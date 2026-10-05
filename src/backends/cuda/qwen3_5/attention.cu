@@ -78,9 +78,11 @@ constexpr int D = 256, BM = 64, BN = 32, THREADS = 128;
 constexpr int LDS = D + 8;  // shared row stride in elements: 528 bytes keeps ldmatrix conflict-free
 constexpr int SMEM_BYTES = (BM + 2 * BN) * LDS * 2;
 
+template <bool Gated>
 __global__ void __launch_bounds__(THREADS)
     flash_kernel(const bf16* __restrict__ q, const bf16* __restrict__ k, const bf16* __restrict__ v, int ldv,
-                 bf16* __restrict__ out, int T, int Hq, int Hk, float scale_log2) {
+                 const bf16* __restrict__ gate, bf16* __restrict__ out, int T, int Hq, int Hk,
+                 float scale_log2) {
     extern __shared__ __align__(16) unsigned char smem[];
     bf16* qs = reinterpret_cast<bf16*>(smem);
     bf16* ks = qs + BM * LDS;
@@ -214,9 +216,37 @@ __global__ void __launch_bounds__(THREADS)
         if (row >= T) continue;
         bf16* dst = out + ((size_t)row * Hq + h) * D + 2 * t;
 #pragma unroll
-        for (int n = 0; n < D / 8; n++)
-            *reinterpret_cast<uint32_t*>(dst + n * 8) = pack_bf16(o[n][2 * r] * inv[r], o[n][2 * r + 1] * inv[r]);
+        for (int n = 0; n < D / 8; n++) {
+            float a = o[n][2 * r] * inv[r], b = o[n][2 * r + 1] * inv[r];
+            if constexpr (Gated) {
+                const size_t idx = ((size_t)row * Hq + h) * D + 2 * t + n * 8;
+                // Match attention -> BF16 store -> BF16 sigmoid -> multiply.
+                // Rounding before the multiply is required even without that store.
+                a = round_bf16(a) * round_bf16(sigmoid(f32(gate[idx])));
+                b = round_bf16(b) * round_bf16(sigmoid(f32(gate[idx + 1])));
+            }
+            *reinterpret_cast<uint32_t*>(dst + n * 8) = pack_bf16(a, b);
+        }
     }
+}
+
+template <bool Gated>
+int launch(const void* q, const void* k, const void* v, int ldv, const void* gate, void* out,
+           int T, int Hq, int Hk, int Dh, float scale, void* stream) {
+    if (Dh != D || Hk <= 0 || Hq <= 0 || Hq % Hk != 0 || ldv % 8 != 0 || ldv < Hk * Dh || T < 0)
+        return cudaErrorInvalidValue;
+    if (T == 0) return cudaSuccess;
+    if (Gated && gate == nullptr) return cudaErrorInvalidValue;
+    // Once per specialization (for the device current at the first call).
+    static const cudaError_t configured = cudaFuncSetAttribute(
+        flash_kernel<Gated>, cudaFuncAttributeMaxDynamicSharedMemorySize, SMEM_BYTES);
+    if (configured != cudaSuccess) return configured;
+    constexpr float LOG2E = 1.4426950408889634f;
+    flash_kernel<Gated><<<dim3((T + BM - 1) / BM, Hq), THREADS, SMEM_BYTES,
+                         static_cast<cudaStream_t>(stream)>>>(
+        static_cast<const bf16*>(q), static_cast<const bf16*>(k), static_cast<const bf16*>(v), ldv,
+        static_cast<const bf16*>(gate), static_cast<bf16*>(out), T, Hq, Hk, scale * LOG2E);
+    return cudaGetLastError();
 }
 
 }  // namespace flash
@@ -244,17 +274,10 @@ extern "C" int cs1_attn_prep(const void* qg, const void* kr, int ld, const void*
 
 extern "C" int cs1_attention(const void* q, const void* k, const void* v, int ldv, void* out, int T, int Hq, int Hk,
                              int Dh, float scale, void* stream) {
-    if (Dh != flash::D || Hk <= 0 || Hq % Hk != 0 || ldv % 8 != 0 || ldv < Hk * Dh || T < 0)
-        return cudaErrorInvalidValue;
-    if (T == 0) return cudaSuccess;
-    // once per process (for the device current at the first call)
-    static const cudaError_t configured = cudaFuncSetAttribute(
-        flash::flash_kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, flash::SMEM_BYTES);
-    if (configured != cudaSuccess) return configured;
-    constexpr float LOG2E = 1.4426950408889634f;
-    flash::flash_kernel<<<dim3((T + flash::BM - 1) / flash::BM, Hq), flash::THREADS, flash::SMEM_BYTES,
-                          static_cast<cudaStream_t>(stream)>>>(
-        static_cast<const bf16*>(q), static_cast<const bf16*>(k), static_cast<const bf16*>(v), ldv,
-        static_cast<bf16*>(out), T, Hq, Hk, scale * LOG2E);
-    return cudaGetLastError();
+    return flash::launch<false>(q, k, v, ldv, nullptr, out, T, Hq, Hk, Dh, scale, stream);
+}
+
+extern "C" int cs1_attention_gated(const void* q, const void* k, const void* v, int ldv, const void* gate,
+                                   void* out, int T, int Hq, int Hk, int Dh, float scale, void* stream) {
+    return flash::launch<true>(q, k, v, ldv, gate, out, T, Hq, Hk, Dh, scale, stream);
 }

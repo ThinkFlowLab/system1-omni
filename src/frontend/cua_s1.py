@@ -21,12 +21,21 @@ LOG = logging.getLogger(__name__)
 
 
 class WorkerServer(ThreadingHTTPServer):
-    daemon_threads = True
+    daemon_threads = False  # Join accepted handlers before retiring GPU buffers.
 
     def __init__(self, address, engine):
         self.engine = engine
         self.inference_lock = threading.Lock()
+        self._engine_closed = False
         super().__init__(address, Handler)
+
+    def server_close(self):
+        super().server_close()
+        if not self._engine_closed:
+            close = getattr(self.engine, "close", None)
+            if close is not None:
+                close()
+            self._engine_closed = True
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -106,9 +115,8 @@ class Handler(BaseHTTPRequestHandler):
             self.server.inference_lock.release()
 
 
-def main():
+def parse_args(argv=None):
     from models.cua_s1.multimodal.graph_runtime import GraphConfig
-    from models.cua_s1.multimodal.model import MultimodalEngine
 
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
@@ -121,36 +129,76 @@ def main():
     p.add_argument(
         "--graph", action="store_true", help="enable segmented CUDA Graph replay"
     )
+    p.add_argument(
+        "--graph-mode",
+        choices=("exact", "rule-bucket", "auto"),
+        help="enable the selected Graph execution mode",
+    )
+    p.add_argument("--graph-bucket-width", type=int, default=None)
     p.add_argument("--graph-max-shapes", type=int, default=8)
     p.add_argument("--graph-max-memory-mib", type=int, default=1024)
-    p.add_argument("--graph-min-uses", type=int, default=2)
+    p.add_argument(
+        "--graph-min-uses",
+        type=int,
+        default=2,
+        help="distinct requests needed before capture",
+    )
     p.add_argument("--graph-max-tokens", type=int, default=2048)
-    args = p.parse_args()
+    p.add_argument("--graph-admission-window", type=int, default=8)
+    p.add_argument("--graph-cooldown-requests", type=int, default=32)
+    p.add_argument("--graph-capture-window", type=int, default=32)
+    p.add_argument("--graph-max-captures", type=int, default=4)
+    p.add_argument("--graph-capture-budget-ms", type=float, default=2000.0)
+    args = p.parse_args(argv)
+    mode = args.graph_mode or ("exact" if args.graph else None)
+    if args.graph_bucket_width is not None and mode not in {"rule-bucket", "auto"}:
+        p.error("--graph-bucket-width requires --graph-mode rule-bucket or auto")
     try:
         graph_config = (
             GraphConfig(
+                mode=mode,
+                bucket_width=64
+                if args.graph_bucket_width is None
+                else args.graph_bucket_width,
                 max_shapes=args.graph_max_shapes,
                 max_bytes=args.graph_max_memory_mib * 1024 * 1024,
                 min_uses=args.graph_min_uses,
                 max_tokens=args.graph_max_tokens,
+                admission_window=args.graph_admission_window,
+                cooldown_requests=args.graph_cooldown_requests,
+                capture_window=args.graph_capture_window,
+                max_captures=args.graph_max_captures,
+                capture_budget_ms=args.graph_capture_budget_ms,
             )
-            if args.graph
+            if mode is not None
             else None
         )
     except ValueError as exc:
         p.error(str(exc))
+    args.graph_config = graph_config
+    return args
+
+
+def main():
+    from models.cua_s1.multimodal.model import MultimodalEngine
+
+    args = parse_args()
     logging.basicConfig(level=logging.INFO)
-    engine = MultimodalEngine(args.base, args.adapter, graph_config=graph_config)
-    engine.warmup()
-    # Bind only after model loading and a representative inference succeed.
-    server = WorkerServer(("127.0.0.1", args.port), engine)
-    LOG.info("multimodal worker ready on 127.0.0.1:%s", args.port)
+    engine = MultimodalEngine(args.base, args.adapter, graph_config=args.graph_config)
+    server = None
     try:
+        engine.warmup()
+        # Bind only after model loading and representative inference succeed.
+        server = WorkerServer(("127.0.0.1", args.port), engine)
+        LOG.info("multimodal worker ready on 127.0.0.1:%s", args.port)
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
-        server.server_close()
+        if server is not None:
+            server.server_close()
+        else:
+            engine.close()
 
 
 if __name__ == "__main__":

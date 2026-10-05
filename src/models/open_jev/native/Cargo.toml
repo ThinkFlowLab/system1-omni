@@ -1,0 +1,19 @@
+[package]
+name = "omni-open-jev-native"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Native Rust/CUDA worker for Open-Jev-27B-v1.1"
+
+[dependencies]
+anyhow = "1.0.100"
+axum = "0.8.8"
+omni-qwen3-5-native = { path = "../../qwen3_5/native" }
+omni-runtime = { path = "../../../runtime" }
+serde_json = { version = "1.0.149", features = ["float_roundtrip", "preserve_order"] }
+tokenizers = { version = "=0.22.2", default-features = false, features = ["onig"] }
+tokio = { version = "1.49.0", features = ["macros", "net", "rt-multi-thread", "sync"] }
+
+[[test]]
+name = "contract"
+path = "../../../../tests/open_jev/contract.rs"

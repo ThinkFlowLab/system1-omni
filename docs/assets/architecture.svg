@@ -1,58 +1,92 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1000" viewBox="0 0 1200 1000" role="img" aria-labelledby="title desc">
-  <title id="title">System1-Omni architecture</title>
-  <desc id="desc">Three layers: a Rust frontend handles serving, System1-Omni model engines own execution, and CUDA and Metal backends provide GPU operations for NVIDIA and Apple GPUs. Requests flow downward and results return through the same boundary.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="1260" viewBox="0 0 1400 1260" role="img" aria-labelledby="s1-arch-title s1-arch-desc">
+  <title id="s1-arch-title">System1-Omni target architecture</title>
+  <desc id="s1-arch-desc">Four logical layers: a Rust frontend forwards requests and returns responses; a planned shared Rust worker runtime separates model-specific preprocessors, a scheduler and batcher, and model-specific postprocessors; Rust model executors load weights, manage device buffer handles, orchestrate forward passes, and select kernels; CUDA C++ kernels and planned Metal shaders perform GPU tensor computation, including projections, attention, normalization, and learned heads. Both backends expose Rust bindings and dispatch. Rust runs CPU processing and scheduling; optional GPU transforms and tensor packing use the same hardware backends. Preprocessors feed the scheduler, which sends prepared batches to an executor, receives batch outputs, and routes results to postprocessors. Model-specific batch adapters pack and unpack supported layouts. The runtime and executor can share a worker process. Existing workers still have model-specific processing pipelines; shared scheduling and dynamic batching are planned.</desc>
   <defs>
-    <marker id="arrow" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto-start-reverse"><path d="M1 1 L7 4.5 L1 8" fill="none" stroke="#65778e" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></marker>
+    <marker id="s1-arch-arrow" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto-start-reverse"><path d="M1 1 L7 4.5 L1 8" fill="none" stroke="#65778e" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></marker>
     <style>
       text { font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
-      .label { font-size: 13px; font-weight: 700; letter-spacing: 2px; fill: #607087; }
-      .heading { font-size: 27px; font-weight: 700; fill: #17283c; }
-      .body { font-size: 18px; fill: #4b6078; }
-      .small { font-size: 15px; fill: #607087; }
-      .wire { fill: none; stroke: #65778e; stroke-width: 2; marker-end: url(#arrow); }
+      .label { font-size: 14px; font-weight: 700; letter-spacing: 2px; fill: #607087; }
+      .heading { font-size: 28px; font-weight: 700; fill: #17283c; }
+      .body { font-size: 20px; fill: #4b6078; }
+      .small { font-size: 17px; fill: #607087; }
+      .module-title { font-size: 22px; font-weight: 700; fill: #296957; }
+      .module-body { font-size: 17px; fill: #4b6078; }
+      .wire { fill: none; stroke: #65778e; stroke-width: 2; marker-end: url(#s1-arch-arrow); }
     </style>
   </defs>
-  <rect width="1200" height="1000" fill="#f5f7fb"/>
-  <text x="64" y="76" font-size="38" font-weight="750" fill="#14253a">System1-Omni</text>
-  <text x="64" y="111" font-size="19" fill="#607087">Shared serving. Model-owned execution. Hardware-specific kernels.</text>
-  <rect x="947" y="49" width="189" height="35" rx="17.5" fill="#e7edf5"/>
-  <text x="1041.5" y="72" text-anchor="middle" font-size="12" font-weight="700" letter-spacing="1.5" fill="#536880">ARCHITECTURE BASELINE</text>
+  <rect width="1400" height="1260" fill="#f5f7fb"/>
+  <text x="64" y="80" font-size="40" font-weight="750" fill="#14253a">System1-Omni</text>
+  <text x="64" y="116" font-size="20" fill="#607087">Shared processing and scheduling. Model-owned execution. Hardware-specific kernels.</text>
+  <text x="64" y="149" class="small">Shared processing and scheduling are planned; existing worker pipelines remain model-specific.</text>
+  <rect x="1090" y="49" width="246" height="36" rx="18" fill="#e7edf5"/>
+  <text x="1213" y="73" text-anchor="middle" font-size="13" font-weight="700" letter-spacing="1.5" fill="#536880">TARGET ARCHITECTURE</text>
 
-  <text x="64" y="163" class="label">01 / SERVING</text>
-  <rect x="64" y="181" width="1072" height="149" rx="18" fill="#ffffff" stroke="#ccd9ec"/>
-  <rect x="64" y="201" width="5" height="109" rx="2.5" fill="#5988d8"/>
-  <text x="96" y="230" class="heading">Rust frontend</text>
-  <text x="96" y="266" class="body">API · request lifecycle · response delivery</text>
-  <text x="96" y="298" class="small">Serving concerns stay independent of model execution.</text>
-  <path d="M580 340 V401" class="wire"/>
-  <path d="M620 401 V340" class="wire"/>
-  <text x="647" y="366" font-size="15" font-weight="600" fill="#4b6078">Small engine interface</text>
-  <text x="647" y="390" class="small">Requests in · results out</text>
+  <text x="64" y="176" class="label">01 / TRANSPORT</text>
+  <rect x="64" y="192" width="1272" height="122" rx="18" fill="#ffffff" stroke="#ccd9ec"/>
+  <rect x="64" y="192" width="1272" height="6" rx="3" fill="#5988d8"/>
+  <text x="96" y="242" class="heading">Rust frontend</text>
+  <text x="96" y="280" class="body">API transport · request forwarding · response delivery</text>
+  <rect x="1148" y="216" width="156" height="30" rx="15" fill="#e7edf5"/>
+  <text x="1226" y="237" text-anchor="middle" font-size="13" font-weight="700" letter-spacing="1.2" fill="#536880">RUST · HOST</text>
+  <path d="M680 326 V382" class="wire"/>
+  <path d="M720 382 V326" class="wire"/>
+  <text x="747" y="349" font-size="17" font-weight="600" fill="#4b6078">Worker interface</text>
+  <text x="747" y="375" class="small">Requests in · responses out</text>
 
-  <text x="64" y="423" class="label">02 / MODEL-OWNED EXECUTION</text>
-  <rect x="64" y="441" width="1072" height="208" rx="18" fill="#ffffff" stroke="#badbd4"/>
-  <rect x="64" y="461" width="5" height="168" rx="2.5" fill="#36a58e"/>
-  <text x="96" y="490" class="heading">System1-Omni models</text>
-  <text x="96" y="524" class="small">Each model owns its complete execution path.</text>
-  <rect x="96" y="550" width="294" height="64" rx="11" fill="#edf7f4"/>
-  <rect x="406" y="550" width="294" height="64" rx="11" fill="#edf7f4"/>
-  <rect x="716" y="550" width="388" height="64" rx="11" fill="#edf7f4"/>
-  <text x="243" y="589" text-anchor="middle" font-size="18" font-weight="600" fill="#296957">Pre / postprocessing</text>
-  <text x="553" y="589" text-anchor="middle" font-size="18" font-weight="600" fill="#296957">Batching · state</text>
-  <text x="910" y="589" text-anchor="middle" font-size="18" font-weight="600" fill="#296957">Execution · kernel selection</text>
+  <text x="64" y="374" class="label">02 / PROCESSING AND SCHEDULING</text>
+  <rect x="64" y="398" width="1272" height="286" rx="18" fill="#ffffff" stroke="#badbd4"/>
+  <rect x="64" y="398" width="1272" height="6" rx="3" fill="#36a58e"/>
+  <text x="96" y="447" class="heading">Shared worker runtime</text>
+  <text x="96" y="479" class="small">Rust runs CPU processing and scheduling; GPU transforms and tensor packing call the backends.</text>
+  <rect x="1020" y="420" width="158" height="30" rx="15" fill="#edf7f4"/>
+  <text x="1099" y="441" text-anchor="middle" font-size="13" font-weight="700" letter-spacing="1.2" fill="#296957">RUST · HOST</text>
+  <rect x="1194" y="420" width="110" height="30" rx="15" fill="#edf7f4"/>
+  <text x="1249" y="441" text-anchor="middle" font-size="13" font-weight="700" letter-spacing="1.2" fill="#296957">PLANNED</text>
+  <rect x="96" y="508" width="344" height="142" rx="12" fill="#edf7f4"/>
+  <rect x="478" y="508" width="444" height="142" rx="12" fill="#edf7f4"/>
+  <rect x="960" y="508" width="344" height="142" rx="12" fill="#edf7f4"/>
+  <text x="118" y="548" class="module-title">Preprocessors</text>
+  <text x="118" y="584" class="module-body">Model-specific input adapters</text>
+  <text x="118" y="618" class="module-body">Tokens · modality transforms</text>
+  <path d="M448 580 H470" class="wire"/>
+  <text x="500" y="548" class="module-title">Scheduler / batcher</text>
+  <text x="500" y="584" class="module-body">Queue · admission · batch budgets</text>
+  <text x="500" y="618" class="module-body">Compatibility · packing · result routing</text>
+  <path d="M930 580 H952" class="wire"/>
+  <text x="982" y="548" class="module-title">Postprocessors</text>
+  <text x="982" y="584" class="module-body">Model-specific output adapters</text>
+  <text x="982" y="618" class="module-body">Interpret outputs · format replies</text>
 
-  <path d="M600 649 V678 H325 V731" class="wire"/>
-  <path d="M600 678 H875 V731" class="wire"/>
-  <text x="64" y="714" class="label">03 / GPU BACKENDS</text>
-  <rect x="64" y="744" width="522" height="168" rx="18" fill="#ffffff" stroke="#d7cdeb"/>
-  <rect x="614" y="744" width="522" height="168" rx="18" fill="#ffffff" stroke="#d7cdeb"/>
-  <rect x="64" y="764" width="5" height="128" rx="2.5" fill="#9272c8"/>
-  <rect x="614" y="764" width="5" height="128" rx="2.5" fill="#9272c8"/>
-  <text x="96" y="794" class="heading">CUDA backend</text>
-  <text x="96" y="830" class="body">High-performance GPU kernels</text>
-  <text x="96" y="875" font-size="16" font-weight="600" fill="#79609f">NVIDIA GPUs</text>
-  <text x="646" y="794" class="heading">Metal backend</text>
-  <text x="646" y="830" class="body">High-performance GPU kernels</text>
-  <text x="646" y="875" font-size="16" font-weight="600" fill="#79609f">Apple GPUs</text>
-  <text x="64" y="957" class="small">Minimal shared utilities · model-owned policy · backend-specific optimization</text>
+  <path d="M680 696 V790" class="wire"/>
+  <path d="M720 790 V696" class="wire"/>
+  <text x="654" y="734" text-anchor="end" font-size="17" font-weight="600" fill="#4b6078">Prepared batches</text>
+  <text x="654" y="760" text-anchor="end" class="small">Model-aware input packing</text>
+  <text x="747" y="734" font-size="17" font-weight="600" fill="#4b6078">Batch outputs</text>
+  <text x="747" y="760" class="small">Unpack and route to requests</text>
+
+  <text x="64" y="782" class="label">03 / MODEL EXECUTION</text>
+  <rect x="64" y="806" width="1272" height="150" rx="18" fill="#ffffff" stroke="#ccd9ec"/>
+  <rect x="64" y="806" width="1272" height="6" rx="3" fill="#5988d8"/>
+  <text x="96" y="856" class="heading">Model executors</text>
+  <text x="96" y="893" class="body">Load weights · manage buffer handles · orchestrate forward passes · select kernels</text>
+  <text x="96" y="928" class="small">Models declare batch constraints; adapters pack inputs and unpack supported layouts.</text>
+  <rect x="1148" y="830" width="156" height="30" rx="15" fill="#e7edf5"/>
+  <text x="1226" y="851" text-anchor="middle" font-size="13" font-weight="700" letter-spacing="1.2" fill="#536880">RUST · HOST</text>
+
+  <path d="M700 956 V988 H365 V1050" class="wire"/>
+  <path d="M700 988 H1035 V1050" class="wire"/>
+  <text x="64" y="1038" class="label">04 / GPU BACKENDS</text>
+  <rect x="64" y="1062" width="608" height="134" rx="18" fill="#ffffff" stroke="#d7cdeb"/>
+  <rect x="728" y="1062" width="608" height="134" rx="18" fill="#ffffff" stroke="#d7cdeb"/>
+  <rect x="64" y="1062" width="608" height="6" rx="3" fill="#9272c8"/>
+  <rect x="728" y="1062" width="608" height="6" rx="3" fill="#9272c8"/>
+  <text x="96" y="1112" class="heading">CUDA backend</text>
+  <text x="96" y="1147" class="body">CUDA C++ kernels · NVIDIA GPUs</text>
+  <text x="96" y="1178" class="small">Rust bindings / dispatch · GPU tensor math and heads</text>
+  <text x="760" y="1112" class="heading">Metal backend</text>
+  <text x="760" y="1147" class="body">Metal shaders · Apple GPUs</text>
+  <text x="760" y="1178" class="small">Rust bindings / dispatch · GPU tensor math and heads</text>
+  <rect x="1194" y="1085" width="110" height="30" rx="15" fill="#f2edf9"/>
+  <text x="1249" y="1106" text-anchor="middle" font-size="13" font-weight="700" letter-spacing="1.2" fill="#79609f">PLANNED</text>
+  <text x="64" y="1236" class="small">Rust orchestrates host work; CUDA / Metal run device kernels. Logical layers can share one worker process.</text>
 </svg>

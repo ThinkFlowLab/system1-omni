@@ -12,8 +12,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// Bumped whenever a signature below changes.
-#define CS1_ABI_VERSION 3
+// Bumped whenever the required interface below changes.
+#define CS1_ABI_VERSION 4
 
 #ifdef __cplusplus
 extern "C" {
@@ -80,6 +80,12 @@ int cs1_attn_prep(const void* qg, const void* kr, int ld, const void* qw, const 
 // [T, Hk, Dh] in rows of ldv; out [T, Hq, Dh].
 int cs1_attention(const void* q, const void* k, const void* v, int ldv, void* out, int T, int Hq,
                   int Hk, int Dh, float scale, void* stream);
+
+// Same attention, with the sigmoid gate fused into its epilogue. gate [T, Hq, Dh].
+// Both the attention result and sigmoid are rounded to bfloat16 before multiplying,
+// exactly as cs1_attention followed by cs1_sigmoid_gate. gate must be non-null if T > 0.
+int cs1_attention_gated(const void* q, const void* k, const void* v, int ldv, const void* gate,
+                        void* out, int T, int Hq, int Hk, int Dh, float scale, void* stream);
 
 // x = x * sigmoid(gate), n elements.
 int cs1_sigmoid_gate(void* x, const void* gate, size_t n, void* stream);

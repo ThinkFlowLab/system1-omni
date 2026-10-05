@@ -31,7 +31,7 @@ import torch  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from env import header, noise_problems  # noqa: E402
+from env import header, read_workloads, refuse_if_noisy  # noqa: E402
 
 STAGES = ["encode", "collate", "dispatch", "gpu_wait", "copy_back", "decode", "other"]
 
@@ -81,7 +81,10 @@ class StageTimer:
             if agent.device.type == "mps":
                 torch.mps.synchronize()
             t2 = time.perf_counter()
-            out = logits.float().cpu().numpy(), torch.softmax(act.float(), -1).cpu().numpy()
+            out = (
+                logits.float().cpu().numpy(),
+                torch.softmax(act.float(), -1).cpu().numpy(),
+            )
             t3 = time.perf_counter()
             self._add("dispatch", (t1 - t0) * 1000)
             self._add("gpu_wait", (t2 - t1) * 1000)
@@ -100,7 +103,9 @@ class StageTimer:
             torch.mps.synchronize()
         stages, self.current = self.current, None
         stages["wall"] = (time.perf_counter() - started) * 1000
-        stages["other"] = stages["wall"] - sum(stages.get(s, 0.0) for s in STAGES if s != "other")
+        stages["other"] = stages["wall"] - sum(
+            stages.get(s, 0.0) for s in STAGES if s != "other"
+        )
         return stages, result
 
 
@@ -124,20 +129,17 @@ def main():
     parser.add_argument("--stage-workloads", nargs="+", default=["W1", "W3", "W5"])
     parser.add_argument("-n", type=int, default=100, help="timed requests per point")
     parser.add_argument("--discard", type=int, default=10)
-    parser.add_argument("--sweep-words", type=int, nargs="+", default=[1, 8, 24, 56, 120, 250, 380])
+    parser.add_argument(
+        "--sweep-words", type=int, nargs="+", default=[1, 8, 24, 56, 120, 250, 380]
+    )
     parser.add_argument("--ops-requests", type=int, default=20)
     parser.add_argument("--out", default=str(HERE / "results"))
     parser.add_argument("--max-load", type=float, default=2.0)
     args = parser.parse_args()
 
-    problems = noise_problems(args.max_load)
-    if problems and args.run != "feasibility":
-        sys.exit("refusing a measured run: " + "; ".join(problems))
-    for problem in problems:
-        print(f"warning: {problem}", file=sys.stderr)
+    problems = refuse_if_noisy(args.max_load, args.run != "feasibility")
 
-    with open(args.workloads) as f:
-        workloads = {w["id"]: w for w in (json.loads(line) for line in f if line.strip())}
+    workloads = read_workloads(args.workloads)
     route = workloads["W1"]["questions"]
 
     agent = laya.load(args.checkpoint, device=args.device)
@@ -187,12 +189,24 @@ def main():
             )
             print(f"| {words} | {tokens} | {p50:.1f} |")
         a, b, r2 = fit([t for t, _ in points], [p for _, p in points])
-        emit({"type": "fit", "a_ms": round(a, 3), "b_ms_per_token": round(b, 5), "r2": round(r2, 4)})
+        emit(
+            {
+                "type": "fit",
+                "a_ms": round(a, 3),
+                "b_ms_per_token": round(b, 5),
+                "r2": round(r2, 4),
+            }
+        )
         print(f"\nwall ≈ {a:.1f} ms + {b:.3f} ms/token × tokens (R² {r2:.3f})")
 
         print("\n## Stages (median ms per request)\n")
         columns = ["wall", *STAGES, "gpu_exec"]
-        print("| workload | tokens | rows | " + " | ".join(columns) + " |\n|" + "---|" * (len(columns) + 3))
+        print(
+            "| workload | tokens | rows | "
+            + " | ".join(columns)
+            + " |\n|"
+            + "---|" * (len(columns) + 3)
+        )
         for wid in args.stage_workloads:
             w = workloads[wid]
             for _ in range(args.discard):
@@ -211,15 +225,21 @@ def main():
                     "tokens": tokens,
                     "rows": len(w["questions"]),
                     "median_ms": {k: round(v, 3) for k, v in medians.items()},
-                    "samples": {k: [round(x, 3) for x in v] for k, v in per_stage.items()},
+                    "samples": {
+                        k: [round(x, 3) for x in v] for k, v in per_stage.items()
+                    },
                 }
             )
-            cells = " | ".join(f"{medians[c]:.1f}" if c in medians else "" for c in columns)
+            cells = " | ".join(
+                f"{medians[c]:.1f}" if c in medians else "" for c in columns
+            )
             print(f"| {wid} | {tokens} | {len(w['questions'])} | {cells} |")
 
         print("\n## Host operators for W1 (torch.profiler, CPU)\n")
         w = workloads["W1"]
-        with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU]) as prof:
+        with torch.profiler.profile(
+            activities=[torch.profiler.ProfilerActivity.CPU]
+        ) as prof:
             for _ in range(args.ops_requests):
                 timer.request(w["state"], w["questions"])
         events = [e for e in prof.key_averages() if e.key.startswith("aten::")]
@@ -235,7 +255,9 @@ def main():
                     {
                         "op": e.key,
                         "calls_per_request": e.count / args.ops_requests,
-                        "self_cpu_ms_per_request": e.self_cpu_time_total / 1000 / args.ops_requests,
+                        "self_cpu_ms_per_request": e.self_cpu_time_total
+                        / 1000
+                        / args.ops_requests,
                     }
                     for e in top
                 ],

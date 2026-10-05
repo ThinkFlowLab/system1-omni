@@ -71,6 +71,17 @@ def number(value):
     )
 
 
+WIRE_DECIMALS = 4  # workers round probabilities on the wire to four decimal places
+
+
+def sum_allowance(count):
+    """How far `count` wire probabilities may miss a normalized sum: each rounded value
+    carries up to half a decimal step, so the allowance grows with the label count. A
+    flat 1e-4 rejected four-value distributions summing to 0.9999 at the float boundary
+    (PR #40, first GPU run)."""
+    return count * 0.5 * 10**-WIRE_DECIMALS + 1e-9
+
+
 def read_answers(case, payload):
     """Validate wire results and normalize probabilities by label, never by order."""
     answers = payload["answers"]
@@ -97,7 +108,8 @@ def read_answers(case, payload):
             value = answer[kind]
         if any(not number(p) or not 0 <= p <= 1 for p in probabilities.values()):
             raise ValueError("probabilities must be finite and in [0, 1]")
-        if not math.isclose(sum(probabilities.values()), 1, abs_tol=1e-4):
+        total = math.fsum(probabilities.values())
+        if abs(total - 1) > sum_allowance(len(probabilities)):
             raise ValueError("probabilities must sum to one")
         if kind == "choice":
             if value not in probabilities or probabilities[value] != max(

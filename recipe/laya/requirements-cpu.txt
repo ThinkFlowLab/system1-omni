@@ -1,0 +1,10 @@
+# Linux x86_64 / Python 3.12 CPU walkthrough; install torch from the CPU index first.
+laya[serve]==0.3.20
+torch==2.8.0+cpu
+transformers==4.55.0
+tokenizers==0.21.4
+safetensors==0.8.0
+huggingface-hub==0.36.2
+numpy==2.5.3
+fastapi==0.141.1
+uvicorn==0.54.0

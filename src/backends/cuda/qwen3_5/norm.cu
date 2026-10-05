@@ -46,6 +46,32 @@ __global__ void __launch_bounds__(NORM_THREADS)
         out[i] = to_bf16(f32(residual[i]) * inv * (1.f + f32(w[i])));
 }
 
+// Keep each thread's rounded residuals in registers across the reduction. Retain
+// the scalar kernel's element assignment, sum order, and 256-thread block.
+template <int D>
+__global__ void __launch_bounds__(NORM_THREADS)
+    add_rms_norm_cached_kernel(bf16* __restrict__ residual, const bf16* __restrict__ delta,
+                               const bf16* __restrict__ w, bf16* __restrict__ out, float eps) {
+    __shared__ float scratch[32];
+    const size_t row = (size_t)blockIdx.x * D;
+    float r[D / NORM_THREADS];
+    float ss = 0.f;
+#pragma unroll
+    for (int i = 0; i < D / NORM_THREADS; i++) {
+        const int col = threadIdx.x + i * NORM_THREADS;
+        const bf16 value = to_bf16(f32(residual[row + col]) + f32(delta[row + col]));
+        residual[row + col] = value;
+        r[i] = f32(value);
+        ss += r[i] * r[i];
+    }
+    const float inv = rsqrtf(block_sum(ss, scratch) / D + eps);
+#pragma unroll
+    for (int i = 0; i < D / NORM_THREADS; i++) {
+        const int col = threadIdx.x + i * NORM_THREADS;
+        out[row + col] = to_bf16(r[i] * inv * (1.f + f32(w[col])));
+    }
+}
+
 // Qwen3_5RMSNormGated with D = 128, one warp per row: the normalized value is
 // rounded to bfloat16, multiplied by w in bfloat16, then by silu(z) in float32.
 __global__ void gated_rms_norm_kernel(const bf16* __restrict__ x, const bf16* __restrict__ z, int ldz,
@@ -87,6 +113,17 @@ extern "C" int cs1_rms_norm(const void* x, const void* w, void* out, int rows, i
 extern "C" int cs1_add_rms_norm(void* residual, const void* delta, const void* w, void* out, int rows, int D,
                                 float eps, void* stream) {
     if (rows <= 0) return cudaSuccess;
+    switch (D) {
+#define CACHED_NORM(width) \
+    case width: \
+        add_rms_norm_cached_kernel<width><<<rows, NORM_THREADS, 0, static_cast<cudaStream_t>(stream)>>>( \
+            static_cast<bf16*>(residual), static_cast<const bf16*>(delta), static_cast<const bf16*>(w), \
+            static_cast<bf16*>(out), eps); \
+        return cudaGetLastError()
+        CACHED_NORM(2560);
+        CACHED_NORM(5120);
+#undef CACHED_NORM
+    }
     add_rms_norm_kernel<<<rows, NORM_THREADS, 0, static_cast<cudaStream_t>(stream)>>>(
         static_cast<bf16*>(residual), static_cast<const bf16*>(delta), static_cast<const bf16*>(w),
         static_cast<bf16*>(out), D, eps);
