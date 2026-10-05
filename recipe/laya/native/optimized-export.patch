@@ -1,0 +1,105 @@
+--- a/src/backends/cuda/tools/export.py
++++ b/src/backends/cuda/tools/export.py
+@@ -17,6 +17,18 @@
+
+ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "kernels"))
+ import laya_tilelang as kernels
++
++QKV_DISPATCH = """extern "C" int laya_qkv(void** p,int B,int L,int M,cudaStream_t stream) {
++  if(B==1 && L<=64)return laya_qkv_short(p,B,L,M,stream);
++  return laya_qkv_full(p,B,L,M,stream);
++}
++"""
++
++OUT_DISPATCH = """extern "C" int laya_out(void** p,int B,int L,int M,cudaStream_t stream) {
++  if(B==1 && L<=64)return laya_out_short(p,B,L,M,stream);
++  return laya_out_full(p,B,L,M,stream);
++}
++"""
+
+ SLOT = re.compile(
+     r"\(\(\(TVMFFIAny\*\)stack_ffi_any\)\[(\d+)\]\.v_(?:int64|ptr)\) = (.*);"
+@@ -48,6 +60,21 @@
+ def integer(value):
+     value = value.replace("(int64_t)", "").replace("(", "").replace(")", "")
+     return int(value)
++
++
++def patch_geglu_static_registers(body):
++    """Remove fixed register reservations only from the accepted BN32 lowering."""
++    expected = "1ed96990542c07b58dca419dafcc45c6163bb9b6fff04ffca5ecedb2a34e921c"
++    if hashlib.sha256(body.encode()).hexdigest() != expected:
++        raise ValueError("long GEGLU BN32 lowering changed")
++    for call in (
++        "    tl::warpgroup_reg_dealloc<24>();\n",
++        "    tl::warpgroup_reg_alloc<240>();\n",
++    ):
++        if body.count(call) != 1:
++            raise ValueError("long GEGLU register calls changed")
++        body = body.replace(call, "", 1)
++    return body
+
+
+ def export(name, kernel):
+@@ -133,6 +160,8 @@
+     body = source[source.index('extern "C" __global__') :].replace(
+         "main_kernel", symbol
+     )
++    if name == "geglu":
++        body = patch_geglu_static_registers(body)
+     # TileLang reuses Q_s for O_s. Its generated wait is inside the key loop,
+     # so zero-key rows can overwrite Q_s while the asynchronous Q load is live.
+     # Wait before entering producer/consumer branches, including zero iterations.
+@@ -163,16 +192,20 @@
+             for identifier in re.findall(r"\b[A-Za-z_]\w*\b", value):
+                 if identifier not in allowed and not identifier.endswith("_desc"):
+                     raise ValueError(("unknown host symbol", identifier))
+-    wrapper = f"""extern "C" int laya_{name}(void** p,int B,int L,int M,cudaStream_t stream) {{
++    dispatch = ""
++    if name == "geglu":
++        dispatch = "  if(B==1 && M<=64)return laya_geglu_short(p,B,L,M,stream);\n"
++    wrapper_name = {"qkv": "qkv_full", "out": "out_full"}.get(name, name)
++    wrapper = f"""extern "C" int laya_{wrapper_name}(void** p,int B,int L,int M,cudaStream_t stream) {{
+   if(B<1 || B>16 || L<16 || L>512 || L%16 || M!=B*L)return -1;
+-{chr(10).join(bindings)}
++{dispatch}{chr(10).join(bindings)}
+ {chr(10).join(descriptors)}
+   {symbol}<<<dim3({','.join(grid)}),dim3({','.join(map(str,block))}),{shared_memory},stream>>>({','.join(args)});
+   return static_cast<int>(cudaGetLastError());
+ }}
+ """
+     init = ""
+-    if shared_memory > 49152:
++    if shared_memory >= 49152:
+         init = f"if(auto e=cudaFuncSetAttribute({symbol},cudaFuncAttributeMaxDynamicSharedMemorySize,{shared_memory});e!=cudaSuccess)return static_cast<int>(e);"
+     metadata = {
+         "name": name,
+@@ -207,14 +240,17 @@
+         "rope": rope.build(16, 64, 1, 8),
+         "rope_original": kernels.rope_kernel(16, 64),
+         "qkv": kernels.gemm_kernel(3072, 1024),
++        "qkv_short": kernels.gemm_kernel(3072, 1024, bn=64),
+         "attn_full": kernels.attn_kernel(None, None, 16, 64),
+     }
+     if not args.probe_only:
+         exports.update(
+             {
+                 "out": kernels.gemm_kernel(1024, 1024),
+-                "geglu": kernels.gemm_geglu_kernel(2624, 1024),
+-                "down": kernels.gemm_kernel(1024, 2624),
++                "out_short": kernels.gemm_kernel(1024, 1024, bm=64, bn=64),
++                "geglu_short": kernels.gemm_geglu_kernel(2624, 1024, bn=32),
++                "geglu": kernels.gemm_geglu_kernel(2624, 1024, bn=32),
++                "down": kernels.gemm_kernel(1024, 2624, bm=64, bn=64),
+                 "addln": kernels.add_ln_kernel(1024),
+                 "addln_bias": kernels.add_ln_kernel(1024, bias=True),
+                 "ln_bias": kernels.add_ln_kernel(1024, residual=False, bias=True),
+@@ -255,6 +291,8 @@
+         + preamble
+         + "\n"
+         + "\n".join(bodies)
++        + QKV_DISPATCH
++        + ("" if args.probe_only else OUT_DISPATCH)
+         + '\nextern "C" int laya_kernels_init(){'
+         + "".join(inits)
+         + "return 0;}\n"

@@ -27,6 +27,7 @@ exclude_docs: |
   !/docs/assets/**
   !/recipe/**/*.md
   !/src/frontend/README.md
+  !/src/runtime/README.md
   !/assets/**
   **/.*/**
 
@@ -46,11 +47,25 @@ markdown_extensions:
 
 nav:
   - Overview: README.md
+  - First decision on CPU: docs/getting-started.md
+  - 中文入口: docs/getting-started.zh.md
+  - Architecture and contracts: docs/architecture.md
   - Supported models and hardware: docs/supported-models.md
   - Frontend: src/frontend/README.md
+  - Native runtime: src/runtime/README.md
+  - Optimization notes:
+      - docs/blog/README.md
+      - Open-Jev on H200: docs/blog/2026-10-05-open-jev-optimization.md
   - Recipes:
       - recipe/README.md
       - Laya text worker: recipe/laya/README.md
+      - Laya native CUDA worker: recipe/laya/native/README.md
+      - Laya CUDA validation: recipe/laya/native/VALIDATION.md
+      - Laya CPU reproduction and demo: recipe/laya/validation.md
+      - Laya on Apple Silicon: recipe/laya/apple-silicon.md
       - Cua-S1 text worker: recipe/cua_s1/text.md
       - Cua-S1 native text worker: recipe/cua_s1/native.md
+      - Open-Jev native text worker: recipe/open_jev/native.md
+      - Open-Jev H200 validation: recipe/open_jev/validation.md
+      - CLM stub-encoder contract: recipe/clm/README.md
   - Contributing: CONTRIBUTING.md

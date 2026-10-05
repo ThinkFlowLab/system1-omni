@@ -32,7 +32,9 @@ def _served_class() -> type:
             if self.paths is None:
                 return self.eager(input_ids, *args, **kwargs)
             whole, encoder_only = self.paths
-            return (whole if input_ids.shape[0] == 1 else encoder_only)(input_ids, *args, **kwargs)
+            return (whole if input_ids.shape[0] == 1 else encoder_only)(
+                input_ids, *args, **kwargs
+            )
 
     return Served
 
@@ -102,7 +104,9 @@ def apply(agent: Any, *, fp16: bool, compile: bool) -> bool:
 
 def compile_active(agent: Any) -> bool:
     """Whether requests to this agent run the compiled paths now. False on the CPU, also after a fallback."""
-    return getattr(getattr(agent, "model", None), "paths", None) is not None and not _on_cpu(agent)
+    return getattr(
+        getattr(agent, "model", None), "paths", None
+    ) is not None and not _on_cpu(agent)
 
 
 def compiled_graphs() -> int:

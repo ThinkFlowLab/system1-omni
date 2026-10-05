@@ -1,0 +1,36 @@
+
+running 6 tests
+test flash_attention_matches_float64_reference ... attention t = 1, amplitude 8: largest relative difference 0.00e0
+attention t = 63, amplitude 8: largest relative difference 3.46e-3
+attention t = 65, amplitude 0.5: largest relative difference 4.16e-3
+attention t = 139, amplitude 2: largest relative difference 4.85e-3
+attention t = 700, amplitude 8: largest relative difference 3.38e-3
+attention t = 2048, amplitude 0.5: largest relative difference 4.51e-3
+ok
+test fused_attention_gate_matches_separate_pass ... ok
+test gated_delta_rule_matches_recurrent_reference ... gated delta t = 1, amplitude 1: largest difference 3.74e-4, largest |reference| 8.39e-2
+gated delta t = 16, amplitude 1: largest difference 4.87e-4, largest |reference| 8.39e-2
+gated delta t = 17, amplitude 1: largest difference 4.87e-4, largest |reference| 8.39e-2
+gated delta t = 32, amplitude 1: largest difference 5.20e-4, largest |reference| 8.41e-2
+gated delta t = 33, amplitude 1: largest difference 5.20e-4, largest |reference| 8.41e-2
+gated delta t = 63, amplitude 1: largest difference 5.60e-4, largest |reference| 8.53e-2
+gated delta t = 64, amplitude 1: largest difference 5.60e-4, largest |reference| 8.53e-2
+gated delta t = 65, amplitude 1: largest difference 5.80e-4, largest |reference| 8.53e-2
+gated delta t = 107, amplitude 1: largest difference 5.80e-4, largest |reference| 8.53e-2
+gated delta t = 127, amplitude 1: largest difference 5.80e-4, largest |reference| 8.53e-2
+gated delta t = 128, amplitude 1: largest difference 5.80e-4, largest |reference| 8.53e-2
+gated delta t = 129, amplitude 1: largest difference 5.80e-4, largest |reference| 8.53e-2
+gated delta t = 150, amplitude 1: largest difference 5.80e-4, largest |reference| 8.55e-2
+gated delta t = 107, amplitude 1: largest difference 7.30e-4, largest |reference| 9.12e-2
+gated delta t = 936, amplitude 1: largest difference 9.49e-4, largest |reference| 9.56e-2
+gated delta t = 936, amplitude 1: largest difference 9.66e-4, largest |reference| 9.69e-2
+gated delta t = 3399, amplitude 1: largest difference 1.15e-3, largest |reference| 9.60e-2
+gated delta t = 65, amplitude 0.000000001: largest difference 2.26e-14, largest |reference| 4.05e-12
+gated delta t = 65, amplitude 0.000000000000000001: largest difference 2.43e-32, largest |reference| 4.05e-30
+gated delta t = 65, amplitude 0: largest difference 0.00e0, largest |reference| 0.00e0
+ok
+test graph_replay_reads_updated_inputs_after_failed_capture ... ok
+test residual_rms_norm_matches_rounded_reference ... ok
+test silu_mul_matches_rounded_reference ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.85s

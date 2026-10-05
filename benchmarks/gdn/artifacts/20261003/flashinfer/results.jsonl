@@ -1,0 +1,30 @@
+{"kind": "cpu_probe", "library": "/home/hsliu2/tmp/system1-omni-jev-single-candidate/profile/jev-single-candidate-silu-pack8-20261002/harness/build/optimized/libqwen3_5_cuda.so", "library_sha256": "e033315d4c67127809e62f41d991a149ac8ee0ce81827997af063815fd00d435", "shapes": [107, 936, 3399], "configs": ["native", "flashinfer_fused", "flashinfer_cp"], "device_execution": false}
+{"kind": "hardware", "name": "NVIDIA L20X", "sm_count": 132, "capability": [9, 0], "uuid": "cbf66259-f4ab-0ede-1811-82037dde5924", "visibility": "2", "pid": 549291, "torch": "2.13.0+cu129"}
+{"kind": "feasibility", "tokens": 107, "config": "native", "preparation_seconds": 0.20153669267892838, "max_abs": 0.0, "relative_l2": 0.0, "passed": true}
+{"kind": "feasibility", "tokens": 107, "config": "flashinfer_fused", "preparation_seconds": 16.483370064757764, "max_abs": 0.00146484375, "relative_l2": 0.003793163690716028, "passed": true}
+{"kind": "feasibility", "tokens": 107, "config": "flashinfer_cp", "preparation_seconds": 6.6084970608353615, "max_abs": 0.00146484375, "relative_l2": 0.0038435247261077166, "passed": true}
+{"kind": "measurement", "tokens": 107, "config": "native", "pass": 1, "iterations": 50, "device_ms_per_call": 0.051557760238647464, "wall_ms_per_call": 0.052070280000000004, "max_abs": 0.0}
+{"kind": "measurement", "tokens": 107, "config": "flashinfer_fused", "pass": 1, "iterations": 50, "device_ms_per_call": 0.41863361358642576, "wall_ms_per_call": 0.41896896, "max_abs": 0.00146484375}
+{"kind": "measurement", "tokens": 107, "config": "flashinfer_cp", "pass": 1, "iterations": 50, "device_ms_per_call": 0.8341561889648438, "wall_ms_per_call": 0.83451756, "max_abs": 0.00146484375}
+{"kind": "measurement", "tokens": 107, "config": "flashinfer_cp", "pass": 2, "iterations": 50, "device_ms_per_call": 0.815771484375, "wall_ms_per_call": 0.81613174, "max_abs": 0.00146484375}
+{"kind": "measurement", "tokens": 107, "config": "flashinfer_fused", "pass": 2, "iterations": 50, "device_ms_per_call": 0.4374502563476563, "wall_ms_per_call": 0.4379203, "max_abs": 0.00146484375}
+{"kind": "measurement", "tokens": 107, "config": "native", "pass": 2, "iterations": 50, "device_ms_per_call": 0.05144896030426025, "wall_ms_per_call": 0.05175709999999999, "max_abs": 0.0}
+{"kind": "feasibility", "tokens": 936, "config": "native", "preparation_seconds": 0.0006458759307861328, "max_abs": 0.0, "relative_l2": 0.0, "passed": true}
+{"kind": "feasibility", "tokens": 936, "config": "flashinfer_fused", "preparation_seconds": 0.0012157773599028587, "max_abs": 0.00146484375, "relative_l2": 0.004750747699290514, "passed": true}
+{"kind": "feasibility", "tokens": 936, "config": "flashinfer_cp", "preparation_seconds": 0.0014576511457562447, "max_abs": 0.00146484375, "relative_l2": 0.004768683575093746, "passed": true}
+{"kind": "measurement", "tokens": 936, "config": "native", "pass": 1, "iterations": 50, "device_ms_per_call": 0.24776895523071288, "wall_ms_per_call": 0.24821914, "max_abs": 0.0}
+{"kind": "measurement", "tokens": 936, "config": "flashinfer_fused", "pass": 1, "iterations": 50, "device_ms_per_call": 0.43887359619140626, "wall_ms_per_call": 0.43923444000000006, "max_abs": 0.00146484375}
+{"kind": "measurement", "tokens": 936, "config": "flashinfer_cp", "pass": 1, "iterations": 50, "device_ms_per_call": 0.8463705444335937, "wall_ms_per_call": 0.84678924, "max_abs": 0.00146484375}
+{"kind": "measurement", "tokens": 936, "config": "flashinfer_cp", "pass": 2, "iterations": 50, "device_ms_per_call": 0.8269427490234375, "wall_ms_per_call": 0.8273754, "max_abs": 0.00146484375}
+{"kind": "measurement", "tokens": 936, "config": "flashinfer_fused", "pass": 2, "iterations": 50, "device_ms_per_call": 0.43020416259765626, "wall_ms_per_call": 0.43054294, "max_abs": 0.00146484375}
+{"kind": "measurement", "tokens": 936, "config": "native", "pass": 2, "iterations": 50, "device_ms_per_call": 0.24784320831298828, "wall_ms_per_call": 0.24814956, "max_abs": 0.0}
+{"kind": "feasibility", "tokens": 3399, "config": "native", "preparation_seconds": 0.012499378994107246, "max_abs": 0.0, "relative_l2": 0.0, "passed": true}
+{"kind": "feasibility", "tokens": 3399, "config": "flashinfer_fused", "preparation_seconds": 0.0016858763992786407, "max_abs": 0.00146484375, "relative_l2": 0.004838777706027031, "passed": true}
+{"kind": "feasibility", "tokens": 3399, "config": "flashinfer_cp", "preparation_seconds": 0.0016576843336224556, "max_abs": 0.001953125, "relative_l2": 0.00486042769625783, "passed": true}
+{"kind": "measurement", "tokens": 3399, "config": "native", "pass": 1, "iterations": 50, "device_ms_per_call": 0.8014905548095703, "wall_ms_per_call": 0.8019471, "max_abs": 0.0}
+{"kind": "measurement", "tokens": 3399, "config": "flashinfer_fused", "pass": 1, "iterations": 50, "device_ms_per_call": 0.4256230545043945, "wall_ms_per_call": 0.42592638, "max_abs": 0.00146484375}
+{"kind": "measurement", "tokens": 3399, "config": "flashinfer_cp", "pass": 1, "iterations": 50, "device_ms_per_call": 0.8378540802001954, "wall_ms_per_call": 0.8381907200000001, "max_abs": 0.001953125}
+{"kind": "measurement", "tokens": 3399, "config": "flashinfer_cp", "pass": 2, "iterations": 50, "device_ms_per_call": 0.8562751770019531, "wall_ms_per_call": 0.85660518, "max_abs": 0.001953125}
+{"kind": "measurement", "tokens": 3399, "config": "flashinfer_fused", "pass": 2, "iterations": 50, "device_ms_per_call": 0.5074425506591796, "wall_ms_per_call": 0.50796156, "max_abs": 0.00146484375}
+{"kind": "measurement", "tokens": 3399, "config": "native", "pass": 2, "iterations": 50, "device_ms_per_call": 0.7997011566162109, "wall_ms_per_call": 0.8000645799999999, "max_abs": 0.0}
+{"kind": "complete", "pid": 549291}

@@ -176,6 +176,32 @@ class ValidationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             bench.read_answers(CASES[2], payload)
 
+    def test_rounded_probabilities_at_the_sum_boundary(self):
+        """PR #40's first GPU run: the worker rounds probabilities to four decimals, and
+        four rounded values legitimately miss 1 by a full rounding step — a flat 1e-4
+        tolerance rejected both vectors below at the floating-point boundary."""
+        case = {
+            "id": "mmlu-test-10312",
+            "request": {
+                "questions": {"q": {"type": "choice", "criteria": ["A", "B", "C", "D"]}}
+            },
+            "expected": {},
+        }
+        for probabilities in (
+            {"A": 0.1099, "B": 0.1211, "C": 0.5589, "D": 0.2100},
+            {"A": 0.1130, "B": 0.5135, "C": 0.3151, "D": 0.0583},
+        ):
+            answer = {
+                "choice": max(probabilities, key=probabilities.get),
+                "probabilities": probabilities,
+            }
+            bench.read_answers(case, {"answers": {"q": answer}})
+        off = {"A": 0.4, "B": 0.3, "C": 0.2, "D": 0.09}
+        with self.assertRaises(ValueError):
+            bench.read_answers(
+                case, {"answers": {"q": {"choice": "A", "probabilities": off}}}
+            )
+
     def test_duplicate_ids(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "requests.jsonl"
