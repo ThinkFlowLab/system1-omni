@@ -1,0 +1,9 @@
+rustc 1.94.0 (4a4ef493e 2026-03-02)
+cargo 1.94.0 (85eff7c80 2026-01-15)
+fmt=PASS
+clippy=PASS
+frontend_tests=PASS
+rust_tests=PASS
+release_build=PASS
+srun: error: cpu-2: task 0: Exited with exit code 1
+srun: Terminating StepId=184529.0

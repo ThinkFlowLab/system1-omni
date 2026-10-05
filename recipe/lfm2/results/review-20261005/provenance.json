@@ -1,0 +1,65 @@
+{
+  "date_utc": "2026-10-05",
+  "tested_commit": "3e2cbcf9f6e6f2db05642739efd46f84b9db4d29",
+  "base_commit": "f594d7dfc4c2bef812e23f7ed73573be9625b287",
+  "source_archive_sha256": "f32bc518e8e60e5fc66c67087d2234d7fed34a46fccfe865e6de32a235784b68",
+  "source_files_sha256": {
+    "recipe/lfm2/bench_worker.py": "97d7af40d42f1323dd340cd5cb286aad893e72e5f675d0cba0d6b8d8096de56d",
+    "recipe/lfm2/compare_with_frontend.py": "5002107bbd4bf0c79656c2dfa4ffbe8d96b31f27ab9979f7b3cc9e5c6697f42f",
+    "recipe/lfm2/verify.py": "1f6e4ba6dd2d2bb3dd7abeecb67aec49df51eed600d7b80f7eb643acf3bbc7f2",
+    "src/models/lfm2/engine.py": "2ee59f35c84641587d73107f1297f5790febb1144a0b818410e583efdffff521",
+    "src/models/lfm2/worker.py": "d0f873bb22532e7727e265a63675069b1711a76ef233427356072b7a6852e851",
+    "tests/lfm2/test_lfm2_engine.py": "8e6ac8ffe274d7adac279ee5f6e424150613fb3bc338fa0a7ca3ae7e06be4635",
+    "tests/lfm2/test_lfm2_worker.py": "fa34bd2943efc710862f4eb6f86f8b014475c3fe5b87f1bcebc279f7ecd5becf"
+  },
+  "jobs": {
+    "184529": {
+      "state": "FAILED",
+      "exit_code": "1:0",
+      "elapsed": "00:01:16",
+      "node": "cpu-2"
+    },
+    "184536": {
+      "state": "COMPLETED",
+      "exit_code": "0:0",
+      "elapsed": "00:00:31",
+      "node": "cpu-2"
+    },
+    "184541": {
+      "state": "COMPLETED",
+      "exit_code": "0:0",
+      "elapsed": "00:00:54",
+      "node": "gpu-l40-1"
+    }
+  },
+  "hardware": {
+    "cpu_node": "cpu-2",
+    "gpu_node": "gpu-l40-1",
+    "gpu": "NVIDIA L40S",
+    "gpu_memory_bytes": 50867666944,
+    "compute_capability": [
+      8,
+      9
+    ],
+    "driver": "580.178.04"
+  },
+  "pins": {
+    "python": "3.12.14",
+    "torch": "2.14.0+cu130",
+    "transformers": "5.17.0",
+    "cuda_runtime": "13.0",
+    "rust": "1.94.0",
+    "rust_container": "rust-1.94.0-bookworm.sqsh",
+    "model_repo": "LiquidAI/LFM2.5-350M",
+    "model_revision": "9e6c6ccf47cd318696e137d381a7ded8fe4df09f",
+    "reference_repo": "notnotsamuel/LFM2.5-350M-RLCD",
+    "reference_revision": "deb589d803d141cabd158ef55f6617b128529f36",
+    "dtype": "float16"
+  },
+  "report_source_sha256": {
+    "verify.json": "93d97cac187141ab91fba061b5286ea49caf41e3bff7171ae801a8e2bd182488",
+    "frontend.json": "ff0176d02418b14a3dbd4bfba502f0a5ef5816a43047d7ceaa9c746aee8c4129",
+    "cpu-184536.tar": "6693f40f201802c8d4593f9041a1fceeaf5d87dd19bbba8ee6d8922185b733fd"
+  },
+  "source_file_manifest_count": 215
+}

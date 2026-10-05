@@ -233,3 +233,27 @@ cells it increases by 4,608 bytes (below 0.00021%). Small percentile differences
 are descriptive: the first row's p95 reduction is not a general tail-latency claim.
 The previous full matrix and frontend results remain measurements of f46f458;
 they were not replaced or relabelled as runs of the optimized source.
+
+## Review correctness follow-up (2026-10-05)
+
+The [review evidence bundle](results/review-20261005/README.md) covers source
+`3e2cbcf` on one L40S (FP16), after startup warmup and full candidate-input
+usage were added. CPU retry 184536 and GPU job 184541 both completed 0:0.
+The 32 LFM Python tests, Rust workspace tests (54 passed, 9 ignored: three pinned fixtures and
+six native CUDA kernel tests), frontend integration (12 passed), fmt, Clippy, release build, strict docs and
+eight benchmark unit tests passed.
+
+The GPU verifier passed 17 cases at all six batch sizes (102 checks) against
+the uncached oracle; maximum absolute candidate-score error was 0.12763977
+against the reference test gate of 0.15. Cache isolation passed for six attention
+and ten convolution layers. Four near-tie probes passed at all six sizes without
+selection flips. Multi-question answers remained independent, and unpadded
+input-token usage summed across questions (193 + 162 = 355). Direct worker and
+Rust frontend responses matched in 10/10 cases, including health and error
+responses.
+
+Initial CPU job 184529 ended FAILED despite individual check PASS lines; its
+wrapper logs are retained in the bundle. The non-login-shell retry succeeded.
+The logs do not uniquely establish the first wrapper's root cause. These are
+correctness and integration results; no latency or memory benchmark was rerun,
+so the September performance tables above do not describe this revision.

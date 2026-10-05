@@ -1,0 +1,10 @@
+/projects/user007ssd/projects/system1-omni-lfm/review-20261005-3e2cbcf/source.tar: OK
+lfm_tests=PASS
+rust_checks=FAIL:1
+tools_venv=PASS
+tools_install=PASS
+tools_freeze=PASS
+docs=PASS
+benchmark_validation=PASS
+benchmark_tests=PASS
+aggregate_failure=1
