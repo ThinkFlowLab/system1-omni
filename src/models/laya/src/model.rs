@@ -210,32 +210,36 @@ impl Argument {
 }
 enum SelectedKernel {
     Fixed(Kernel),
-    Attention([Kernel; 3]),
+    Attention([Option<Kernel>; 3]),
 }
 impl SelectedKernel {
     fn resolve(cuda: &Cuda, name: &str) -> Result<Self> {
         if name == "attn_full" || name == "attn_local" {
+            // Sparse trusted bundles may omit wrappers for shapes never requested.
+            // Preserve their eager usability and fail when a missing shape is used.
             Ok(Self::Attention([
-                cuda.resolve(name)?,
-                cuda.resolve(&format!("{name}_b1_l512"))?,
-                cuda.resolve(&format!("{name}_b4_l512"))?,
+                Some(cuda.resolve(name)?),
+                cuda.resolve(&format!("{name}_b1_l512")).ok(),
+                cuda.resolve(&format!("{name}_b4_l512")).ok(),
             ]))
         } else {
             Ok(Self::Fixed(cuda.resolve(name)?))
         }
     }
-    fn select(&self, b: usize, l: usize) -> &Kernel {
+    fn select(&self, b: usize, l: usize) -> Result<&Kernel> {
         match self {
-            Self::Fixed(k) => k,
-            Self::Attention(k) => {
-                &k[if l == 512 && b == 1 {
-                    1
-                } else if l == 512 && b == 4 {
-                    2
-                } else {
-                    0
-                }]
-            }
+            Self::Fixed(k) => Ok(k),
+            Self::Attention(k) => k[if l == 512 && b == 1 {
+                1
+            } else if l == 512 && b == 4 {
+                2
+            } else {
+                0
+            }]
+            .as_ref()
+            .ok_or_else(|| {
+                anyhow::anyhow!("missing specialized attention kernel for B={b}, L={l}")
+            }),
         }
     }
 }
@@ -566,7 +570,7 @@ impl Model {
                     let pointers = args.map(|arg| arg.pointer(s));
                     unsafe {
                         kernel
-                            .select(s.b, s.l)
+                            .select(s.b, s.l)?
                             .launch(&pointers[..*count], s.b, s.l)
                     }?;
                 }
