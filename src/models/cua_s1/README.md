@@ -18,6 +18,12 @@ with a model-state mutex and CPU answer-letter projection after CUDA prefill,
 outside runtime admission. Processing orchestration and GPU batching remain
 planned. The contracts below describe its existing behavior.
 
+The shared scheduler bounds pending question forwards (64 by default,
+`OMNI_NATIVE_MAX_PENDING`). At capacity, the worker returns HTTP `503` with
+`{"detail":"native execution capacity exhausted"}` and no partial answers;
+earlier questions may have already executed. Preparation still validates the
+whole request before inference. This is a unit-count limit, not a token budget.
+
 ## Pinned revisions
 
 | Artifact | Revision |

@@ -23,6 +23,14 @@ Start the worker (`CUA_S1_HOST` and `CUA_S1_PORT` default to `127.0.0.1` and `80
 CUA_S1_MODEL=weights/cua-s1-4b-0.2-text-merged target/release/omni-cua-s1-native
 ```
 
+The shared runtime permits up to 64 pending question forwards, including the
+running forward. Set `OMNI_NATIVE_MAX_PENDING` on the worker to change this
+positive integer limit. At capacity, a question is rejected without dispatch and
+the whole request returns HTTP `503` with
+`{"detail":"native execution capacity exhausted"}`; earlier questions may have
+run, but no partial answer is returned. See the
+[runtime contract](../../src/runtime/README.md) for cancellation and limit scope.
+
 For the local CUDA Graph experiment, also set `CUA_S1_GRAPH=1`. The first use of
 each exact prompt length warms the GEMM plans and captures the forward pass;
 later requests replay it with freshly uploaded token ids. At most eight lengths

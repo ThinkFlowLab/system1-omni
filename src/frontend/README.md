@@ -7,7 +7,8 @@ inference.
 In the [target architecture](../../docs/architecture.md), a shared Rust worker
 runtime coordinates independent processors, a scheduler/batcher, and model
 executors. Rust handles host orchestration; CUDA/Metal handle device operations
-through backend bindings. That shared runtime is planned; the current frontend
+through backend bindings. Native workers share bounded serial admission and
+dispatch; further orchestration and GPU batching remain planned. The frontend
 continues to forward requests to existing model-specific worker pipelines.
 
 ## Run
@@ -38,6 +39,11 @@ connections bypass system HTTP proxies.
   Connection failures return `502`; timeouts, including response-body timeouts, return `504`.
 - Uploads are streamed. Responses are buffered so a body timeout can still return `504`.
   Set request size and concurrency limits at the ingress or worker.
+
+Native Cua-S1 and Open-Jev workers configure pending execution-unit capacity with
+`OMNI_NATIVE_MAX_PENDING` (default 64). Their HTTP `503` overload responses pass
+through unchanged, with no frontend retry. See the
+[native runtime](../runtime/README.md) for each worker's unit and cancellation rules.
 
 Text, image, audio, video and mixed payloads pass through as bytes. Actual inference
 support depends on the worker. The [Laya recipe](../../recipe/laya/README.md) verifies

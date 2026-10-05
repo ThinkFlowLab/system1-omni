@@ -6,7 +6,7 @@ use std::task::Poll;
 use std::time::Duration;
 
 use anyhow::Result;
-use omni_runtime::SerialScheduler;
+use omni_runtime::{Overloaded, SerialScheduler};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
@@ -42,7 +42,7 @@ async fn blocked(scheduler: SerialScheduler) -> (JoinHandle<Result<()>>, mpsc::S
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn queued_units_run_serially_in_fifo_order() {
-    let scheduler = SerialScheduler::default();
+    let scheduler = SerialScheduler::new(3).unwrap();
     let (first, release) = blocked(scheduler.clone()).await;
     let order = Arc::new(Mutex::new(Vec::new()));
     let mut second = Box::pin(scheduler.run({
@@ -85,7 +85,7 @@ fn cancelling_queued_work_never_dispatches_it() {
         .build()
         .unwrap()
         .block_on(async {
-            let scheduler = SerialScheduler::default();
+            let scheduler = SerialScheduler::new(2).unwrap();
             let (first, release) = blocked(scheduler.clone()).await;
             let calls = Arc::new(AtomicUsize::new(0));
             let mut cancelled = Box::pin(scheduler.run({
@@ -96,10 +96,19 @@ fn cancelling_queued_work_never_dispatches_it() {
                 }
             }));
             poll_waiting(cancelled.as_mut()).await;
+            assert!(
+                deadline(scheduler.run(|| Ok(())))
+                    .await
+                    .unwrap_err()
+                    .is::<Overloaded>()
+            );
             drop(cancelled);
+            // Cancelling the waiter returns capacity before the running unit ends.
+            let mut replacement = Box::pin(scheduler.run(|| Ok(42)));
+            poll_waiting(replacement.as_mut()).await;
             release.send(()).unwrap();
             deadline(first).await.unwrap().unwrap();
-            assert_eq!(deadline(scheduler.run(|| Ok(42))).await.unwrap(), 42);
+            assert_eq!(deadline(replacement).await.unwrap(), 42);
             assert_eq!(calls.load(Ordering::SeqCst), 0);
         });
 }
@@ -114,7 +123,7 @@ impl Drop for DeviceState {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cancelling_dispatched_work_retains_admission_and_resources_until_completion() {
-    let scheduler = SerialScheduler::default();
+    let scheduler = SerialScheduler::new(2).unwrap();
     let dropped = Arc::new(AtomicBool::new(false));
     let state = Arc::new(DeviceState(dropped.clone()));
     let (started, ready) = oneshot::channel();
@@ -151,6 +160,13 @@ async fn cancelling_dispatched_work_retains_admission_and_resources_until_comple
             .is_err()
     );
     assert!(!dropped.load(Ordering::SeqCst));
+    // The cancelled caller's dispatched unit still consumes pending capacity.
+    assert!(
+        deadline(scheduler.run(|| Ok(())))
+            .await
+            .unwrap_err()
+            .is::<Overloaded>()
+    );
     release.send(()).unwrap();
     deadline(next).await.unwrap();
     assert!(dropped.load(Ordering::SeqCst));
@@ -158,7 +174,7 @@ async fn cancelling_dispatched_work_retains_admission_and_resources_until_comple
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn errors_and_panics_release_admission() {
-    let scheduler = SerialScheduler::default();
+    let scheduler = SerialScheduler::new(1).unwrap();
     let error = scheduler
         .run(|| -> Result<()> { anyhow::bail!("forward failed") })
         .await;
@@ -177,10 +193,43 @@ async fn errors_and_panics_release_admission() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn loaded_executors_have_independent_admission() {
-    let first_scheduler = SerialScheduler::default();
-    let second_scheduler = SerialScheduler::default();
+    let first_scheduler = SerialScheduler::new(1).unwrap();
+    let second_scheduler = SerialScheduler::new(1).unwrap();
     let (first, release) = blocked(first_scheduler).await;
     assert_eq!(deadline(second_scheduler.run(|| Ok(42))).await.unwrap(), 42);
     release.send(()).unwrap();
     deadline(first).await.unwrap().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn full_capacity_rejects_without_dispatch_and_recovers_after_completion() {
+    let scheduler = SerialScheduler::new(1).unwrap();
+    let (first, release) = blocked(scheduler.clone()).await;
+    let dropped = Arc::new(AtomicBool::new(false));
+    let state = DeviceState(dropped.clone());
+    let calls = Arc::new(AtomicUsize::new(0));
+    let error = deadline(scheduler.clone().run({
+        let calls = calls.clone();
+        move || {
+            drop(state);
+            calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }))
+    .await
+    .unwrap_err();
+    assert!(error.is::<Overloaded>());
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert!(dropped.load(Ordering::SeqCst));
+    release.send(()).unwrap();
+    deadline(first).await.unwrap().unwrap();
+    assert_eq!(deadline(scheduler.run(|| Ok(42))).await.unwrap(), 42);
+}
+
+#[test]
+fn pending_limit_must_be_nonzero_and_fit_the_semaphore() {
+    assert!(SerialScheduler::new(0).is_err());
+    assert!(SerialScheduler::new(tokio::sync::Semaphore::MAX_PERMITS + 1).is_err());
+    assert!(SerialScheduler::new(1).is_ok());
+    assert!(SerialScheduler::new(tokio::sync::Semaphore::MAX_PERMITS).is_ok());
 }

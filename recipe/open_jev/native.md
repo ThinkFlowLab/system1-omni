@@ -61,6 +61,13 @@ The worker loads all text weights onto visible CUDA device 0, performs a real
 warmup inference, then exposes `/health` and `/v1/systemone`.
 Use a reservation before any GPU command on hosts with a GPU scheduler.
 
+The shared runtime permits up to 64 pending complete requests, including the
+running request. Set `OMNI_NATIVE_MAX_PENDING` on the worker to change this
+positive integer limit. At capacity, the worker rejects a request before its
+first forward with HTTP `503` and
+`{"error":"native execution capacity exhausted"}`. See the
+[runtime contract](../../src/runtime/README.md) for cancellation and limit scope.
+
 In another terminal, start the existing Rust frontend:
 
 ```sh

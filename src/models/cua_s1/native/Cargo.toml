@@ -22,3 +22,7 @@ serde_json = { version = "1.0.149", features = ["float_roundtrip", "preserve_ord
 # the onig regex backend, as in the Python tokenizers wheel
 tokenizers = { version = "=0.22.2", default-features = false, features = ["onig"] }
 tokio = { version = "1.49.0", features = ["macros", "net", "rt-multi-thread", "sync"] }
+
+[[test]]
+name = "admission_config"
+path = "../../../../tests/runtime/configuration.rs"

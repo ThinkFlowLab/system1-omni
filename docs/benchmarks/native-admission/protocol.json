@@ -1,0 +1,259 @@
+{
+  "format": "native-admission-protocol/1",
+  "experiment_date_utc": "2026-10-05",
+  "source_revisions": {
+    "baseline": "9adb0701132d259a9fcc8a559472f1c3dc5590b0",
+    "candidate": "b5c443c9310f2118289500b6088822e7bba1fb72"
+  },
+  "native_source_hashes": {
+    "Cargo.lock": "34f8ea26fefc050f35247581dac31546409f6146685bd3871907713644ff8b7f",
+    "Cargo.toml": "3e823af28ffba170d50adebf0624e6eba03b7d130e0479624a9c152dfac6cda3",
+    "src/backends/cuda/qwen3_5/attention.cu": "3d6935a8a550314815ebe6575be03ce1a7e0b1d5bd611508a4bffbc24cff3132",
+    "src/backends/cuda/qwen3_5/build.sh": "178d94396fdb46ee929f0da919f120683990ed7af8fd079796106ab5995b3f0f",
+    "src/backends/cuda/qwen3_5/common.cuh": "ea924f7c903b6d14b0e1f10c8c33a1a9ca23806df093628a178661a303d54d55",
+    "src/backends/cuda/qwen3_5/elementwise.cu": "b739f1bc2f08ae67399366063cc6c42bc0c5e65e98da23d8b425f9f9ea53ea59",
+    "src/backends/cuda/qwen3_5/gdn_prefill.cu": "9f2642a5f6e69cd22055419ecf1f799f1ccd811f7453763a41adf4f15b07a41d",
+    "src/backends/cuda/qwen3_5/gemm.cu": "a82b6d6012c6b13d5ec8dd8ce7107bd95e17f588c76dae1d314e9cff1585274a",
+    "src/backends/cuda/qwen3_5/mma.cuh": "64654f8b937585805daa72b692c243ae35d34b746e2cb6b0b55c255748495764",
+    "src/backends/cuda/qwen3_5/norm.cu": "756c9d4023787cc3961ec72bcc96b3f715e705d5dfcb3bf77622879980df82ab",
+    "src/backends/cuda/qwen3_5/ops.h": "776376f82c8a01aacea4ec29178714c95079ec6454dc0466a483d073fee3e06c",
+    "src/backends/cuda/qwen3_5/runtime.cu": "3c19d2a1167b44d3a84ffe480605e14a72c775d2c2e51d0c594af9d0db6cb69e",
+    "src/frontend/Cargo.toml": "595105b609cee3d7bc45c9d23c8cb1e9e37b381007fcbc6b37f6581bcbd74c3e",
+    "src/frontend/src/lib.rs": "79aada9b5d0acc335d6dcb5008f1b7964a0542f324528c46a40aef6a1f8a3597",
+    "src/frontend/src/main.rs": "53e5872105f85148727d9e0c6f840f4599b160570bbbe22a279249622b6550d7",
+    "src/frontend/tests/frontend.rs": "502e373ea4e7a31c965b24c1820dc17b526ea553d4aa6b3babc1e7dec85643bd",
+    "src/models/cua_s1/native/Cargo.toml": "d0afeefe2d795658c205a0cafa7f7ee2b2006e900637a807c4739943288b74b6",
+    "src/models/cua_s1/native/src/contract.rs": "c51564ca3c2b87d8f756f17cfbbe6f2bfb86e612a4085237df3e8ceee587486b",
+    "src/models/cua_s1/native/src/engine.rs": "d5970a1f0ebcb8dab04ebc6ef06de891d54015a4c812630fac88fa650edcefd9",
+    "src/models/cua_s1/native/src/executor.rs": "e1e962887003c123b7a229b7070843d58295a8247d32135273fed0b645dfd5f1",
+    "src/models/cua_s1/native/src/lib.rs": "2fbe67252a15f7fa062faf82434d4fbfbf682cefcc96d765360d7c21daabc634",
+    "src/models/cua_s1/native/src/main.rs": "f48bbe3608054dfe05dc807465d95e31e9a2015272cda1a95ef4f5096ff65d60",
+    "src/models/cua_s1/native/src/processing.rs": "ce11ac7789c9a9454f61c33b7d00093f868121f2ac4ff09ab5964a2230632615",
+    "src/models/laya/Cargo.toml": "1c71204adde7c04f9c7bf247139d936d9be257b12c3f19524176ae93aa49f835",
+    "src/models/laya/src/config.rs": "a8743612808bfa80fb948cd4d55c12d0dd2fbed80f5d540a48009e9ad58f6d5e",
+    "src/models/laya/src/lib.rs": "52ac328f629edb979cb470553112e7cb49b10caf75fdb7be0c854f96ff960ccf",
+    "src/models/laya/src/weights.rs": "72949828f4136da31b0a92c0d2d09c72af8b0547c288e419c1cea3b76facf467",
+    "src/models/open_jev/native/Cargo.toml": "801d38df41f46585c785d604cfab3a644b93b737dc43203c47ef7af087d379af",
+    "src/models/open_jev/native/src/contract.rs": "e70b779123b2aa27c83826f268f960fca444aad344d85bfc4ffea3b2ea4bb3f8",
+    "src/models/open_jev/native/src/engine.rs": "fecb9fbef1c5e2058ca366ed3f6b0968dd36d32d1f18ef1058f2cd6eadc85161",
+    "src/models/open_jev/native/src/executor.rs": "c354c86dfdeb6cf3665dd88197c5692ab7f8abbc643ecce59fa86eade1ab27c9",
+    "src/models/open_jev/native/src/lib.rs": "aa4a8203388865f116ff43e21fec6bc4e7aa1c9372c854ffc03ac1244db81796",
+    "src/models/open_jev/native/src/main.rs": "ca34e6d96d06bad0d188c27c78a039091e0ba2480302d4666633d0947ea17c8c",
+    "src/models/open_jev/native/src/processing.rs": "db66e17ea96ea85f2c47c20e1051f9388326af86ddb6d801e475c6a182317ae7",
+    "src/models/qwen3_5/native/Cargo.toml": "8c6e8121ab2dd8cf6e7991629b88d97ba2e52d8e305a62e57e7cb4b72f7ccf34",
+    "src/models/qwen3_5/native/src/cuda.rs": "959f8f513adb63510a7ab6d214596fdec5efeb12e9fe6d4a7df665614b15940d",
+    "src/models/qwen3_5/native/src/json.rs": "a3933459e7ccfcc8ae0782329c2607d75da0d567f1f341c1e59185aa433432ec",
+    "src/models/qwen3_5/native/src/lib.rs": "4dc5a2c1babb0e714396d9fe47f3750843036d4b7c5519a8ffe710e61ed88ade",
+    "src/models/qwen3_5/native/src/model.rs": "fa0754478c35f412365d682635063cc94cf6688d656e10f515fe05600494c6d7",
+    "src/runtime/Cargo.toml": "8124514a95adecb84447d39e2dde24f427c220458c15549a8b366b3b03015345",
+    "src/runtime/src/lib.rs": "2a11a78f48b3dc43e46ffc3b3766d833a3196749e043ea26ee4d17a497b99690"
+  },
+  "hypothesis": "Bounding pending native execution units preserves successful/error responses below capacity with no material warmed HTTP regression; a one-unit limit rejects concurrent excess work as 503 and recovers afterward.",
+  "variable": "Native Rust runtime pending-capacity gate plus startup configuration and typed HTTP overload mapping: merged main 9adb0701 versus b5c443c9. Baseline has unbounded pending units, candidate has 64; execution remains serial. Capacity bounds and overload rejection are the intended consequences. CUDA, Qwen forward, numerical heads, tokenizer, checkpoints, request data, affinity, device and dependencies are fixed.",
+  "models": {
+    "cua": {
+      "base_repository": "Qwen/Qwen3.5-4B",
+      "adapter_repository": "cua-ai/cua-s1-4b-0.2",
+      "adapter_subfolder": "text",
+      "base": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+      "adapter": "16818868b0cc7813808aae4e87b417657046ab79"
+    },
+    "jev": {
+      "base_repository": "Qwen/Qwen3.8-27B",
+      "checkpoint_repository": "ZefanCai/Open-Jev-27B-v1.1",
+      "base": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+      "checkpoint": "28cf73067d5b337860bbef3c85b8b82ba8730956",
+      "temperature": 2.5343690298472983,
+      "max_length": 16384
+    }
+  },
+  "aliases": {
+    "cua": "cua-s1-4b-0.2",
+    "jev": "open-jev"
+  },
+  "hardware": {
+    "reported_device_name": "NVIDIA L20X",
+    "compute_capability": [
+      9,
+      0
+    ],
+    "device_count": 1,
+    "fixed_gpu_id": 5,
+    "driver_version": "570.133.20",
+    "cuda_driver_api_version": 13000,
+    "cpu_affinity": [
+      56,
+      57,
+      58,
+      59,
+      60,
+      61,
+      62,
+      63,
+      64,
+      65,
+      66,
+      67,
+      68,
+      69,
+      70,
+      71
+    ],
+    "numa_node": 1
+  },
+  "precision": "BF16 backbone; existing FP32 CPU heads; f64 normalization",
+  "toolchain": {
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "python": "3.12",
+    "httpx": "0.28.1",
+    "tokenizers": "0.22.2"
+  },
+  "build": {
+    "command": "cargo build --release --locked -j 16 -p omni-cua-s1-native -p omni-open-jev-native",
+    "rustflags": null,
+    "separate_target_directories": true,
+    "baseline_binary_source_revision": "887b29f1e58f99382c5b4c3528e2819158826294",
+    "baseline_full_tree_equals_merged_baseline": true,
+    "cargo_lock_sha256": {
+      "baseline": "34f8ea26fefc050f35247581dac31546409f6146685bd3871907713644ff8b7f",
+      "candidate": "34f8ea26fefc050f35247581dac31546409f6146685bd3871907713644ff8b7f"
+    }
+  },
+  "cuda_library": {
+    "sha256": "80bb218b6dc7d9ae6fcab3ab762924595db0d0bebec7dbf331a4f4dc1b4fc0fa",
+    "abi": 4,
+    "source_hashes": {
+      "src/backends/cuda/qwen3_5/gemm.cu": "a82b6d6012c6b13d5ec8dd8ce7107bd95e17f588c76dae1d314e9cff1585274a",
+      "src/backends/cuda/qwen3_5/elementwise.cu": "b739f1bc2f08ae67399366063cc6c42bc0c5e65e98da23d8b425f9f9ea53ea59",
+      "src/backends/cuda/qwen3_5/norm.cu": "756c9d4023787cc3961ec72bcc96b3f715e705d5dfcb3bf77622879980df82ab",
+      "src/backends/cuda/qwen3_5/attention.cu": "3d6935a8a550314815ebe6575be03ce1a7e0b1d5bd611508a4bffbc24cff3132",
+      "src/backends/cuda/qwen3_5/gdn_prefill.cu": "9f2642a5f6e69cd22055419ecf1f799f1ccd811f7453763a41adf4f15b07a41d",
+      "src/backends/cuda/qwen3_5/runtime.cu": "3c19d2a1167b44d3a84ffe480605e14a72c775d2c2e51d0c594af9d0db6cb69e",
+      "src/backends/cuda/qwen3_5/common.cuh": "ea924f7c903b6d14b0e1f10c8c33a1a9ca23806df093628a178661a303d54d55",
+      "src/backends/cuda/qwen3_5/mma.cuh": "64654f8b937585805daa72b692c243ae35d34b746e2cb6b0b55c255748495764",
+      "src/backends/cuda/qwen3_5/ops.h": "776376f82c8a01aacea4ec29178714c95079ec6454dc0466a483d073fee3e06c"
+    },
+    "build_target": "sm90"
+  },
+  "binary_sha256": {
+    "baseline-cua": "fae5ad89c79f73c1f06a95bd5a560cf0d6dbc88e1d536c66ba14bb988d13df65",
+    "candidate-cua": "f4ecab69adb88a62544baa3587f201ba8940241ad301bcc7aa78bb4d3096fc79",
+    "baseline-jev": "9cc08be8d502dddf4ab447a976df272dcb977338011e85c98c78e8b8c8d1b14a",
+    "candidate-jev": "184cfb900ec0dc692385413ed6266bbb8d29358cdf2b15326c9c30313c629fcc"
+  },
+  "controls": {
+    "graph": "CUA_S1_GRAPH=0",
+    "frontend": "Direct native worker HTTP; no frontend overhead comparison",
+    "cache": "Reuse prepared exports; real startup warmup before health; first inference, one full excluded feasibility pass, then 3 warmup requests before each measured pass. No shared caches dropped.",
+    "server": "One worker per model/revision normal-load configuration, reused across passes; after all four comparisons, one candidate worker per model with pending limit1 is reused for functional saturation and recovery.",
+    "request_timeout_s": 180,
+    "readiness_timeout_s": 600,
+    "cpu_threads": "TOKIO_WORKER_THREADS=16; TOKENIZERS_PARALLELISM=false, identical for both revisions",
+    "memory_method": "nvidia-smi GPU memory.used sampled every 0.2s, scoped to reserved GPU5; sampled peak rather than allocator peak.",
+    "pending": "OMNI_NATIVE_MAX_PENDING=64 for normal-load comparisons; baseline ignores the new setting. Candidate-only functional overload configuration uses 1. This is an explicit consequence of the declared variable, not a performance comparison."
+  },
+  "budget": {
+    "feasibility_per_configuration": 1,
+    "measured_per_configuration_per_concurrency": 2,
+    "concurrency": [
+      1,
+      8,
+      16
+    ],
+    "extra_validation_per_configuration": "One near-limit request and four expected error requests after measurements; not timed as performance.",
+    "gpu_timeout": "30m",
+    "extra_overload_validation": {
+      "candidate_only_per_model": {
+        "pending_limit": 1,
+        "first_inference_after_real_readiness": 1,
+        "concurrent_near_limit_requests": 8,
+        "recovery_request": 1
+      },
+      "measured_as_performance": false,
+      "stop_on_first_invalid_status_or_parity": true,
+      "no_extra_bursts_or_repetitions": true
+    }
+  },
+  "order": [
+    "cua-baseline",
+    "cua-candidate",
+    "jev-candidate",
+    "jev-baseline"
+  ],
+  "success": {
+    "parity": "No failures in successful workload; exact JSON equality including key order except metadata.inference_seconds; zero probability/score drift and decision flips. Exact expected error response parity.",
+    "performance": "For every model/concurrency, mean of per-run mean HTTP latency <= 1.05x baseline, mean requests/s >= 0.95x baseline, mean per-run p95 <= 1.10x baseline. Report both measured runs and their relative range; if variability overlaps observed differences, no performance winner is claimed.",
+    "overload": "Per candidate/model limit1 burst: at least one valid200 and one503, no other statuses; successful near-limit outputs equal the normal-load reference exactly except timing, every503 uses the native model error shape with native execution capacity exhausted; next ordinary inference returns200 with exact parity."
+  },
+  "stop": "Stop at first CPU probe/build/readiness/response/parity or overload-validation failure, reservation interruption, 30m timeout, or declared budget completion. Expected503 stress responses are preserved outside performance denominators. No extra repeats or tolerance changes.",
+  "workload": {
+    "source": "Synthetic deterministic regression inputs, not an accuracy dataset",
+    "seed": 78,
+    "requests_per_model": 64,
+    "cua_prompt_lengths": [
+      146,
+      2079
+    ],
+    "jev_prompt_lengths": [
+      50,
+      1971
+    ],
+    "near_limit_tokens": 16368,
+    "input_sha256": {
+      "jev-lengths.json": "9a4ec56d98e61b3403fe81f70a515df0535207ace434518f3c1defd370dc498e",
+      "cua-lengths.json": "325163f0569335d04997866ad5ceca81ccf4f37a97e1599410caed17b7300b58",
+      "cua-near-limit.json": "f56587edd89e3febb9818d6c542b86298eda4c13c6772b04e14bfd88edef8b43",
+      "cua-requests.jsonl": "42fc2c78464f4a4e6f639e0470bca0ca31c936d963baf40b643405d09822cf93",
+      "jev-requests.jsonl": "8b44c0c0e90c264681beb5431222879961ef6ab8649415c4205419df9ec9930e",
+      "jev-errors.json": "6548838d3ad1e6a86c1aab4d9920f1673ff81b6c4c73c78b6ae39a72284b0cb2",
+      "cua-errors.json": "78eb34ba00c89a5410eecd42a1e6f3cb2517011571e207ddf0439efec206ddc6",
+      "jev-near-limit.json": "6ed69ea5580dc65d80210dfadea63aaaa39007fa76ce17b897c2725147c1b706"
+    }
+  },
+  "frozen_private_protocol_sha256": "c3fa2907d36906a235336c885830f62f2a6c8982d1bdf7bd88ca8f27736d7d9b",
+  "archive": {
+    "file": "raw-results.json.gz",
+    "sha256": "ebacc7e2312b0fd3f8018c225e6d9431ce05573cdc9e6fd4ec4c61c0076e2b31",
+    "compressed_bytes": 352885,
+    "uncompressed_bytes": 3379336
+  },
+  "normal_load_counts": {
+    "measured_requests": 1536,
+    "excluded_feasibility_requests": 256,
+    "failed_measured_requests": 0
+  },
+  "overload_validation": {
+    "cua": {
+      "status": "passed",
+      "pending_limit": 1,
+      "burst_responses": {
+        "200": 1,
+        "503": 7
+      },
+      "exact_successful_response_parity": true,
+      "overload_body_checked": true,
+      "recovery_status": 200,
+      "health_after_recovery": {
+        "status": "ready",
+        "model": "cua-ai/cua-s1-4b-0.2@16818868b0cc7813808aae4e87b417657046ab79:text"
+      }
+    },
+    "jev": {
+      "status": "passed",
+      "pending_limit": 1,
+      "burst_responses": {
+        "200": 1,
+        "503": 7
+      },
+      "exact_successful_response_parity": true,
+      "overload_body_checked": true,
+      "recovery_status": 200,
+      "health_after_recovery": {
+        "status": "ready",
+        "model": "Qwen/Qwen3.8-27B"
+      }
+    }
+  },
+  "metadata_redaction": "Machine-local paths, host/user identity, process IDs and reservation metadata are omitted. Local-worker URLs in runner error descriptions are replaced; original model response strings, statuses, IDs and timings are retained.",
+  "runner_sha256": "4e5ff61d38239cdcd68e8b74f5cae09a03cb17699b7fc1147e0842397cff115d"
+}

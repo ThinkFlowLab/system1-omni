@@ -13,7 +13,8 @@ model-specific workers coordinate independent processor and executor modules
 through `prepare` → `execute` → `finish`. The shared Qwen executor accepts one
 prompt per forward call. Both workers use the
 [native runtime](../src/runtime/README.md) for FIFO admission and blocking dispatch
-per loaded executor. Shared processing orchestration, batch budgets,
+per loaded executor, with bounded pending execution units. Shared processing
+orchestration, token/batch budgets,
 compatibility grouping and dynamic batching are planned.
 
 The native workers currently compute their decision heads on the CPU after
@@ -92,7 +93,13 @@ executor, with FIFO waiting. Engines own scheduler instances; model-specific
 execution adapters declare the unit and submit owned closures. Waiting is async,
 so queued requests do not occupy blocking threads waiting for a model lock.
 Schedulers are local to each worker/executor; this does not coordinate separate
-processes. Queue-length limits and token budgets are not implemented yet.
+processes. Pending execution units (waiting plus dispatched) are bounded to 64 by
+default, configured by `OMNI_NATIVE_MAX_PENDING`. Full capacity rejects the unit
+before dispatch with a typed overload error; native workers map it to HTTP `503`
+using their model-specific error body. Normal inference failures remain `500`.
+The limit counts Cua-S1 question forwards and Open-Jev complete requests, not
+prepared tokens or ingress requests. A later rejected Cua-S1 unit fails the
+whole request without partial answers. Token budgets remain planned.
 
 - Batch only work accepted by the same loaded executor, with compatible
   checkpoint/adapter identity, device, dtype, and input layout. Models declare
@@ -120,7 +127,8 @@ Keep Rust declarations and the native ABI in sync, and rebuild all consumers
 when the ABI changes. Buffer handles and captured graphs must outlive queued
 device operations; synchronize before reading host results or reclaiming
 storage. Cancellation while waiting for admission removes the queued caller
-without dispatch. Once dispatched, the runtime retains admission and captured executor
+without dispatch and releases pending capacity. Once dispatched, the runtime retains
+both admission and capacity permits and captured executor
 resources until the blocking closure completes, even if its caller is cancelled.
 The executor must synchronize device work before returning; cancellation or
 timeout does not authorize freeing buffers still in use by submitted work. Keep
