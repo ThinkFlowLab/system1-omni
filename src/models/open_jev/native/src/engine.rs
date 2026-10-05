@@ -20,6 +20,7 @@ pub struct Engine {
 
 impl Engine {
     pub async fn load(dir: &Path, library: &Path) -> Result<Self> {
+        let scheduler = SerialScheduler::from_env()?;
         let manifest: Value = serde_json::from_slice(
             &std::fs::read(dir.join("open_jev_export.json"))
                 .context("export the merged checkpoint; see recipe/open_jev/native.md")?,
@@ -54,7 +55,7 @@ impl Engine {
         let executor = Executor::load(dir, library, head).await?;
         Ok(Self {
             processor,
-            scheduler: SerialScheduler::default(),
+            scheduler,
             executor,
         })
     }

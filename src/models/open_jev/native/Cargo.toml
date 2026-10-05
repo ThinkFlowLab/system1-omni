@@ -17,3 +17,7 @@ tokio = { version = "1.49.0", features = ["macros", "net", "rt-multi-thread", "s
 [[test]]
 name = "contract"
 path = "../../../../tests/open_jev/contract.rs"
+
+[[test]]
+name = "admission_config"
+path = "../../../../tests/runtime/configuration.rs"

@@ -20,6 +20,7 @@ For processing or batching changes, trace prepared inputs through executor
 layouts and output reconstruction. Apply the architecture contract's batching,
 numerical, and lifetime invariants to the affected model. For shared runtime
 admission changes, check FIFO execution units, cancellation before dispatch,
+pending-unit limits, overload/error response mapping, startup configuration,
 permit/resource retention after dispatch, and release on errors or panics against
 the [runtime contract](../../../src/runtime/README.md).
 

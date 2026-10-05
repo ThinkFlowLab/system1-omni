@@ -17,6 +17,7 @@ pub struct Engine {
 
 impl Engine {
     pub async fn load(dir: &Path, library: &Path) -> Result<Self> {
+        let scheduler = SerialScheduler::from_env()?;
         // Written by export_text_merged.py; without it `dir` may hold the base model alone.
         ensure!(
             dir.join("cua_s1_export.json").exists(),
@@ -36,7 +37,7 @@ impl Engine {
         let executor = Executor::load(dir, library, &ids).await?;
         Ok(Self {
             processor,
-            scheduler: SerialScheduler::default(),
+            scheduler,
             executor,
         })
     }

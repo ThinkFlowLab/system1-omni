@@ -20,12 +20,21 @@ use serde_json::{Value, json};
 use omni_cua_s1_native::contract::MODEL_ID;
 use omni_cua_s1_native::cuda;
 use omni_cua_s1_native::engine::Engine;
+use omni_runtime::Overloaded;
 
 const MAX_BODY_BYTES: usize = 4 << 20;
 const WARMUP: &[u8] = br#"{"model": "cua-s1-4b-0.2", "state": "Dialog: Update installed.", "questions": {"q": {"type": "choice", "instructions": "Close it.", "criteria": {"ok": "OK", "wait": "Wait"}}}}"#;
 
 fn reply(status: u16, body: Value) -> Response {
     (StatusCode::from_u16(status).unwrap(), Json(body)).into_response()
+}
+
+fn inference_error(e: anyhow::Error) -> Response {
+    if let Some(overload) = e.downcast_ref::<Overloaded>() {
+        return reply(503, json!({"detail": overload.to_string()}));
+    }
+    eprintln!("inference failed: {e:#}");
+    reply(500, json!({"detail": "inference failed"}))
 }
 
 /// Every prompt is tokenized and checked against the limit before any forward pass.
@@ -44,12 +53,13 @@ async fn decide(engine: &Engine, raw: &[u8]) -> Response {
     .await;
     match result {
         Ok(body) => reply(200, body),
-        Err(e) => {
-            eprintln!("inference failed: {e:#}");
-            reply(500, json!({"detail": "inference failed"}))
-        }
+        Err(e) => inference_error(e),
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../../tests/runtime/http_errors.rs"]
+mod http_tests;
 
 async fn systemone(
     State(engine): State<Arc<Engine>>,

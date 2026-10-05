@@ -47,7 +47,7 @@ shared CUDA kernels in this repository.
   model workers.
 - **Model-owned execution.** Model executors own weights, forward passes,
   learned heads, device state, and kernel selection. Native workers have separate
-  processing and executor modules, with shared FIFO admission and blocking
+  processing and executor modules, with shared bounded FIFO admission and blocking
   dispatch in the [native runtime](src/runtime/README.md).
 - **Native CUDA workers.** The Cua-S1 4B 0.2 `text` adapter and
   Open-Jev-27B-v1.1 run as native workers with shared CUDA kernels. Cua-S1
@@ -68,7 +68,8 @@ Share processing and scheduling; let each model own its execution.
 The diagram shows the **target architecture**. Today the frontend forwards HTTP
 requests to separately running workers, whose handlers coordinate independent
 processors and executors. Both native workers use shared FIFO admission and
-blocking dispatch per loaded executor. Processing orchestration, batch budgets,
+blocking dispatch, with configurable pending-unit limits per loaded executor.
+Processing orchestration, token/batch budgets,
 compatibility grouping and dynamic batching remain planned.
 
 | Layer | Responsibility | Native target implementation |
@@ -161,7 +162,7 @@ requests and a matched comparison with raw HF Transformers and OpenJev-Fast.
 
 The current focus is the native Cua-S1 and Open-Jev CUDA workers and the serving
 benchmark harness. Planned work extends the shared runtime with processing
-orchestration, admission budgets, compatibility grouping and bounded dynamic
+orchestration, token budgets, compatibility grouping and bounded dynamic
 batching with batch-capable executors,
 the in-repository LAYA model engine, additional model engines and GPU backends
 including Metal, and per-model

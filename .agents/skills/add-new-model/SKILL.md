@@ -50,12 +50,13 @@ redesign serving infrastructure or introduce a general model framework.
 | `recipe/<model>/` | Checkpoint preparation/export scripts, setup and launch instructions, and example requests. Reusable runtime implementation belongs in `src/`. |
 | `tests/<model>/` and `tests/<shared-component>/` | All test bodies, test helpers, and fixtures, including contract, tokenizer, checkpoint, HTTP, and kernel tests. |
 
-The [native runtime](../../../src/runtime/README.md) provides serial FIFO admission
+The [native runtime](../../../src/runtime/README.md) provides bounded serial FIFO admission
 and blocking dispatch per loaded executor. Integrate with available worker
 interfaces while separating processors and batch adapters from forward code.
 Models declare their execution unit, layouts and compatibility constraints;
-shared runtime code owns admission policy. Processing orchestration, queue/token
-budgets and dynamic batching remain planned. The native
+shared runtime code owns admission policy. Document pending-unit limits and the
+worker's overload response; preserve capacity after dispatched cancellation.
+Processing orchestration, token budgets and dynamic batching remain planned. The native
 target uses Rust host orchestration and bindings with CUDA/Metal device kernels.
 
 **Do not add test code or fixtures under `src/`.** This includes inline Rust test

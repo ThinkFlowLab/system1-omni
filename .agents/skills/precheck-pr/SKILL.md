@@ -34,7 +34,8 @@ user instructions for those actions.
   processing and scheduling, model-specific adapters and executors, and hardware
   operations. In the native target, Rust orchestrates host work and dispatch;
   CUDA/Metal execute device kernels. Serial runtime admission and dispatch are
-  implemented; further orchestration and dynamic batching remain planned.
+  implemented with bounded pending units; further orchestration, token budgets
+  and dynamic batching remain planned.
   Consult the relevant `src/frontend/`, `src/runtime/`, `src/models/`, `src/backends/`, or
   `recipe/` documentation for the changed component's contract and current status.
 - For frontend changes, inspect affected request validation, error handling,
@@ -47,6 +48,9 @@ user instructions for those actions.
 - For processing/scheduling changes, apply the architecture contract's batching,
   output reconstruction, numerical, and lifetime invariants to the affected
   model's prepared-work and executor boundaries.
+  Verify overload rejects before dispatch, capacity recovers on queued cancellation
+  and completion, dispatched cancellation retains capacity, and worker status/body
+  mappings distinguish overload from inference failure.
 - Check that tests exercise the changed behavior. For bug fixes, look for a
   regression case that fails before the fix. Verify documentation and examples
   against the implementation.

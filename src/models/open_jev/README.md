@@ -28,3 +28,8 @@ retains request-wide model locking and independent single-prompt execution, with
 the scalar head on the CPU after CUDA prefill. The engine owns a
 [shared serial scheduler](../../runtime/README.md) that admits the complete request
 before blocking dispatch. GPU batching and batch budgets remain planned.
+
+Pending complete request units are bounded to 64 by default, configured by
+`OMNI_NATIVE_MAX_PENDING`. Full capacity rejects the request before its first
+forward with HTTP `503` and `{"error":"native execution capacity exhausted"}`.
+Preparation precedes admission; aggregate token budgets remain planned.

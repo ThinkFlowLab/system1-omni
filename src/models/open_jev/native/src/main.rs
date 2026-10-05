@@ -13,12 +13,21 @@ use axum::{
 };
 use omni_open_jev_native::{contract::MODEL_ID, engine::Engine};
 use omni_qwen3_5_native::cuda;
+use omni_runtime::Overloaded;
 use serde_json::json;
 
 const WARMUP: &[u8] = br#"{"state":"Dialog: Update installed.","questions":{"q":{"type":"choice","instructions":"Close it.","criteria":{"ok":"OK","wait":"Wait"}}}}"#;
 
 fn error(status: StatusCode, message: impl ToString) -> Response {
     (status, Json(json!({"error": message.to_string()}))).into_response()
+}
+
+fn inference_error(e: anyhow::Error) -> Response {
+    if let Some(overload) = e.downcast_ref::<Overloaded>() {
+        return error(StatusCode::SERVICE_UNAVAILABLE, overload);
+    }
+    eprintln!("inference failed: {e:#}");
+    error(StatusCode::INTERNAL_SERVER_ERROR, "model inference failed")
 }
 
 async fn decide(engine: &Engine, raw: &[u8]) -> Response {
@@ -36,12 +45,13 @@ async fn decide(engine: &Engine, raw: &[u8]) -> Response {
     .await;
     match result {
         Ok(body) => Json(body).into_response(),
-        Err(e) => {
-            eprintln!("inference failed: {e:#}");
-            error(StatusCode::INTERNAL_SERVER_ERROR, "model inference failed")
-        }
+        Err(e) => inference_error(e),
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../../tests/runtime/http_errors.rs"]
+mod http_tests;
 
 async fn systemone(
     State(engine): State<Arc<Engine>>,

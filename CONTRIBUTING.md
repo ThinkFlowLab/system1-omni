@@ -15,7 +15,7 @@ Keep processors and batch adapters separate from the model's forward
 implementation, even when they live in the same model directory. The README's
 target architecture shares processing orchestration and scheduling across
 models. Native workers already reuse
-[serial admission and dispatch](src/runtime/README.md); processing orchestration
+[bounded serial admission and dispatch](src/runtime/README.md); processing orchestration
 and GPU batching remain planned. Model executors own weights, forward passes,
 learned heads, and device state.
 
