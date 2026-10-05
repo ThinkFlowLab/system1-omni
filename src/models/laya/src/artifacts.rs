@@ -64,10 +64,6 @@ pub fn validate_bundle(checkpoint: &Path, bundle: &Path) -> Result<()> {
         "rope_local_cos.f32",
         "rope_local_sin.f32",
     ] {
-        ensure!(
-            fs::metadata(bundle.join(name))?.len() == 512 * 32 * 4,
-            "invalid rotary table size: {name}"
-        );
         check(bundle.join(name), tables["tables"][name].as_str())?;
     }
     check(
@@ -78,5 +74,5 @@ pub fn validate_bundle(checkpoint: &Path, bundle: &Path) -> Result<()> {
 }
 
 #[cfg(test)]
-#[path = "../../../../tests/laya/unit/artifacts.rs"]
+#[path = "../../../../tests/laya/artifacts.rs"]
 mod tests;

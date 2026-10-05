@@ -1,0 +1,28 @@
+{"kind": "cpu_probe", "passed": true, "files": 19}
+{"kind": "hardware", "uuid": "cbf66259-f4ab-0ede-1811-82037dde5924", "name": "NVIDIA L20X", "sm_count": 132, "pid": 1771200}
+{"kind": "recurrent_reference", "command": ["/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/target/release/deps/kernels-e1de1d464265a9b7", "--ignored", "--nocapture", "--test-threads=1"], "exit_code": 0, "seconds": 7.3779330011457205}
+{"kind": "workspace_fidelity", "tokens": 107, "config": "baseline", "differences": {"u": {"changed": 0, "max_abs": 0.0}, "w": {"changed": 0, "max_abs": 0.0}, "qd": {"changed": 0, "max_abs": 0.0}, "kd": {"changed": 0, "max_abs": 0.0}, "pb": {"changed": 0, "max_abs": 0.0}, "decay": {"changed": 0, "max_abs": 0.0}}}
+{"kind": "feasibility", "tokens": 107, "config": "baseline", "passed": true, "max_abs": 0.0, "relative_l2": 0.0, "seconds": 0.0869095716625452}
+{"kind": "workspace_fidelity", "tokens": 107, "config": "candidate", "differences": {"u": {"changed": 0, "max_abs": 0.0}, "w": {"changed": 0, "max_abs": 0.0}, "qd": {"changed": 0, "max_abs": 0.0}, "kd": {"changed": 0, "max_abs": 0.0}, "pb": {"changed": 0, "max_abs": 0.0}, "decay": {"changed": 0, "max_abs": 0.0}}}
+{"kind": "feasibility", "tokens": 107, "config": "candidate", "passed": true, "max_abs": 0.0, "relative_l2": 0.0, "seconds": 0.004363702610135078}
+{"kind": "measurement", "tokens": 107, "config": "baseline", "pass": 1, "iterations": 100, "device_span_ms_per_call": 0.05090112209320068, "wall_ms_per_call": 0.05129078, "max_abs": 0.0}
+{"kind": "measurement", "tokens": 107, "config": "candidate", "pass": 1, "iterations": 100, "device_span_ms_per_call": 0.05078239917755127, "wall_ms_per_call": 0.050913560000000004, "max_abs": 0.0}
+{"kind": "measurement", "tokens": 107, "config": "candidate", "pass": 2, "iterations": 100, "device_span_ms_per_call": 0.05083456039428711, "wall_ms_per_call": 0.0509565, "max_abs": 0.0}
+{"kind": "measurement", "tokens": 107, "config": "baseline", "pass": 2, "iterations": 100, "device_span_ms_per_call": 0.05085087776184082, "wall_ms_per_call": 0.05097596, "max_abs": 0.0}
+{"kind": "workspace_fidelity", "tokens": 936, "config": "baseline", "differences": {"u": {"changed": 0, "max_abs": 0.0}, "w": {"changed": 0, "max_abs": 0.0}, "qd": {"changed": 0, "max_abs": 0.0}, "kd": {"changed": 0, "max_abs": 0.0}, "pb": {"changed": 0, "max_abs": 0.0}, "decay": {"changed": 0, "max_abs": 0.0}}}
+{"kind": "feasibility", "tokens": 936, "config": "baseline", "passed": true, "max_abs": 0.0, "relative_l2": 0.0, "seconds": 0.02221657894551754}
+{"kind": "workspace_fidelity", "tokens": 936, "config": "candidate", "differences": {"u": {"changed": 0, "max_abs": 0.0}, "w": {"changed": 0, "max_abs": 0.0}, "qd": {"changed": 0, "max_abs": 0.0}, "kd": {"changed": 0, "max_abs": 0.0}, "pb": {"changed": 0, "max_abs": 0.0}, "decay": {"changed": 0, "max_abs": 0.0}}}
+{"kind": "feasibility", "tokens": 936, "config": "candidate", "passed": true, "max_abs": 0.0, "relative_l2": 0.0, "seconds": 0.008761398494243622}
+{"kind": "measurement", "tokens": 936, "config": "baseline", "pass": 1, "iterations": 100, "device_span_ms_per_call": 0.24733535766601564, "wall_ms_per_call": 0.24756526999999998, "max_abs": 0.0}
+{"kind": "measurement", "tokens": 936, "config": "candidate", "pass": 1, "iterations": 100, "device_span_ms_per_call": 0.21404800415039063, "wall_ms_per_call": 0.21417622000000003, "max_abs": 0.0}
+{"kind": "measurement", "tokens": 936, "config": "candidate", "pass": 2, "iterations": 100, "device_span_ms_per_call": 0.21405311584472655, "wall_ms_per_call": 0.21417843, "max_abs": 0.0}
+{"kind": "measurement", "tokens": 936, "config": "baseline", "pass": 2, "iterations": 100, "device_span_ms_per_call": 0.24720319747924804, "wall_ms_per_call": 0.24733708, "max_abs": 0.0}
+{"kind": "workspace_fidelity", "tokens": 3399, "config": "baseline", "differences": {"u": {"changed": 0, "max_abs": 0.0}, "w": {"changed": 0, "max_abs": 0.0}, "qd": {"changed": 0, "max_abs": 0.0}, "kd": {"changed": 0, "max_abs": 0.0}, "pb": {"changed": 0, "max_abs": 0.0}, "decay": {"changed": 0, "max_abs": 0.0}}}
+{"kind": "feasibility", "tokens": 3399, "config": "baseline", "passed": true, "max_abs": 0.0, "relative_l2": 0.0, "seconds": 0.03598189912736416}
+{"kind": "workspace_fidelity", "tokens": 3399, "config": "candidate", "differences": {"u": {"changed": 0, "max_abs": 0.0}, "w": {"changed": 0, "max_abs": 0.0}, "qd": {"changed": 0, "max_abs": 0.0}, "kd": {"changed": 0, "max_abs": 0.0}, "pb": {"changed": 0, "max_abs": 0.0}, "decay": {"changed": 0, "max_abs": 0.0}}}
+{"kind": "feasibility", "tokens": 3399, "config": "candidate", "passed": true, "max_abs": 0.0, "relative_l2": 0.0, "seconds": 0.021518888883292675}
+{"kind": "measurement", "tokens": 3399, "config": "baseline", "pass": 1, "iterations": 100, "device_span_ms_per_call": 0.8004367828369141, "wall_ms_per_call": 0.80077451, "max_abs": 0.0}
+{"kind": "measurement", "tokens": 3399, "config": "candidate", "pass": 1, "iterations": 100, "device_span_ms_per_call": 0.6965641784667969, "wall_ms_per_call": 0.69676832, "max_abs": 0.0}
+{"kind": "measurement", "tokens": 3399, "config": "candidate", "pass": 2, "iterations": 100, "device_span_ms_per_call": 0.6970108795166016, "wall_ms_per_call": 0.69726191, "max_abs": 0.0}
+{"kind": "measurement", "tokens": 3399, "config": "baseline", "pass": 2, "iterations": 100, "device_span_ms_per_call": 0.7987455749511718, "wall_ms_per_call": 0.79893456, "max_abs": 0.0}
+{"kind": "complete", "pid": 1771200}

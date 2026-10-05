@@ -1,7 +1,8 @@
 # Contributing to System1-Omni
 
-Review the [README](README.md) for the project's architecture and current
-implementation status before making changes.
+Review the [README](README.md) and
+[architecture and integration contracts](docs/architecture.md) for the project's
+ownership boundaries and current implementation status before making changes.
 
 ## Adding a model
 
@@ -9,6 +10,21 @@ Keep model-specific preprocessing, execution and response formatting under
 `src/models/<model>/`; reusable hardware operations belong under `src/backends/`.
 Share serving infrastructure and extract shared model execution when multiple
 implementations need it.
+
+Keep processors and batch adapters separate from the model's forward
+implementation, even when they live in the same model directory. The README's
+target architecture shares processing orchestration and scheduling across
+models. Native workers already reuse
+[serial admission and dispatch](src/runtime/README.md); processing orchestration
+and GPU batching remain planned. Model executors own weights, forward passes,
+learned heads, and device state.
+
+For native implementations, Rust owns host processing, scheduling, model
+orchestration, and backend bindings/dispatch. CUDA/Metal provide device
+operations used by models or processing modules. Document processor inputs,
+executor layouts and batch constraints, output reconstruction, and state/buffer
+lifetimes alongside the existing API and numerical contract. Keep current worker
+integration usable while further shared runtime components remain unimplemented.
 
 All test bodies, test helpers and fixtures belong in the repository-level
 `tests/` tree. Do not add inline test bodies or crate-local `tests/` directories
@@ -41,9 +57,10 @@ draft until the self-review is complete.
 1. Read the full diff against the target branch, including tests and documentation.
    Fix issues you find and remove unrelated changes, unused code introduced by the
    PR, and unnecessary abstractions.
-2. Check that the change follows the project's architecture: shared serving
-   infrastructure, model-owned execution, and minimal shared utilities. Keep the
-   scope focused on the problem described in the PR.
+2. Check ownership against the architecture contracts: shared serving,
+   independent processing and scheduling, model-specific adapters and execution,
+   and hardware operations. Distinguish implemented layers from the target
+   design and keep the scope focused on the PR's stated problem.
 3. Run checks appropriate to the change. For Rust changes, use the commands below
    from the repository root; add or update tests when behavior changes. For
    documentation changes, check links, examples, and claims against the actual

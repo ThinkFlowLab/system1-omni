@@ -1,0 +1,1979 @@
+{
+  "title": "Open-Jev optimization progress",
+  "post_date": "2026-10-05",
+  "evidence_cutoff": "2026-10-05",
+  "repository_sha_inspected": "f594d7dfc4c2bef812e23f7ed73573be9625b287",
+  "controls": {
+    "hardware": "H200 (SM90; archived driver label NVIDIA L20X)",
+    "device_uuid": "GPU-cbf66259-f4ab-0ede-1811-82037dde5924",
+    "numa_node": 0,
+    "cpu_affinity": "0-15",
+    "model": "Open-Jev-27B-v1.1",
+    "base_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+    "checkpoint_revision": "28cf73067d5b337860bbef3c85b8b82ba8730956",
+    "precision": "BF16",
+    "http_workload": "74 single-candidate JevBench noul requests, 80-3399 tokens, concurrency 1",
+    "dataset_revision": "f8ce71361165846101d02ebc83ad44e47ae44fc3",
+    "measured_passes_per_arm": 2,
+    "marker_meaning": "Individual pass means, not confidence intervals",
+    "http_boundary": "Localhost Rust frontend, tokenization and worker execution through UTF8 response decoding; client JSON serialization and response JSON parsing excluded.",
+    "exclusions": "Preparation/downloads, startup/readiness, first inference and feasibility/warmup excluded from measured passes."
+  },
+  "backend": {
+    "date": "2026-10-03",
+    "experiment": "matched full-backend comparison",
+    "source": {
+      "path": "recipe/open_jev/validation.md",
+      "sha256": "01bd747639e28b5b625d20c6b723e5c33a6f08d1f88e81ec87689ef2cddc886d",
+      "url": "https://github.com/ThinkFlowLab/system1-omni/blob/e3cb4a215d76e5df929f60e71552531408f95c72/recipe/open_jev/validation.md"
+    },
+    "source_section": "Raw HF Transformers comparison, 2026-10-03",
+    "raw_availability": "Individual latency samples exported in ab-passes.jsonl; full responses, commands and source snapshots remain in the original local archive. Figure bars retain the published summary precision.",
+    "worker_revision": "202c0e163f868334a99d88407056ebe61dbb2dce",
+    "native_cuda_library_sha256": "e033315d4c67127809e62f41d991a149ac8ee0ce81827997af063815fd00d435",
+    "native_graph": false,
+    "fast_graph": true,
+    "rows": [
+      {
+        "label": "Raw HF Transformers",
+        "mean_ms": 362.209,
+        "pass_mean_ms": [
+          362.238,
+          362.18
+        ],
+        "value_status": "reported summary, rounded to 0.001 ms"
+      },
+      {
+        "label": "Native Rust/CUDA",
+        "mean_ms": 48.503,
+        "pass_mean_ms": [
+          48.471,
+          48.535
+        ],
+        "value_status": "reported summary, rounded to 0.001 ms"
+      },
+      {
+        "label": "OpenJev-Fast",
+        "mean_ms": 50.936,
+        "pass_mean_ms": [
+          51.097,
+          50.775
+        ],
+        "value_status": "reported summary, rounded to 0.001 ms"
+      }
+    ]
+  },
+  "graph": {
+    "date": "2026-10-03",
+    "experiment": "separate native graph-cache A/B",
+    "source": {
+      "path": "recipe/open_jev/validation.md",
+      "sha256": "01bd747639e28b5b625d20c6b723e5c33a6f08d1f88e81ec87689ef2cddc886d",
+      "url": "https://github.com/ThinkFlowLab/system1-omni/blob/e3cb4a215d76e5df929f60e71552531408f95c72/recipe/open_jev/validation.md"
+    },
+    "source_section": "Native CUDA Graph replay, 2026-10-03",
+    "raw_availability": "Individual mixed/short latency samples exported in ab-passes.jsonl; full response/trace/protocol archives remain local. Figure bars retain the published summary precision.",
+    "worker_dependencies_revision": "202c0e163f868334a99d88407056ebe61dbb2dce",
+    "cache_control": "Maximum scratch length and workload lengths warmed before measured passes; 57 distinct mixed-workload lengths.",
+    "mixed": [
+      {
+        "label": "Eager",
+        "mean_ms": 48.086,
+        "pass_mean_ms": [
+          48.062,
+          48.11
+        ],
+        "value_status": "reported summary, rounded to 0.001 ms"
+      },
+      {
+        "label": "Graph: 8 entries",
+        "mean_ms": 95.289,
+        "pass_mean_ms": [
+          95.425,
+          95.153
+        ],
+        "value_status": "reported summary, rounded to 0.001 ms"
+      },
+      {
+        "label": "Graph: 64 entries",
+        "mean_ms": 47.112,
+        "pass_mean_ms": [
+          47.05,
+          47.174
+        ],
+        "value_status": "reported summary, rounded to 0.001 ms"
+      }
+    ],
+    "short": [
+      {
+        "label": "Eager",
+        "mean_ms": 19.829,
+        "pass_mean_ms": [
+          19.835,
+          19.823
+        ],
+        "value_status": "reported summary, rounded to 0.001 ms"
+      },
+      {
+        "label": "Graph: 8 entries",
+        "mean_ms": 18.882,
+        "pass_mean_ms": [
+          18.902,
+          18.863
+        ],
+        "value_status": "reported summary, rounded to 0.001 ms"
+      },
+      {
+        "label": "Graph: 64 entries",
+        "mean_ms": 19.081,
+        "pass_mean_ms": [
+          18.968,
+          19.194
+        ],
+        "value_status": "reported summary, rounded to 0.001 ms"
+      }
+    ],
+    "short_requests_per_pass": 32,
+    "mixed_requests_per_pass": 74
+  },
+  "gdn_kernel": {
+    "date": "2026-10-03",
+    "experiment": "separate complete GDN call A/B",
+    "source": {
+      "path": "benchmarks/gdn/artifacts/20261003/kernel/analysis/results.jsonl",
+      "sha256": "d59965ba4b4b48ab97caefe43ccfde46d3f582cb9216e8581d3775b61c043692",
+      "url": "https://github.com/ThinkFlowLab/system1-omni/blob/e3cb4a215d76e5df929f60e71552531408f95c72/benchmarks/gdn/artifacts/20261003/kernel/analysis/results.jsonl"
+    },
+    "baseline_revision": "58b8cbe9d4738f6c217f6fe584852dc9361b2c24",
+    "candidate_gdn_sha256": "9f2642a5f6e69cd22055419ecf1f799f1ccd811f7453763a41adf4f15b07a41d",
+    "controls": "Batch 1; Q/K heads 16, value heads 48, head dim 128; seeded synthetic correlated Q/K and weak decay. Complete preparation/state/output call; eager host submission included. One feasibility and 10 warmups excluded; two passes of 100 calls per shape/arm, second pass reverses order.",
+    "shapes": [
+      {
+        "tokens": 107,
+        "rows": [
+          {
+            "label": "Baseline",
+            "mean_ms": 0.05113337,
+            "pass_mean_ms": [
+              0.05129078,
+              0.05097596
+            ],
+            "value_status": "derived from raw kernel wall times"
+          },
+          {
+            "label": "Packed TF32",
+            "mean_ms": 0.050935030000000006,
+            "pass_mean_ms": [
+              0.050913560000000004,
+              0.0509565
+            ],
+            "value_status": "derived from raw kernel wall times"
+          }
+        ]
+      },
+      {
+        "tokens": 936,
+        "rows": [
+          {
+            "label": "Baseline",
+            "mean_ms": 0.24745117499999997,
+            "pass_mean_ms": [
+              0.24756526999999998,
+              0.24733708
+            ],
+            "value_status": "derived from raw kernel wall times"
+          },
+          {
+            "label": "Packed TF32",
+            "mean_ms": 0.21417732500000003,
+            "pass_mean_ms": [
+              0.21417622000000003,
+              0.21417843
+            ],
+            "value_status": "derived from raw kernel wall times"
+          }
+        ]
+      },
+      {
+        "tokens": 3399,
+        "rows": [
+          {
+            "label": "Baseline",
+            "mean_ms": 0.7998545349999999,
+            "pass_mean_ms": [
+              0.80077451,
+              0.79893456
+            ],
+            "value_status": "derived from raw kernel wall times"
+          },
+          {
+            "label": "Packed TF32",
+            "mean_ms": 0.697015115,
+            "pass_mean_ms": [
+              0.69676832,
+              0.69726191
+            ],
+            "value_status": "derived from raw kernel wall times"
+          }
+        ]
+      }
+    ]
+  },
+  "gdn_http": {
+    "date": "2026-10-03",
+    "experiment": "separate GDN native HTTP A/B",
+    "sources": [
+      {
+        "path": "benchmarks/gdn/artifacts/20261003/e2e/baseline-measured-1.jsonl",
+        "sha256": "ff0edc3cd0581b2a8374a6ed5cfb13e70c086bb027e3b04208115c62a12a1ff9",
+        "url": "https://github.com/ThinkFlowLab/system1-omni/blob/e3cb4a215d76e5df929f60e71552531408f95c72/benchmarks/gdn/artifacts/20261003/e2e/baseline-measured-1.jsonl"
+      },
+      {
+        "path": "benchmarks/gdn/artifacts/20261003/e2e/baseline-measured-2.jsonl",
+        "sha256": "5a60b08924461e9bfe50310c21832df29be5fed83825dc58502cf6c10c39e5d0",
+        "url": "https://github.com/ThinkFlowLab/system1-omni/blob/e3cb4a215d76e5df929f60e71552531408f95c72/benchmarks/gdn/artifacts/20261003/e2e/baseline-measured-2.jsonl"
+      },
+      {
+        "path": "benchmarks/gdn/artifacts/20261003/e2e/candidate-measured-1.jsonl",
+        "sha256": "aa11cb7a4ef76cd7551561cc50a09fa9885f11b89035f8457881376d7a024a2e",
+        "url": "https://github.com/ThinkFlowLab/system1-omni/blob/e3cb4a215d76e5df929f60e71552531408f95c72/benchmarks/gdn/artifacts/20261003/e2e/candidate-measured-1.jsonl"
+      },
+      {
+        "path": "benchmarks/gdn/artifacts/20261003/e2e/candidate-measured-2.jsonl",
+        "sha256": "37d517470e0a2eb26f4faf956da2339c87eb9ca7e2123b4d4efa6f086b28f44e",
+        "url": "https://github.com/ThinkFlowLab/system1-omni/blob/e3cb4a215d76e5df929f60e71552531408f95c72/benchmarks/gdn/artifacts/20261003/e2e/candidate-measured-2.jsonl"
+      }
+    ],
+    "summary": {
+      "path": "benchmarks/gdn/artifacts/20261003/e2e/summary.json",
+      "sha256": "d61f0cae30bf79e9263280d62d47d9442387583be6bc811ffb7e9ed5d35d9ce7",
+      "url": "https://github.com/ThinkFlowLab/system1-omni/blob/e3cb4a215d76e5df929f60e71552531408f95c72/benchmarks/gdn/artifacts/20261003/e2e/summary.json"
+    },
+    "worker_revision": "202c0e163f868334a99d88407056ebe61dbb2dce",
+    "library_source_revision": "7b935723c6fa17145e3d866675202fb6f7ea1f5d",
+    "native_graph": false,
+    "acceptance_gate_percent": 2,
+    "accepted_latency_gate": false,
+    "rows": [
+      {
+        "label": "Baseline",
+        "mean_ms": 48.408149155405404,
+        "pass_mean_ms": [
+          48.37519689189189,
+          48.44110141891892
+        ],
+        "value_status": "derived from 148 raw HTTP responses per arm"
+      },
+      {
+        "label": "Packed TF32",
+        "mean_ms": 48.20480650675675,
+        "pass_mean_ms": [
+          48.10456159459459,
+          48.305051418918914
+        ],
+        "value_status": "derived from 148 raw HTTP responses per arm"
+      }
+    ]
+  },
+  "integration": {
+    "date": "2026-10-04",
+    "source": {
+      "path": "benchmarks/gdn/artifacts/20261004/integration.json",
+      "sha256": "86ef579b5eef97ba1c9b2eb43bdc5b43639a2028c9e87fad7c6c49ff3237dc99",
+      "url": "https://github.com/ThinkFlowLab/system1-omni/blob/e3cb4a215d76e5df929f60e71552531408f95c72/benchmarks/gdn/artifacts/20261004/integration.json"
+    },
+    "gpu_tests": 6,
+    "gdn_cases": 20,
+    "model_requests": 74,
+    "probabilities_exact": true,
+    "performance_comparison_run": false
+  },
+  "unmeasured": [
+    "Merged GDN optimization with CUDA Graph replay enabled",
+    "Fresh latency comparison of current main",
+    "Multi-candidate shared-prefix serving",
+    "Hardware-counter occupancy/stall/bandwidth attribution"
+  ],
+  "isolated_pr55": [
+    {
+      "id": "rmsnorm",
+      "pr": 55,
+      "date": "2026-10-01",
+      "archive": "jev-single-candidate-rmsnorm-register-cache-20261001",
+      "plan_sha256": "4bbf691cf480182b9adc54da942c3415e8eeeef33ead32961ed92b690f84ab27",
+      "comparison_sha256": "7c3352e8e2a0c9457ac764a190fc32bbb962c64028aff594534a778245b858b2",
+      "hypothesis": "Retaining each thread's rounded residuals in registers, using the original 256-thread element mapping and accumulation order, will reduce normalization time while preserving native model probabilities.",
+      "variable": "Residual RMSNorm register caching and fixed-width unrolling for 2560/5120. Thread mapping, addition/normalization rounding, summation order, candidate strategy, graphs, other kernels and worker remain fixed. Fast is an additional packaged-backend reference.",
+      "controls": {
+        "gpu_ids": [
+          5
+        ],
+        "gpu_uuid": "GPU-74686e20-1b86-e2b5-32e3-cee14db6d96c",
+        "cpu_affinity": "56-71",
+        "numa_memory_node": 1,
+        "dtype": "BF16",
+        "max_length": 16384,
+        "native_graph": "CUA_S1_GRAPH=0",
+        "server": "one worker/frontend pair per configuration reused for all requests",
+        "frontend": "same frozen PR55 Rust binary",
+        "http": "localhost; concurrency 1; client body serialization and response JSON parsing excluded from timer",
+        "cache": "reuse prepared weights and extensions; warm-up before listening; full 74-request feasibility pass before two measured passes; no cache drops or clock changes",
+        "timing_instrumentation": "HTTP passes occur before nsys start, with collection inactive; worker was launched via nsys for later tracing, so CUPTI instrumentation may still be loaded. Same procedure in all configurations."
+      },
+      "budget": {
+        "cpu_probe": 1,
+        "gpu_kernel_validation_run": 1,
+        "feasibility_full_passes_per_configuration": 1,
+        "measured_full_passes_per_configuration": 2,
+        "requests_per_full_pass": 74,
+        "trace_passes_per_configuration": 2,
+        "representatives_per_trace_pass": 3,
+        "total_model_traces": 18,
+        "extra_measured_runs": 0,
+        "gpu_timeout": "45m",
+        "gpu_wait": "10m"
+      },
+      "revisions": {
+        "optimization_base": "ce387702d2005f53e4f2780a4575d4df3986e366",
+        "frozen_worker": "202c0e163f868334a99d88407056ebe61dbb2dce",
+        "fast": "c52b8bb958c1f0d241d4eb7fce4ecd8d885bf1e4",
+        "jevbench": "f8ce71361165846101d02ebc83ad44e47ae44fc3"
+      },
+      "acceptance": "New kernel/reference checks pass; all 74 native predictions unchanged with maximum probability difference <=0.01; residual RMSNorm duration lower by >=25% on the short representative; aggregate warm single-candidate HTTP latency lower by >=2% beyond observed run spread.",
+      "stop": "Stop on kernel test, readiness, token count, nonfinite output, response or trace failure; stop at the run limit if inconclusive; preserve all raw results and only clean owned processes.",
+      "order": [
+        "baseline",
+        "optimized",
+        "fast"
+      ],
+      "request_manifest_sha256": "0c756a7b0b4c1f1352225f2e01770b5b3a0646fe86d5cc6930ded9e292ef37df",
+      "observed_gates": {
+        "gpu_tests_passed": true,
+        "decisions_unchanged": true,
+        "probability_delta_within_limit": true,
+        "short_residual_norm_reduction_fraction": 0.761599154035881,
+        "short_residual_norm_reduction_at_least_25pct": true,
+        "mean_http_reduction_fraction": 0.025819262277508515,
+        "mean_http_reduction_at_least_2pct": true,
+        "http_pass_ranges_disjoint": true,
+        "all_success_criteria_met": true
+      },
+      "http_rows": [
+        {
+          "label": "Baseline",
+          "mean_ms": 51.424376660253145,
+          "pass_mean_ms": [
+            51.44003272761364,
+            51.40872059289266
+          ],
+          "library_sha256": "2f69c7b8a871deea8ddb1e93b995de16e4190d037baa5145a7ef4ab847fdf046"
+        },
+        {
+          "label": "Cached RMSNorm",
+          "mean_ms": 50.09663719180468,
+          "pass_mean_ms": [
+            50.14429321965656,
+            50.0489811639528
+          ],
+          "library_sha256": "e852355676dc0807aa2c5abf222290524517c8090304df764647b3edc8cd6595"
+        }
+      ],
+      "trace_rows": [
+        {
+          "label": "Baseline",
+          "mean_ms": 1.9442905000000001,
+          "trace_sum_ms": [
+            1.9435220000000004,
+            1.945059
+          ]
+        },
+        {
+          "label": "Cached RMSNorm",
+          "mean_ms": 0.4635204999999999,
+          "trace_sum_ms": [
+            0.46150499999999994,
+            0.46553599999999984
+          ]
+        }
+      ],
+      "trace_tokens": 107,
+      "trace_launches": 128,
+      "trace_shapes": [
+        {
+          "tokens": 107,
+          "rows": [
+            {
+              "label": "Baseline",
+              "trace_sum_ms": [
+                1.9435220000000004,
+                1.945059
+              ],
+              "mean_ms": 1.9442905000000001
+            },
+            {
+              "label": "Cached RMSNorm",
+              "trace_sum_ms": [
+                0.46150499999999994,
+                0.46553599999999984
+              ],
+              "mean_ms": 0.4635204999999999
+            }
+          ]
+        },
+        {
+          "tokens": 936,
+          "rows": [
+            {
+              "label": "Baseline",
+              "trace_sum_ms": [
+                2.4178320000000006,
+                2.4528329999999996
+              ],
+              "mean_ms": 2.4353325000000003
+            },
+            {
+              "label": "Cached RMSNorm",
+              "trace_sum_ms": [
+                1.3871050000000003,
+                1.3845780000000003
+              ],
+              "mean_ms": 1.3858415000000002
+            }
+          ]
+        },
+        {
+          "tokens": 3399,
+          "rows": [
+            {
+              "label": "Baseline",
+              "trace_sum_ms": [
+                9.888331999999998,
+                9.841229000000002
+              ],
+              "mean_ms": 9.8647805
+            },
+            {
+              "label": "Cached RMSNorm",
+              "trace_sum_ms": [
+                5.352006,
+                5.339845000000002
+              ],
+              "mean_ms": 5.345925500000002
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "silu",
+      "pr": 55,
+      "date": "2026-10-02",
+      "archive": "jev-single-candidate-silu-pack8-20261002",
+      "plan_sha256": "806fba8b8abbd2dfeb4402bdc966b489337c92cc841e0e6a022d7e90db1ee371",
+      "comparison_sha256": "fd86dfa096882b6b89c47fcf5c1fbcd489372b24a23bbd1252a5bf4fc5a62c31",
+      "hypothesis": "Pack eight aligned BF16 MLP gate/up elements per thread for 16-byte loads/stores and eight independent SiLU calculations, preserving expf and both BF16 rounding points, to reduce the measured MLP activation gap.",
+      "variable": "Only cs1_silu_mul chooses packed8 execution for aligned pointers with width/stride divisible8; odd/unaligned cases retain scalar execution. Cached norm, scalar256-thread GDN, all attention/matmul/other kernels, worker/frontend/model/native graphs0 remain fixed. Fast is a packaged-backend reference.",
+      "controls": {
+        "gpu_ids": [
+          2
+        ],
+        "gpu_uuid": "GPU-cbf66259-f4ab-0ede-1811-82037dde5924",
+        "cpu_affinity": "0-15",
+        "numa_memory_node": 0,
+        "dtype": "BF16",
+        "max_length": 16384,
+        "native_graph": "CUA_S1_GRAPH=0",
+        "server": "one worker/frontend pair per configuration reused for all requests",
+        "frontend": "same frozen PR55 Rust binary",
+        "http": "localhost; concurrency 1; client body serialization and response JSON parsing excluded from timer",
+        "cache": "reuse prepared weights and extensions; warm-up before listening; full 74-request feasibility pass before two measured passes; no cache drops or clock changes",
+        "timing_instrumentation": "HTTP passes occur before nsys start, with collection inactive; worker was launched via nsys for later tracing, so CUPTI instrumentation may still be loaded. Same procedure in all configurations."
+      },
+      "budget": {
+        "cpu_probe": 1,
+        "gpu_kernel_validation_run": 1,
+        "feasibility_full_passes_per_configuration": 1,
+        "measured_full_passes_per_configuration": 2,
+        "requests_per_full_pass": 74,
+        "trace_passes_per_configuration": 2,
+        "representatives_per_trace_pass": 3,
+        "total_model_traces": 18,
+        "extra_measured_runs": 0,
+        "gpu_timeout": "45m",
+        "gpu_wait": "10m"
+      },
+      "revisions": {
+        "optimization_base": "ce387702d2005f53e4f2780a4575d4df3986e366",
+        "frozen_worker": "202c0e163f868334a99d88407056ebe61dbb2dce",
+        "fast": "c52b8bb958c1f0d241d4eb7fce4ecd8d885bf1e4",
+        "jevbench": "f8ce71361165846101d02ebc83ad44e47ae44fc3"
+      },
+      "acceptance": "All five GPU tests pass; all74 native decisions unchanged and max probability delta<=0.01; long3399-token MLP SiLU duration decreases>=25%; mean74-case warm HTTP latency decreases>=2% with disjoint two-pass mean ranges; stop at run limit otherwise.",
+      "stop": "Stop on kernel test, readiness, token count, nonfinite output, response or trace failure; stop at the run limit if inconclusive; preserve all raw results and only clean owned processes.",
+      "order": [
+        "baseline",
+        "optimized",
+        "fast"
+      ],
+      "request_manifest_sha256": "0c756a7b0b4c1f1352225f2e01770b5b3a0646fe86d5cc6930ded9e292ef37df",
+      "observed_gates": {
+        "gpu_tests_passed": true,
+        "decisions_unchanged": true,
+        "probability_delta_within_limit": true,
+        "long_mlp_silu_reduction_fraction": 0.6992761923525275,
+        "long_mlp_silu_reduction_at_least_25pct": true,
+        "mean_http_reduction_fraction": 0.024832810247092597,
+        "mean_http_reduction_at_least_2pct": true,
+        "http_pass_ranges_disjoint": true,
+        "all_success_criteria_met": true
+      },
+      "http_rows": [
+        {
+          "label": "Baseline",
+          "mean_ms": 49.526732144373895,
+          "pass_mean_ms": [
+            49.56332762801164,
+            49.490136660736155
+          ],
+          "library_sha256": "9bd68bafa64e8ee023403aef6194c9a57b25bae4ed2b72e6463a4aa087730220"
+        },
+        {
+          "label": "Packed SiLU",
+          "mean_ms": 48.29684420287408,
+          "pass_mean_ms": [
+            48.286472698925316,
+            48.30721570682284
+          ],
+          "library_sha256": "e033315d4c67127809e62f41d991a149ac8ee0ce81827997af063815fd00d435"
+        }
+      ],
+      "trace_rows": [
+        {
+          "label": "Baseline",
+          "mean_ms": 21.2166175,
+          "trace_sum_ms": [
+            21.093644000000005,
+            21.339591
+          ]
+        },
+        {
+          "label": "Packed SiLU",
+          "mean_ms": 6.380342,
+          "trace_sum_ms": [
+            6.370821000000001,
+            6.389862999999998
+          ]
+        }
+      ],
+      "trace_tokens": 3399,
+      "trace_launches": 64,
+      "trace_shapes": [
+        {
+          "tokens": 107,
+          "rows": [
+            {
+              "label": "Baseline",
+              "trace_sum_ms": [
+                0.6786889999999998,
+                0.6805120000000001
+              ],
+              "mean_ms": 0.6796004999999999
+            },
+            {
+              "label": "Packed SiLU",
+              "trace_sum_ms": [
+                0.30451200000000006,
+                0.3046400000000002
+              ],
+              "mean_ms": 0.3045760000000001
+            }
+          ]
+        },
+        {
+          "tokens": 936,
+          "rows": [
+            {
+              "label": "Baseline",
+              "trace_sum_ms": [
+                5.6389140000000015,
+                5.647938000000003
+              ],
+              "mean_ms": 5.643426000000002
+            },
+            {
+              "label": "Packed SiLU",
+              "trace_sum_ms": [
+                1.735426,
+                1.756931
+              ],
+              "mean_ms": 1.7461785
+            }
+          ]
+        },
+        {
+          "tokens": 3399,
+          "rows": [
+            {
+              "label": "Baseline",
+              "trace_sum_ms": [
+                21.093644000000005,
+                21.339591
+              ],
+              "mean_ms": 21.2166175
+            },
+            {
+              "label": "Packed SiLU",
+              "trace_sum_ms": [
+                6.370821000000001,
+                6.389862999999998
+              ],
+              "mean_ms": 6.380342
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "regressions": [
+    {
+      "pr": 78,
+      "date": "2026-10-05",
+      "archive": "system1-omni-pr78-ab-20261005",
+      "plan_sha256": "385aab0e23b47100659a68f51cf6ce80a6d90c2811160f83c0dd17a418090c98",
+      "summary_sha256": "d040d90432e869a13deb9a57d393a08406b7ccae212dc62a94a90b9b740524b8",
+      "revisions": {
+        "baseline": "07e67e16dd6d6f838dc57d3a6ebe113d4c3d4f8a",
+        "candidate": "fbb974b542d2f88939f4ce19a76549d9d1fca10f"
+      },
+      "hypothesis": "Separating native request processing from execution preserves responses and has no material warmed HTTP performance regression.",
+      "variable": "Only the Rust worker implementation: baseline 07e67e16 versus candidate fbb974b5. CUDA library, shared Qwen forward, dependencies, checkpoint exports and requests are held fixed.",
+      "gpu_uuid": "GPU-74686e20-1b86-e2b5-32e3-cee14db6d96c",
+      "gpu_id": 5,
+      "numa_node": 1,
+      "cpu_affinity": [
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71
+      ],
+      "controls": {
+        "graph": "CUA_S1_GRAPH=0",
+        "frontend": "Direct native worker HTTP; no frontend overhead comparison",
+        "cache": "Reuse prepared exports; real startup warmup before health; first inference, one full excluded feasibility pass, then 3 warmup requests before each measured pass. No shared caches dropped.",
+        "server": "One worker per model/revision, reused across all its passes; stop before loading the next configuration.",
+        "request_timeout_s": 180,
+        "readiness_timeout_s": 600,
+        "cpu_threads": "TOKIO_WORKER_THREADS=16; TOKENIZERS_PARALLELISM=false, identical for both revisions",
+        "memory_method": "nvidia-smi GPU memory.used sampled every 0.2s, scoped to reserved GPU5; sampled peak rather than allocator peak."
+      },
+      "budget": {
+        "feasibility_per_configuration": 1,
+        "measured_per_configuration_per_concurrency": 2,
+        "concurrency": [
+          1,
+          8,
+          16
+        ],
+        "extra_validation_per_configuration": "One near-limit request and four expected error requests after measurements; not timed as performance.",
+        "gpu_timeout": "30m"
+      },
+      "acceptance": {
+        "parity": "No failures in successful workload; exact JSON equality including key order except metadata.inference_seconds; zero probability/score drift and decision flips. Exact expected error response parity.",
+        "performance": "For every model/concurrency, mean of per-run mean HTTP latency <= 1.05x baseline, mean requests/s >= 0.95x baseline, mean per-run p95 <= 1.10x baseline. Report both measured runs and their relative range; if variability overlaps observed differences, no performance winner is claimed."
+      },
+      "model_revisions": {
+        "cua": {
+          "base": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+          "adapter": "16818868b0cc7813808aae4e87b417657046ab79"
+        },
+        "jev": {
+          "base": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+          "checkpoint": "28cf73067d5b337860bbef3c85b8b82ba8730956",
+          "temperature": 2.5343690298472983,
+          "max_length": 16384
+        }
+      },
+      "stop": "Stop at first build/probe/readiness/response/parity failure, scheduler interruption, 30m timeout, or completion of declared budget. Preserve failed artifacts; no silent additional runs or tolerance changes.",
+      "order": [
+        "cua-baseline",
+        "cua-candidate",
+        "jev-candidate",
+        "jev-baseline"
+      ],
+      "workload": {
+        "source": "Synthetic deterministic regression inputs, not an accuracy dataset",
+        "generator": "harness/prepare.py",
+        "seed": 78,
+        "requests_per_model": 64,
+        "slices": [
+          "short single",
+          "structured mixed/multi-question",
+          "long single",
+          "short multi-question"
+        ],
+        "truncation": "None. Separate near-limit successful request and late oversize rejection per model/revision are validation only."
+      },
+      "measured_requests": 1536,
+      "comparisons": [
+        {
+          "model": "cua",
+          "concurrency": 1,
+          "runs": {
+            "baseline": [
+              {
+                "run": 1,
+                "mean_latency_ms": 23.643564694793895,
+                "p50_latency_ms": 24.819073267281055,
+                "p95_latency_ms": 38.725268095731735,
+                "requests_per_second": 42.29009605831531,
+                "decisions_per_second": 95.15271613120944,
+                "failed_requests": 0,
+                "wall_seconds": 1.5133566949516535
+              },
+              {
+                "run": 2,
+                "mean_latency_ms": 23.546601049019955,
+                "p50_latency_ms": 24.6755494736135,
+                "p95_latency_ms": 38.49614039063454,
+                "requests_per_second": 42.464503821831045,
+                "decisions_per_second": 95.54513359911985,
+                "failed_requests": 0,
+                "wall_seconds": 1.5071411235257983
+              }
+            ],
+            "candidate": [
+              {
+                "run": 1,
+                "mean_latency_ms": 23.573081969516352,
+                "p50_latency_ms": 24.78814125061035,
+                "p95_latency_ms": 38.58705144375563,
+                "requests_per_second": 42.4170851522765,
+                "decisions_per_second": 95.43844159262213,
+                "failed_requests": 0,
+                "wall_seconds": 1.5088259782642126
+              },
+              {
+                "run": 2,
+                "mean_latency_ms": 23.58111008652486,
+                "p50_latency_ms": 24.72901437431574,
+                "p95_latency_ms": 38.49807195365429,
+                "requests_per_second": 42.40256796991349,
+                "decisions_per_second": 95.40577793230536,
+                "failed_requests": 0,
+                "wall_seconds": 1.5093425484374166
+              }
+            ]
+          },
+          "means": {
+            "baseline": {
+              "mean_latency_ms": 23.595082871906925,
+              "p50_latency_ms": 24.747311370447278,
+              "p95_latency_ms": 38.610704243183136,
+              "requests_per_second": 42.37729994007317,
+              "decisions_per_second": 95.34892486516465,
+              "failed_requests": 0,
+              "wall_seconds": 1.510248909238726
+            },
+            "candidate": {
+              "mean_latency_ms": 23.577096028020605,
+              "p50_latency_ms": 24.758577812463045,
+              "p95_latency_ms": 38.54256169870496,
+              "requests_per_second": 42.409826561094995,
+              "decisions_per_second": 95.42210976246375,
+              "failed_requests": 0,
+              "wall_seconds": 1.5090842633508146
+            }
+          },
+          "change_percent": {
+            "mean_latency_ms": -0.07623132321240567,
+            "p50_latency_ms": 0.04552592339068795,
+            "p95_latency_ms": -0.17648614759522285,
+            "requests_per_second": 0.0767548217272429,
+            "decisions_per_second": 0.0767548217272429
+          },
+          "relative_run_range_percent": {
+            "baseline": {
+              "mean_latency_ms": 0.41094852813332505,
+              "p95_latency_ms": 0.593430525519751,
+              "requests_per_second": 0.41155940506443933
+            },
+            "candidate": {
+              "mean_latency_ms": 0.0340504912011475,
+              "p95_latency_ms": 0.23086034290327717,
+              "requests_per_second": 0.034230704391338816
+            }
+          },
+          "observed_threshold_checks": {
+            "mean_latency": true,
+            "throughput": true,
+            "p95_latency": true
+          },
+          "observed_thresholds_pass": true
+        },
+        {
+          "model": "cua",
+          "concurrency": 8,
+          "runs": {
+            "baseline": [
+              {
+                "run": 1,
+                "mean_latency_ms": 168.6580256355228,
+                "p50_latency_ms": 150.7676993496716,
+                "p95_latency_ms": 320.99784072488546,
+                "requests_per_second": 45.87140962070109,
+                "decisions_per_second": 103.21067164657744,
+                "failed_requests": 0,
+                "wall_seconds": 1.3952045626938343
+              },
+              {
+                "run": 2,
+                "mean_latency_ms": 168.8039334549103,
+                "p50_latency_ms": 150.9071458131075,
+                "p95_latency_ms": 321.7828180640936,
+                "requests_per_second": 45.84002289200935,
+                "decisions_per_second": 103.14005150702104,
+                "failed_requests": 0,
+                "wall_seconds": 1.3961598612368107
+              }
+            ],
+            "candidate": [
+              {
+                "run": 1,
+                "mean_latency_ms": 168.44279439828824,
+                "p50_latency_ms": 150.7617854513228,
+                "p95_latency_ms": 320.61025127768517,
+                "requests_per_second": 45.92862109270835,
+                "decisions_per_second": 103.33939745859378,
+                "failed_requests": 0,
+                "wall_seconds": 1.393466611392796
+              },
+              {
+                "run": 2,
+                "mean_latency_ms": 168.80824718100484,
+                "p50_latency_ms": 150.8647045120597,
+                "p95_latency_ms": 321.1456844583154,
+                "requests_per_second": 45.837301851579355,
+                "decisions_per_second": 103.13392916605355,
+                "failed_requests": 0,
+                "wall_seconds": 1.3962427414953709
+              }
+            ]
+          },
+          "means": {
+            "baseline": {
+              "mean_latency_ms": 168.73097954521654,
+              "p50_latency_ms": 150.83742258138955,
+              "p95_latency_ms": 321.3903293944895,
+              "requests_per_second": 45.85571625635522,
+              "decisions_per_second": 103.17536157679925,
+              "failed_requests": 0,
+              "wall_seconds": 1.3956822119653225
+            },
+            "candidate": {
+              "mean_latency_ms": 168.62552078964654,
+              "p50_latency_ms": 150.81324498169124,
+              "p95_latency_ms": 320.87796786800027,
+              "requests_per_second": 45.88296147214385,
+              "decisions_per_second": 103.23666331232366,
+              "failed_requests": 0,
+              "wall_seconds": 1.3948546764440835
+            }
+          },
+          "change_percent": {
+            "mean_latency_ms": -0.06250112211417802,
+            "p50_latency_ms": -0.016028913305821124,
+            "p95_latency_ms": -0.1594203308651343,
+            "requests_per_second": 0.05941509153692959,
+            "decisions_per_second": 0.05941509153692959
+          },
+          "relative_run_range_percent": {
+            "baseline": {
+              "mean_latency_ms": 0.08647363974343703,
+              "p95_latency_ms": 0.2442442312085278,
+              "requests_per_second": 0.06844670905644357
+            },
+            "candidate": {
+              "mean_latency_ms": 0.2167244797852927,
+              "p95_latency_ms": 0.16686504972210137,
+              "requests_per_second": 0.19902647562196663
+            }
+          },
+          "observed_threshold_checks": {
+            "mean_latency": true,
+            "throughput": true,
+            "p95_latency": true
+          },
+          "observed_thresholds_pass": true
+        },
+        {
+          "model": "cua",
+          "concurrency": 16,
+          "runs": {
+            "baseline": [
+              {
+                "run": 1,
+                "mean_latency_ms": 323.62520217429847,
+                "p50_latency_ms": 263.40143382549286,
+                "p95_latency_ms": 660.2268787100911,
+                "requests_per_second": 45.638573032736225,
+                "decisions_per_second": 102.6867893236565,
+                "failed_requests": 0,
+                "wall_seconds": 1.4023225475102663
+              },
+              {
+                "run": 2,
+                "mean_latency_ms": 324.1197781317169,
+                "p50_latency_ms": 263.65995733067393,
+                "p95_latency_ms": 657.7011849731207,
+                "requests_per_second": 45.5823905309297,
+                "decisions_per_second": 102.56037869459182,
+                "failed_requests": 0,
+                "wall_seconds": 1.4040509779006243
+              }
+            ],
+            "candidate": [
+              {
+                "run": 1,
+                "mean_latency_ms": 322.30987533694133,
+                "p50_latency_ms": 261.8814129382372,
+                "p95_latency_ms": 660.5040859431028,
+                "requests_per_second": 45.83176631794925,
+                "decisions_per_second": 103.12147421538582,
+                "failed_requests": 0,
+                "wall_seconds": 1.3964113788679242
+              },
+              {
+                "run": 2,
+                "mean_latency_ms": 323.469228198519,
+                "p50_latency_ms": 262.2260330244899,
+                "p95_latency_ms": 654.3723726645112,
+                "requests_per_second": 45.68507723881652,
+                "decisions_per_second": 102.79142378733717,
+                "failed_requests": 0,
+                "wall_seconds": 1.400895081460476
+              }
+            ]
+          },
+          "means": {
+            "baseline": {
+              "mean_latency_ms": 323.8724901530077,
+              "p50_latency_ms": 263.5306955780834,
+              "p95_latency_ms": 658.9640318416059,
+              "requests_per_second": 45.61048178183296,
+              "decisions_per_second": 102.62358400912416,
+              "failed_requests": 0,
+              "wall_seconds": 1.4031867627054453
+            },
+            "candidate": {
+              "mean_latency_ms": 322.88955176773015,
+              "p50_latency_ms": 262.05372298136353,
+              "p95_latency_ms": 657.438229303807,
+              "requests_per_second": 45.75842177838288,
+              "decisions_per_second": 102.95644900136149,
+              "failed_requests": 0,
+              "wall_seconds": 1.3986532301642
+            }
+          },
+          "change_percent": {
+            "mean_latency_ms": -0.3034954851562577,
+            "p50_latency_ms": -0.5604556211108336,
+            "p95_latency_ms": -0.2315456480279643,
+            "requests_per_second": 0.32435525951590716,
+            "decisions_per_second": 0.32435525951592936
+          },
+          "relative_run_range_percent": {
+            "baseline": {
+              "mean_latency_ms": 0.15270699811051133,
+              "p95_latency_ms": 0.3832824881066531,
+              "requests_per_second": 0.12317892644778622
+            },
+            "candidate": {
+              "mean_latency_ms": 0.3590555517298444,
+              "p95_latency_ms": 0.9326675884188845,
+              "requests_per_second": 0.3205728550761186
+            }
+          },
+          "observed_threshold_checks": {
+            "mean_latency": true,
+            "throughput": true,
+            "p95_latency": true
+          },
+          "observed_thresholds_pass": true
+        },
+        {
+          "model": "jev",
+          "concurrency": 1,
+          "runs": {
+            "baseline": [
+              {
+                "run": 1,
+                "mean_latency_ms": 108.77547669224441,
+                "p50_latency_ms": 117.48234648257494,
+                "p95_latency_ms": 185.1208871230483,
+                "requests_per_second": 9.193011563819578,
+                "decisions_per_second": 16.08777023668426,
+                "failed_requests": 0,
+                "wall_seconds": 6.961810017935932
+              },
+              {
+                "run": 2,
+                "mean_latency_ms": 109.10347980097868,
+                "p50_latency_ms": 117.41309007629752,
+                "p95_latency_ms": 183.9484293013811,
+                "requests_per_second": 9.1653579658867,
+                "decisions_per_second": 16.039376440301726,
+                "failed_requests": 0,
+                "wall_seconds": 6.982815099880099
+              }
+            ],
+            "candidate": [
+              {
+                "run": 1,
+                "mean_latency_ms": 108.51770924637094,
+                "p50_latency_ms": 116.495072375983,
+                "p95_latency_ms": 182.76447616517544,
+                "requests_per_second": 9.2148223868676,
+                "decisions_per_second": 16.125939177018296,
+                "failed_requests": 0,
+                "wall_seconds": 6.945331913419068
+              },
+              {
+                "run": 2,
+                "mean_latency_ms": 108.6612411600072,
+                "p50_latency_ms": 116.43630685284734,
+                "p95_latency_ms": 185.0515278056264,
+                "requests_per_second": 9.20266950037695,
+                "decisions_per_second": 16.104671625659662,
+                "failed_requests": 0,
+                "wall_seconds": 6.954503798857331
+              }
+            ]
+          },
+          "means": {
+            "baseline": {
+              "mean_latency_ms": 108.93947824661154,
+              "p50_latency_ms": 117.44771827943623,
+              "p95_latency_ms": 184.5346582122147,
+              "requests_per_second": 9.17918476485314,
+              "decisions_per_second": 16.063573338492994,
+              "failed_requests": 0,
+              "wall_seconds": 6.9723125589080155
+            },
+            "candidate": {
+              "mean_latency_ms": 108.58947520318907,
+              "p50_latency_ms": 116.46568961441517,
+              "p95_latency_ms": 183.90800198540092,
+              "requests_per_second": 9.208745943622276,
+              "decisions_per_second": 16.11530540133898,
+              "failed_requests": 0,
+              "wall_seconds": 6.9499178561382
+            }
+          },
+          "change_percent": {
+            "mean_latency_ms": -0.3212820999841326,
+            "p50_latency_ms": -0.8361411182842948,
+            "p95_latency_ms": -0.33958728018079753,
+            "requests_per_second": 0.3220457973819757,
+            "decisions_per_second": 0.3220457973819535
+          },
+          "relative_run_range_percent": {
+            "baseline": {
+              "mean_latency_ms": 0.30108746068321396,
+              "p95_latency_ms": 0.6353591423020758,
+              "requests_per_second": 0.3012642041890503
+            },
+            "candidate": {
+              "mean_latency_ms": 0.1321784761991713,
+              "p95_latency_ms": 1.2435846269660993,
+              "requests_per_second": 0.1319711344525162
+            }
+          },
+          "observed_threshold_checks": {
+            "mean_latency": true,
+            "throughput": true,
+            "p95_latency": true
+          },
+          "observed_thresholds_pass": true
+        },
+        {
+          "model": "jev",
+          "concurrency": 8,
+          "runs": {
+            "baseline": [
+              {
+                "run": 1,
+                "mean_latency_ms": 815.8225555089302,
+                "p50_latency_ms": 876.6614920459688,
+                "p95_latency_ms": 1070.5230729654431,
+                "requests_per_second": 9.26425735788031,
+                "decisions_per_second": 16.212450376290544,
+                "failed_requests": 0,
+                "wall_seconds": 6.908270952291787
+              },
+              {
+                "run": 2,
+                "mean_latency_ms": 815.4474821203621,
+                "p50_latency_ms": 877.1442105062306,
+                "p95_latency_ms": 1035.457143560052,
+                "requests_per_second": 9.26659800948952,
+                "decisions_per_second": 16.21654651660666,
+                "failed_requests": 0,
+                "wall_seconds": 6.906525990925729
+              }
+            ],
+            "candidate": [
+              {
+                "run": 1,
+                "mean_latency_ms": 810.8023835520726,
+                "p50_latency_ms": 870.7613591104746,
+                "p95_latency_ms": 1031.0553880408406,
+                "requests_per_second": 9.316176785309846,
+                "decisions_per_second": 16.30330937429223,
+                "failed_requests": 0,
+                "wall_seconds": 6.869770880788565
+              },
+              {
+                "run": 2,
+                "mean_latency_ms": 811.9164827221539,
+                "p50_latency_ms": 872.3948402330279,
+                "p95_latency_ms": 1070.720685645938,
+                "requests_per_second": 9.304153342571169,
+                "decisions_per_second": 16.282268349499546,
+                "failed_requests": 0,
+                "wall_seconds": 6.878648453392088
+              }
+            ]
+          },
+          "means": {
+            "baseline": {
+              "mean_latency_ms": 815.6350188146462,
+              "p50_latency_ms": 876.9028512760997,
+              "p95_latency_ms": 1052.9901082627475,
+              "requests_per_second": 9.265427683684916,
+              "decisions_per_second": 16.2144984464486,
+              "failed_requests": 0,
+              "wall_seconds": 6.907398471608758
+            },
+            "candidate": {
+              "mean_latency_ms": 811.3594331371132,
+              "p50_latency_ms": 871.5780996717513,
+              "p95_latency_ms": 1050.8880368433893,
+              "requests_per_second": 9.310165063940508,
+              "decisions_per_second": 16.292788861895886,
+              "failed_requests": 0,
+              "wall_seconds": 6.8742096670903265
+            }
+          },
+          "change_percent": {
+            "mean_latency_ms": -0.5242032991357615,
+            "p50_latency_ms": -0.6072225214685645,
+            "p95_latency_ms": -0.19962879070405393,
+            "requests_per_second": 0.4828420422984703,
+            "decisions_per_second": 0.4828420422984703
+          },
+          "relative_run_range_percent": {
+            "baseline": {
+              "mean_latency_ms": 0.0459854444593632,
+              "p95_latency_ms": 3.3301290420708667,
+              "requests_per_second": 0.02526220795325848
+            },
+            "candidate": {
+              "mean_latency_ms": 0.1373126538719916,
+              "p95_latency_ms": 3.774455147880658,
+              "requests_per_second": 0.12914317475686143
+            }
+          },
+          "observed_threshold_checks": {
+            "mean_latency": true,
+            "throughput": true,
+            "p95_latency": true
+          },
+          "observed_thresholds_pass": true
+        },
+        {
+          "model": "jev",
+          "concurrency": 16,
+          "runs": {
+            "baseline": [
+              {
+                "run": 1,
+                "mean_latency_ms": 1520.0276859395672,
+                "p50_latency_ms": 1653.161978814751,
+                "p95_latency_ms": 1970.4050812870264,
+                "requests_per_second": 9.266964715495225,
+                "decisions_per_second": 16.217188252116642,
+                "failed_requests": 0,
+                "wall_seconds": 6.906252690590918
+              },
+              {
+                "run": 2,
+                "mean_latency_ms": 1519.0411615913035,
+                "p50_latency_ms": 1649.8426799662411,
+                "p95_latency_ms": 1969.7257680818439,
+                "requests_per_second": 9.27122505705079,
+                "decisions_per_second": 16.224643849838884,
+                "failed_requests": 0,
+                "wall_seconds": 6.903079108335078
+              }
+            ],
+            "candidate": [
+              {
+                "run": 1,
+                "mean_latency_ms": 1514.74720564147,
+                "p50_latency_ms": 1605.3223474882543,
+                "p95_latency_ms": 1961.962572298944,
+                "requests_per_second": 9.296778049378824,
+                "decisions_per_second": 16.269361586412945,
+                "failed_requests": 0,
+                "wall_seconds": 6.8841054029762745
+              },
+              {
+                "run": 2,
+                "mean_latency_ms": 1515.376426439616,
+                "p50_latency_ms": 1605.5023311637342,
+                "p95_latency_ms": 1966.2025962024927,
+                "requests_per_second": 9.29226008309599,
+                "decisions_per_second": 16.261455145417983,
+                "failed_requests": 0,
+                "wall_seconds": 6.887452506460249
+              }
+            ]
+          },
+          "means": {
+            "baseline": {
+              "mean_latency_ms": 1519.5344237654353,
+              "p50_latency_ms": 1651.502329390496,
+              "p95_latency_ms": 1970.0654246844351,
+              "requests_per_second": 9.269094886273008,
+              "decisions_per_second": 16.220916050977763,
+              "failed_requests": 0,
+              "wall_seconds": 6.904665899462998
+            },
+            "candidate": {
+              "mean_latency_ms": 1515.061816040543,
+              "p50_latency_ms": 1605.4123393259943,
+              "p95_latency_ms": 1964.0825842507184,
+              "requests_per_second": 9.294519066237406,
+              "decisions_per_second": 16.265408365915462,
+              "failed_requests": 0,
+              "wall_seconds": 6.885778954718262
+            }
+          },
+          "change_percent": {
+            "mean_latency_ms": -0.2943406648076574,
+            "p50_latency_ms": -2.7907917079058375,
+            "p95_latency_ms": -0.3036873983347621,
+            "requests_per_second": 0.27428977992285386,
+            "decisions_per_second": 0.27428977992285386
+          },
+          "relative_run_range_percent": {
+            "baseline": {
+              "mean_latency_ms": 0.06492280351365799,
+              "p95_latency_ms": 0.03448175865993713,
+              "requests_per_second": 0.045962864851820315
+            },
+            "candidate": {
+              "mean_latency_ms": 0.041531031373385346,
+              "p95_latency_ms": 0.21587808667252414,
+              "requests_per_second": 0.04860893017312319
+            }
+          },
+          "observed_threshold_checks": {
+            "mean_latency": true,
+            "throughput": true,
+            "p95_latency": true
+          },
+          "observed_thresholds_pass": true
+        }
+      ],
+      "failed_requests": 0,
+      "all_gates_pass": true
+    },
+    {
+      "pr": 80,
+      "date": "2026-10-05",
+      "archive": "system1-omni-shared-native-runtime-ab-20261005",
+      "plan_sha256": "02eaa0a22e483309f7d94825d50361b05b3895fadc5fa2406fa06eaba735b2d9",
+      "summary_sha256": "9172f243a80b7b81382dd080f7afb1cb4faa1e0ec0b58a9b31b2f573c07d5b54",
+      "revisions": {
+        "baseline": "cb3c37fa230d1b7a9cbd15015390961cee97f6e8",
+        "candidate": "887b29f1e58f99382c5b4c3528e2819158826294"
+      },
+      "hypothesis": "Shared FIFO admission before blocking dispatch preserves native responses and has no material warmed HTTP performance regression.",
+      "variable": "Only the Rust native execution admission and dispatch implementation: merged baseline cb3c37fa versus candidate 887b29f1. FIFO ordering and queued cancellation are intentional consequences. CUDA library, Qwen forward, checkpoints, numerical heads, tokenizer, requests and execution device are fixed.",
+      "gpu_uuid": "GPU-74686e20-1b86-e2b5-32e3-cee14db6d96c",
+      "gpu_id": 5,
+      "numa_node": 1,
+      "cpu_affinity": [
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71
+      ],
+      "controls": {
+        "graph": "CUA_S1_GRAPH=0",
+        "frontend": "Direct native worker HTTP; no frontend overhead comparison",
+        "cache": "Reuse prepared exports; real startup warmup before health; first inference, one full excluded feasibility pass, then 3 warmup requests before each measured pass. No shared caches dropped.",
+        "server": "One worker per model/revision, reused across all its passes; stop before loading the next configuration.",
+        "request_timeout_s": 180,
+        "readiness_timeout_s": 600,
+        "cpu_threads": "TOKIO_WORKER_THREADS=16; TOKENIZERS_PARALLELISM=false, identical for both revisions",
+        "memory_method": "nvidia-smi GPU memory.used sampled every 0.2s, scoped to reserved GPU5; sampled peak rather than allocator peak."
+      },
+      "budget": {
+        "feasibility_per_configuration": 1,
+        "measured_per_configuration_per_concurrency": 2,
+        "concurrency": [
+          1,
+          8,
+          16
+        ],
+        "extra_validation_per_configuration": "One near-limit request and four expected error requests after measurements; not timed as performance.",
+        "gpu_timeout": "30m"
+      },
+      "acceptance": {
+        "parity": "No failures in successful workload; exact JSON equality including key order except metadata.inference_seconds; zero probability/score drift and decision flips. Exact expected error response parity.",
+        "performance": "For every model/concurrency, mean of per-run mean HTTP latency <= 1.05x baseline, mean requests/s >= 0.95x baseline, mean per-run p95 <= 1.10x baseline. Report both measured runs and their relative range; if variability overlaps observed differences, no performance winner is claimed."
+      },
+      "model_revisions": {
+        "cua": {
+          "base": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+          "adapter": "16818868b0cc7813808aae4e87b417657046ab79"
+        },
+        "jev": {
+          "base": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+          "checkpoint": "28cf73067d5b337860bbef3c85b8b82ba8730956",
+          "temperature": 2.5343690298472983,
+          "max_length": 16384
+        }
+      },
+      "stop": "Stop at first build/probe/readiness/response/parity failure, scheduler interruption, 30m timeout, or completion of declared budget. Preserve failed artifacts; no silent additional runs or tolerance changes.",
+      "order": [
+        "cua-baseline",
+        "cua-candidate",
+        "jev-candidate",
+        "jev-baseline"
+      ],
+      "workload": {
+        "source": "Synthetic deterministic regression inputs, not an accuracy dataset",
+        "generator": "Reuse frozen deterministic PR78 workload verbatim; no new data generation.",
+        "seed": 78,
+        "requests_per_model": 64,
+        "slices": [
+          "short single",
+          "structured mixed/multi-question",
+          "long single",
+          "short multi-question"
+        ],
+        "truncation": "None. Separate near-limit successful request and late oversize rejection per model/revision are validation only."
+      },
+      "measured_requests": 1536,
+      "comparisons": [
+        {
+          "model": "cua",
+          "concurrency": 1,
+          "runs": {
+            "baseline": [
+              {
+                "run": 1,
+                "mean_latency_ms": 23.572002130094916,
+                "p50_latency_ms": 24.825689382851124,
+                "p95_latency_ms": 38.73073868453503,
+                "requests_per_second": 42.4181366711746,
+                "decisions_per_second": 95.44080751014285,
+                "failed_requests": 0,
+                "wall_seconds": 1.5087885754182935
+              },
+              {
+                "run": 2,
+                "mean_latency_ms": 23.562838905490935,
+                "p50_latency_ms": 24.736232589930296,
+                "p95_latency_ms": 38.88298198580742,
+                "requests_per_second": 42.43475969327841,
+                "decisions_per_second": 95.47820930987642,
+                "failed_requests": 0,
+                "wall_seconds": 1.5081975357607007
+              }
+            ],
+            "candidate": [
+              {
+                "run": 1,
+                "mean_latency_ms": 23.464718149625696,
+                "p50_latency_ms": 24.58598231896758,
+                "p95_latency_ms": 38.46710827201605,
+                "requests_per_second": 42.61255016128155,
+                "decisions_per_second": 95.87823786288348,
+                "failed_requests": 0,
+                "wall_seconds": 1.5019049495458603
+              },
+              {
+                "run": 2,
+                "mean_latency_ms": 23.51772964175325,
+                "p50_latency_ms": 24.623988196253777,
+                "p95_latency_ms": 38.56380004435778,
+                "requests_per_second": 42.516217728718466,
+                "decisions_per_second": 95.66148988961655,
+                "failed_requests": 0,
+                "wall_seconds": 1.505307937040925
+              }
+            ]
+          },
+          "means": {
+            "baseline": {
+              "mean_latency_ms": 23.567420517792925,
+              "p50_latency_ms": 24.78096098639071,
+              "p95_latency_ms": 38.80686033517122,
+              "requests_per_second": 42.42644818222651,
+              "decisions_per_second": 95.45950841000963,
+              "failed_requests": 0,
+              "wall_seconds": 1.508493055589497
+            },
+            "candidate": {
+              "mean_latency_ms": 23.491223895689473,
+              "p50_latency_ms": 24.60498525761068,
+              "p95_latency_ms": 38.51545415818691,
+              "requests_per_second": 42.564383945,
+              "decisions_per_second": 95.76986387625001,
+              "failed_requests": 0,
+              "wall_seconds": 1.5036064432933927
+            }
+          },
+          "change_percent": {
+            "mean_latency_ms": -0.3233133725684012,
+            "p50_latency_ms": -0.7101247158117663,
+            "p95_latency_ms": -0.7509140767056666,
+            "requests_per_second": 0.3251173941807295,
+            "decisions_per_second": 0.3251173941807517
+          },
+          "relative_run_range_percent": {
+            "baseline": {
+              "mean_latency_ms": 0.03888089745359587,
+              "p95_latency_ms": 0.3923102769909267,
+              "requests_per_second": 0.03918080069396788
+            },
+            "candidate": {
+              "mean_latency_ms": 0.2256650924743005,
+              "p95_latency_ms": 0.2510466888034221,
+              "requests_per_second": 0.22632168877989092
+            }
+          },
+          "observed_threshold_checks": {
+            "mean_latency": true,
+            "throughput": true,
+            "p95_latency": true
+          },
+          "observed_thresholds_pass": true
+        },
+        {
+          "model": "cua",
+          "concurrency": 8,
+          "runs": {
+            "baseline": [
+              {
+                "run": 1,
+                "mean_latency_ms": 168.18484872055706,
+                "p50_latency_ms": 150.09859623387456,
+                "p95_latency_ms": 319.9984021484852,
+                "requests_per_second": 45.995123277714654,
+                "decisions_per_second": 103.48902737485797,
+                "failed_requests": 0,
+                "wall_seconds": 1.3914518635720015
+              },
+              {
+                "run": 2,
+                "mean_latency_ms": 168.08264615247026,
+                "p50_latency_ms": 150.56302258744836,
+                "p95_latency_ms": 321.2602911517024,
+                "requests_per_second": 46.02579719094424,
+                "decisions_per_second": 103.55804367962453,
+                "failed_requests": 0,
+                "wall_seconds": 1.390524529851973
+              }
+            ],
+            "candidate": [
+              {
+                "run": 1,
+                "mean_latency_ms": 167.39734898146708,
+                "p50_latency_ms": 149.21053871512413,
+                "p95_latency_ms": 319.03494335711,
+                "requests_per_second": 46.21348580913898,
+                "decisions_per_second": 103.98034307056271,
+                "failed_requests": 0,
+                "wall_seconds": 1.3848771387711167
+              },
+              {
+                "run": 2,
+                "mean_latency_ms": 167.33721327909734,
+                "p50_latency_ms": 148.96857412531972,
+                "p95_latency_ms": 319.03609447181225,
+                "requests_per_second": 46.24227402501423,
+                "decisions_per_second": 104.04511655628203,
+                "failed_requests": 0,
+                "wall_seconds": 1.384014980867505
+              }
+            ]
+          },
+          "means": {
+            "baseline": {
+              "mean_latency_ms": 168.13374743651366,
+              "p50_latency_ms": 150.33080941066146,
+              "p95_latency_ms": 320.6293466500938,
+              "requests_per_second": 46.01046023432944,
+              "decisions_per_second": 103.52353552724125,
+              "failed_requests": 0,
+              "wall_seconds": 1.3909881967119873
+            },
+            "candidate": {
+              "mean_latency_ms": 167.3672811302822,
+              "p50_latency_ms": 149.08955642022192,
+              "p95_latency_ms": 319.03551891446114,
+              "requests_per_second": 46.227879917076606,
+              "decisions_per_second": 104.01272981342237,
+              "failed_requests": 0,
+              "wall_seconds": 1.384446059819311
+            }
+          },
+          "change_percent": {
+            "mean_latency_ms": -0.455867021295564,
+            "p50_latency_ms": -0.8256810399049908,
+            "p95_latency_ms": -0.4970935294241863,
+            "requests_per_second": 0.47254402942256135,
+            "decisions_per_second": 0.47254402942256135
+          },
+          "relative_run_range_percent": {
+            "baseline": {
+              "mean_latency_ms": 0.060786468894584424,
+              "p95_latency_ms": 0.39356628343641087,
+              "requests_per_second": 0.06666726016945615
+            },
+            "candidate": {
+              "mean_latency_ms": 0.0359303813526873,
+              "p95_latency_ms": 0.0003608108295093516,
+              "requests_per_second": 0.06227457527122716
+            }
+          },
+          "observed_threshold_checks": {
+            "mean_latency": true,
+            "throughput": true,
+            "p95_latency": true
+          },
+          "observed_thresholds_pass": true
+        },
+        {
+          "model": "cua",
+          "concurrency": 16,
+          "runs": {
+            "baseline": [
+              {
+                "run": 1,
+                "mean_latency_ms": 321.756955498131,
+                "p50_latency_ms": 267.7381932735443,
+                "p95_latency_ms": 652.9601057991385,
+                "requests_per_second": 45.92664571301412,
+                "decisions_per_second": 103.33495285428177,
+                "failed_requests": 0,
+                "wall_seconds": 1.3935265466570854
+              },
+              {
+                "run": 2,
+                "mean_latency_ms": 321.5482143132249,
+                "p50_latency_ms": 261.32911536842585,
+                "p95_latency_ms": 652.8892070055008,
+                "requests_per_second": 45.947686197850246,
+                "decisions_per_second": 103.38229394516304,
+                "failed_requests": 0,
+                "wall_seconds": 1.39288841933012
+              }
+            ],
+            "candidate": [
+              {
+                "run": 1,
+                "mean_latency_ms": 319.966614144505,
+                "p50_latency_ms": 263.4979016147554,
+                "p95_latency_ms": 653.8181733340025,
+                "requests_per_second": 46.15989056244911,
+                "decisions_per_second": 103.85975376551049,
+                "failed_requests": 0,
+                "wall_seconds": 1.3864850895479321
+              },
+              {
+                "run": 2,
+                "mean_latency_ms": 319.7680433950154,
+                "p50_latency_ms": 265.9359574317932,
+                "p95_latency_ms": 645.5988604575396,
+                "requests_per_second": 46.21044198087834,
+                "decisions_per_second": 103.97349445697627,
+                "failed_requests": 0,
+                "wall_seconds": 1.3849683590233326
+              }
+            ]
+          },
+          "means": {
+            "baseline": {
+              "mean_latency_ms": 321.65258490567794,
+              "p50_latency_ms": 264.5336543209851,
+              "p95_latency_ms": 652.9246564023197,
+              "requests_per_second": 45.93716595543218,
+              "decisions_per_second": 103.3586233997224,
+              "failed_requests": 0,
+              "wall_seconds": 1.3932074829936028
+            },
+            "candidate": {
+              "mean_latency_ms": 319.8673287697602,
+              "p50_latency_ms": 264.7169295232743,
+              "p95_latency_ms": 649.708516895771,
+              "requests_per_second": 46.185166271663725,
+              "decisions_per_second": 103.91662411124338,
+              "failed_requests": 0,
+              "wall_seconds": 1.3857267242856324
+            }
+          },
+          "change_percent": {
+            "mean_latency_ms": -0.5550262051962851,
+            "p50_latency_ms": 0.06928237647481073,
+            "p95_latency_ms": -0.49257436903514806,
+            "requests_per_second": 0.5398685597456154,
+            "decisions_per_second": 0.5398685597456154
+          },
+          "relative_run_range_percent": {
+            "baseline": {
+              "mean_latency_ms": 0.0648964736183651,
+              "p95_latency_ms": 0.01085864853510235,
+              "requests_per_second": 0.04580274903449888
+            },
+            "candidate": {
+              "mean_latency_ms": 0.06207909705980673,
+              "p95_latency_ms": 1.2650769787863982,
+              "requests_per_second": 0.10945379763686534
+            }
+          },
+          "observed_threshold_checks": {
+            "mean_latency": true,
+            "throughput": true,
+            "p95_latency": true
+          },
+          "observed_thresholds_pass": true
+        },
+        {
+          "model": "jev",
+          "concurrency": 1,
+          "runs": {
+            "baseline": [
+              {
+                "run": 1,
+                "mean_latency_ms": 108.49350826174486,
+                "p50_latency_ms": 116.88012536615133,
+                "p95_latency_ms": 183.41377563774586,
+                "requests_per_second": 9.216889873986396,
+                "decisions_per_second": 16.129557279476195,
+                "failed_requests": 0,
+                "wall_seconds": 6.943773970939219
+              },
+              {
+                "run": 2,
+                "mean_latency_ms": 108.58626394474413,
+                "p50_latency_ms": 116.57218122854829,
+                "p95_latency_ms": 184.84843336045742,
+                "requests_per_second": 9.209019516400739,
+                "decisions_per_second": 16.11578415370129,
+                "failed_requests": 0,
+                "wall_seconds": 6.949708368629217
+              }
+            ],
+            "candidate": [
+              {
+                "run": 1,
+                "mean_latency_ms": 108.64062464679591,
+                "p50_latency_ms": 116.74102395772934,
+                "p95_latency_ms": 183.6915072053671,
+                "requests_per_second": 9.204360825076192,
+                "decisions_per_second": 16.107631443883335,
+                "failed_requests": 0,
+                "wall_seconds": 6.953225891105831
+              },
+              {
+                "run": 2,
+                "mean_latency_ms": 108.7879814876942,
+                "p50_latency_ms": 116.75423290580511,
+                "p95_latency_ms": 184.3387857079506,
+                "requests_per_second": 9.191867393645312,
+                "decisions_per_second": 16.085767938879297,
+                "failed_requests": 0,
+                "wall_seconds": 6.96267659869045
+              }
+            ]
+          },
+          "means": {
+            "baseline": {
+              "mean_latency_ms": 108.5398861032445,
+              "p50_latency_ms": 116.72615329734981,
+              "p95_latency_ms": 184.13110449910164,
+              "requests_per_second": 9.212954695193567,
+              "decisions_per_second": 16.122670716588743,
+              "failed_requests": 0,
+              "wall_seconds": 6.946741169784218
+            },
+            "candidate": {
+              "mean_latency_ms": 108.71430306724505,
+              "p50_latency_ms": 116.74762843176723,
+              "p95_latency_ms": 184.01514645665884,
+              "requests_per_second": 9.198114109360752,
+              "decisions_per_second": 16.096699691381318,
+              "failed_requests": 0,
+              "wall_seconds": 6.95795124489814
+            }
+          },
+          "change_percent": {
+            "mean_latency_ms": 0.16069388891255532,
+            "p50_latency_ms": 0.0183978772629656,
+            "p95_latency_ms": -0.06297580344083453,
+            "requests_per_second": -0.1610838902806888,
+            "decisions_per_second": -0.1610838902806888
+          },
+          "relative_run_range_percent": {
+            "baseline": {
+              "mean_latency_ms": 0.08545769332302211,
+              "p95_latency_ms": 0.7791501205699675,
+              "requests_per_second": 0.08542707357242914
+            },
+            "candidate": {
+              "mean_latency_ms": 0.1355450356951978,
+              "p95_latency_ms": 0.3517528393979011,
+              "requests_per_second": 0.1358260104445238
+            }
+          },
+          "observed_threshold_checks": {
+            "mean_latency": true,
+            "throughput": true,
+            "p95_latency": true
+          },
+          "observed_thresholds_pass": true
+        },
+        {
+          "model": "jev",
+          "concurrency": 8,
+          "runs": {
+            "baseline": [
+              {
+                "run": 1,
+                "mean_latency_ms": 810.4246127040824,
+                "p50_latency_ms": 870.7078625448048,
+                "p95_latency_ms": 1066.2311390042305,
+                "requests_per_second": 9.323291565351052,
+                "decisions_per_second": 16.31576023936434,
+                "failed_requests": 0,
+                "wall_seconds": 6.864528428763151
+              },
+              {
+                "run": 2,
+                "mean_latency_ms": 811.967318499228,
+                "p50_latency_ms": 872.0217649824917,
+                "p95_latency_ms": 1033.0130765214562,
+                "requests_per_second": 9.30635845240784,
+                "decisions_per_second": 16.286127291713722,
+                "failed_requests": 0,
+                "wall_seconds": 6.877018581144512
+              }
+            ],
+            "candidate": [
+              {
+                "run": 1,
+                "mean_latency_ms": 811.1480626685079,
+                "p50_latency_ms": 870.5682288855314,
+                "p95_latency_ms": 1067.5159487873316,
+                "requests_per_second": 9.316584176502438,
+                "decisions_per_second": 16.30402230887927,
+                "failed_requests": 0,
+                "wall_seconds": 6.8694704826921225
+              },
+              {
+                "run": 2,
+                "mean_latency_ms": 810.9517402626807,
+                "p50_latency_ms": 871.5652390383184,
+                "p95_latency_ms": 1066.9734328985214,
+                "requests_per_second": 9.316141334930537,
+                "decisions_per_second": 16.30324733612844,
+                "failed_requests": 0,
+                "wall_seconds": 6.869797022081912
+              }
+            ]
+          },
+          "means": {
+            "baseline": {
+              "mean_latency_ms": 811.1959656016552,
+              "p50_latency_ms": 871.3648137636483,
+              "p95_latency_ms": 1049.6221077628434,
+              "requests_per_second": 9.314825008879446,
+              "decisions_per_second": 16.30094376553903,
+              "failed_requests": 0,
+              "wall_seconds": 6.870773504953831
+            },
+            "candidate": {
+              "mean_latency_ms": 811.0499014655943,
+              "p50_latency_ms": 871.0667339619249,
+              "p95_latency_ms": 1067.2446908429265,
+              "requests_per_second": 9.316362755716487,
+              "decisions_per_second": 16.303634822503852,
+              "failed_requests": 0,
+              "wall_seconds": 6.869633752387017
+            }
+          },
+          "change_percent": {
+            "mean_latency_ms": -0.018006023483185807,
+            "p50_latency_ms": -0.03420838172657481,
+            "p95_latency_ms": 1.6789454937876425,
+            "requests_per_second": 0.016508596088216088,
+            "decisions_per_second": 0.016508596088216088
+          },
+          "relative_run_range_percent": {
+            "baseline": {
+              "mean_latency_ms": 0.19017670952066254,
+              "p95_latency_ms": 3.164763988591569,
+              "requests_per_second": 0.18178669945028844
+            },
+            "candidate": {
+              "mean_latency_ms": 0.024205958902463406,
+              "p95_latency_ms": 0.05083331811954673,
+              "requests_per_second": 0.004753374074338478
+            }
+          },
+          "observed_threshold_checks": {
+            "mean_latency": true,
+            "throughput": true,
+            "p95_latency": true
+          },
+          "observed_thresholds_pass": true
+        },
+        {
+          "model": "jev",
+          "concurrency": 16,
+          "runs": {
+            "baseline": [
+              {
+                "run": 1,
+                "mean_latency_ms": 1505.5902774329297,
+                "p50_latency_ms": 1632.8256195411086,
+                "p95_latency_ms": 1953.7110393866897,
+                "requests_per_second": 9.355628571177455,
+                "decisions_per_second": 16.372349999560548,
+                "failed_requests": 0,
+                "wall_seconds": 6.840801717713475
+              },
+              {
+                "run": 2,
+                "mean_latency_ms": 1514.4285500136903,
+                "p50_latency_ms": 1647.6889764890075,
+                "p95_latency_ms": 1963.3938949555159,
+                "requests_per_second": 9.300259607450254,
+                "decisions_per_second": 16.275454313037944,
+                "failed_requests": 0,
+                "wall_seconds": 6.881528333760798
+              }
+            ],
+            "candidate": [
+              {
+                "run": 1,
+                "mean_latency_ms": 1512.3743897856912,
+                "p50_latency_ms": 1602.945026010275,
+                "p95_latency_ms": 1963.9331828802824,
+                "requests_per_second": 9.310058941570325,
+                "decisions_per_second": 16.292603147748068,
+                "failed_requests": 0,
+                "wall_seconds": 6.874285157769918
+              },
+              {
+                "run": 2,
+                "mean_latency_ms": 1509.8093131091446,
+                "p50_latency_ms": 1603.218766860664,
+                "p95_latency_ms": 1961.634430103004,
+                "requests_per_second": 9.327581777920704,
+                "decisions_per_second": 16.32326811136123,
+                "failed_requests": 0,
+                "wall_seconds": 6.86137109529227
+              }
+            ]
+          },
+          "means": {
+            "baseline": {
+              "mean_latency_ms": 1510.00941372331,
+              "p50_latency_ms": 1640.257298015058,
+              "p95_latency_ms": 1958.5524671711028,
+              "requests_per_second": 9.327944089313855,
+              "decisions_per_second": 16.323902156299248,
+              "failed_requests": 0,
+              "wall_seconds": 6.861165025737137
+            },
+            "candidate": {
+              "mean_latency_ms": 1511.0918514474179,
+              "p50_latency_ms": 1603.0818964354694,
+              "p95_latency_ms": 1962.7838064916432,
+              "requests_per_second": 9.318820359745516,
+              "decisions_per_second": 16.30793562955465,
+              "failed_requests": 0,
+              "wall_seconds": 6.867828126531094
+            }
+          },
+          "change_percent": {
+            "mean_latency_ms": 0.07168417059326693,
+            "p50_latency_ms": -2.2664372001012345,
+            "p95_latency_ms": 0.21604421589236367,
+            "requests_per_second": -0.09781072314520856,
+            "decisions_per_second": -0.09781072314524186
+          },
+          "relative_run_range_percent": {
+            "baseline": {
+              "mean_latency_ms": 0.5853124159648472,
+              "p95_latency_ms": 0.4943883674871339,
+              "requests_per_second": 0.5935816423967613
+            },
+            "candidate": {
+              "mean_latency_ms": 0.1697498847664095,
+              "p95_latency_ms": 0.1171169626362113,
+              "requests_per_second": 0.1880370655718627
+            }
+          },
+          "observed_threshold_checks": {
+            "mean_latency": true,
+            "throughput": true,
+            "p95_latency": true
+          },
+          "observed_thresholds_pass": true
+        }
+      ],
+      "failed_requests": 0,
+      "all_gates_pass": true
+    }
+  ],
+  "ab_samples": {
+    "path": "docs/assets/blog/open-jev-20261005/ab-passes.jsonl",
+    "sha256": "0cc9a9983f643589e04a2ec93c8b3157936fd39fc4e476d9bdc0d8affd80afb7",
+    "passes": 78,
+    "measured_requests": 5040,
+    "contents": "Original per-request latency samples and IDs, pass statistics, source response-file hashes and timing-excluded response-semantic hashes. Full responses, prompts, protocols and trace files remain in the original local archives."
+  },
+  "controls_scope": "Default controls describe October 3 backend/graph/GDN measurements; isolated_pr55 and regressions record their own exact devices, workloads and HTTP boundaries."
+}

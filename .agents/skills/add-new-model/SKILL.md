@@ -1,6 +1,6 @@
 ---
 name: add-new-model
-description: Add a model to System1-Omni with a pinned inference contract, model-owned implementation, repository-level tests, setup recipes, documentation updates, and validation evidence. Use when implementing or extending model support in this repository.
+description: Add a model to System1-Omni with a pinned inference contract, separate model-specific processors and executors, repository-level tests, recipes, documentation updates, and validation evidence. Use when implementing or extending model support in this repository.
 ---
 
 # Add a System1-Omni model
@@ -10,6 +10,8 @@ Read [README.md](../../../README.md),
 instructions from the target checkout. Paths below are relative to the repository
 root. Inspect the branch, remotes, working-tree status, and affected components
 before editing; preserve unrelated changes and follow the user's branch rules.
+Read the [architecture contracts](../../../docs/architecture.md) for layer
+ownership, Rust/device boundaries, and current versus planned integration.
 
 ## Establish the contract
 
@@ -26,6 +28,10 @@ before editing; preserve unrelated changes and follow the user's branch rules.
 - Capture small reference fixtures before implementing native execution. Preserve
   their provenance and generation commands; declare numerical tolerances before
   comparing outputs.
+- Identify prepared-work and executor input/output layouts, batch compatibility
+  constraints, request/question/candidate mapping, and state/buffer lifetimes.
+  Keep prompt and response semantics model-specific; learned heads belong to
+  execution, while calibrated response interpretation belongs to postprocessing.
 
 Use the existing worker/frontend interface where it fits. Explain any required
 interface change before implementing it; adding a model is not a reason to
@@ -35,13 +41,22 @@ redesign serving infrastructure or introduce a general model framework.
 
 | Location | Changes that belong here |
 | --- | --- |
-| `src/models/<model>/` | Request compilation, preprocessing, tokenization, checkpoint loading, model execution, state, kernel selection, decision head, and response formatting. A native Rust worker may live in `native/`, following existing models. |
+| `src/models/<model>/` | Separate model-specific processors and batch adapters, plus executor checkpoint loading, weights, forward passes, learned heads, device state, and kernel selection. A native Rust worker may live in `native/`, following existing models. |
 | `src/models/<family>/` | Model-family execution shared by implementations that actually need it. Reuse compatible code; extract a common implementation when there is a second user. |
-| `src/backends/cuda/` or `src/backends/metal/` | Hardware-specific operations, build scripts, and kernel integration for the supported backend. |
-| `src/frontend/` | Serving infrastructure and worker adapters when integration requires them. Keep model-specific inference semantics in the model implementation. |
+| `src/backends/cuda/` or `src/backends/metal/` | Hardware operations and kernels, native host glue, build scripts, and backend integration. GPU processing transforms or tensor packing retain their processor/batcher ownership. |
+| `src/runtime/` | Shared native admission and dispatch policy. Reuse the serial scheduler for single-executor work; keep model layouts and device state in model adapters/executors. |
+| `src/frontend/` | Transport and existing worker adapters when integration requires them. Keep model-specific input/output semantics in processors rather than the transport layer. |
 | Root `Cargo.toml` and affected crate manifests | Workspace membership, dependencies, binaries, and explicit test registration. Update `Cargo.lock` when dependencies change. |
 | `recipe/<model>/` | Checkpoint preparation/export scripts, setup and launch instructions, and example requests. Reusable runtime implementation belongs in `src/`. |
 | `tests/<model>/` and `tests/<shared-component>/` | All test bodies, test helpers, and fixtures, including contract, tokenizer, checkpoint, HTTP, and kernel tests. |
+
+The [native runtime](../../../src/runtime/README.md) provides serial FIFO admission
+and blocking dispatch per loaded executor. Integrate with available worker
+interfaces while separating processors and batch adapters from forward code.
+Models declare their execution unit, layouts and compatibility constraints;
+shared runtime code owns admission policy. Processing orchestration, queue/token
+budgets and dynamic batching remain planned. The native
+target uses Rust host orchestration and bindings with CUDA/Metal device kernels.
 
 **Do not add test code or fixtures under `src/`.** This includes inline Rust test
 bodies and crate-local `tests/` directories nested under `src/models/` or another
@@ -73,6 +88,10 @@ consumers together and document required rebuilds.
   dtypes, and resource lifetimes. Revalidate existing consumers of shared execution
   or backend changes; results for the new model do not establish compatibility
   with an existing model.
+- When processing or batching changes, check origin/order reconstruction,
+  masks and readout positions, state isolation, whole-question normalization,
+  error behavior, and token accounting. Real dynamic batching needs a
+  batch-capable executor; a serial prompt loop does not establish it.
 - For a native worker, complete loading and a real inference before reporting
   readiness. Verify its first request after readiness and run the same request
   directly and through the Rust frontend, checking status and response behavior.
@@ -90,12 +109,13 @@ preparation, readiness, first inference, warm latency, and output fidelity.
 
 | File | Required content or update |
 | --- | --- |
-| `src/models/<model>/README.md` | Pinned artifacts and upstream reference, inference and API mapping, supported scope, validation criteria, implementation status, and links to the recipe and tests. |
+| `src/models/<model>/README.md` | Pinned artifacts, inference/API semantics, processor/executor boundary, layouts and batch constraints, state/lifetime ownership, supported scope, validation criteria, current status, and links to recipes/tests. |
 | `recipe/<model>/README.md` or a focused recipe such as `native.md` | Prerequisites and dependencies, pinned downloads, export/setup, backend and worker build, environment variables, worker and frontend launch, health and a real example request, validation commands, and limitations. State the command working directory and any substantial RAM, storage, or device requirements. |
 | Root `README.md` | Supported-model status and links. Update implementation-status prose or workspace descriptions when the new model makes them stale. Distinguish implemented support from planned work and tested hardware from build targets. |
 | `recipe/README.md` | A discoverable link to the new recipe with its actual scope. |
 | `mkdocs.yml` | Navigation for new public recipe or documentation pages; adjust `exclude_docs` only if a page or asset would otherwise be excluded. |
 | Affected shared model/backend READMEs and recipes | New shared ownership, build/ABI requirements, and instructions for existing consumers when their setup changes. |
+| `docs/architecture.md` | Changed integration contracts or implementation status when the new work affects shared processing, scheduling, execution, or backend boundaries. |
 | `docs/` | Reproducible validation or benchmark evidence when needed; put documentation images in `docs/assets/`. |
 
 Keep configuration names, commands, identifiers, limits, and examples consistent

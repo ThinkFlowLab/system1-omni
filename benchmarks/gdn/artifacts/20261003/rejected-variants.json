@@ -1,0 +1,146 @@
+[
+  {
+    "archive": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-bf16-e2e-20261003-081649",
+    "completed_candidate_feasibility_requests": 44,
+    "failed_row": {
+      "id": "hard-opus-a-temporal_numeric-09",
+      "latency_s": 0.05343177,
+      "probability_yes": 0.5064797018921715,
+      "probability_delta": 0.008436719292213957,
+      "predicted": "yes",
+      "raw": {
+        "model": "Qwen/Qwen3.8-27B",
+        "answers": {
+          "decision": {
+            "type": "noul",
+            "noul": 0.5064797018921715
+          }
+        },
+        "usage": {
+          "input_tokens": 519,
+          "output_tokens": 0
+        },
+        "metadata": {
+          "method": "native_merged_lora_decision_head",
+          "temperature": 2.5343690298472983,
+          "candidate_sequences": 1,
+          "inference_seconds": 0.053131982,
+          "base_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+          "max_length": 16384,
+          "prefix_cache": {
+            "enabled": false,
+            "mode": "independent_candidates"
+          }
+        }
+      },
+      "checks": {
+        "finite_probability": true,
+        "usage": true,
+        "decision": false,
+        "probability": true,
+        "uninstrumented": true,
+        "baseline_exact": true
+      },
+      "client_start_monotonic_ns": 5004228895556697,
+      "client_end_monotonic_ns": 5004228948988467
+    },
+    "measured_candidate_passes": 0,
+    "raw_source_sha256": "eb896dce784577697683e54134bf0f59215eb80ecc4ef0a325cbfd616f5baefb"
+  },
+  {
+    "archive": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-fp16-e2e-20261003-082620",
+    "completed_candidate_feasibility_requests": 37,
+    "failed_row": {
+      "id": "hard-opus-a-long_policy-11",
+      "latency_s": 0.503507706,
+      "probability_yes": 0.6972432299494479,
+      "probability_delta": 0.01261642382467143,
+      "predicted": "yes",
+      "raw": {
+        "model": "Qwen/Qwen3.8-27B",
+        "answers": {
+          "decision": {
+            "type": "noul",
+            "noul": 0.6972432299494479
+          }
+        },
+        "usage": {
+          "input_tokens": 2334,
+          "output_tokens": 0
+        },
+        "metadata": {
+          "method": "native_merged_lora_decision_head",
+          "temperature": 2.5343690298472983,
+          "candidate_sequences": 1,
+          "inference_seconds": 0.5028902,
+          "base_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+          "max_length": 16384,
+          "prefix_cache": {
+            "enabled": false,
+            "mode": "independent_candidates"
+          }
+        }
+      },
+      "checks": {
+        "finite_probability": true,
+        "usage": true,
+        "decision": true,
+        "probability": false,
+        "uninstrumented": true,
+        "baseline_exact": true
+      },
+      "client_start_monotonic_ns": 5004742452824477,
+      "client_end_monotonic_ns": 5004742956332183
+    },
+    "measured_candidate_passes": 0,
+    "raw_source_sha256": "df354021ec29f8afc7d49e91e8d71f738f0a50732e46060336caa4fb264ee304"
+  },
+  {
+    "archive": "/data/hsliu2/tmp/system1-omni-gdn-optimization-20261003/profile/gdn-rna-fp16-e2e-20261003-083539",
+    "completed_candidate_feasibility_requests": 44,
+    "failed_row": {
+      "id": "hard-opus-a-temporal_numeric-09",
+      "latency_s": 0.055783496,
+      "probability_yes": 0.5051902978382125,
+      "probability_delta": 0.007147315238254903,
+      "predicted": "yes",
+      "raw": {
+        "model": "Qwen/Qwen3.8-27B",
+        "answers": {
+          "decision": {
+            "type": "noul",
+            "noul": 0.5051902978382125
+          }
+        },
+        "usage": {
+          "input_tokens": 519,
+          "output_tokens": 0
+        },
+        "metadata": {
+          "method": "native_merged_lora_decision_head",
+          "temperature": 2.5343690298472983,
+          "candidate_sequences": 1,
+          "inference_seconds": 0.055335681,
+          "base_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+          "max_length": 16384,
+          "prefix_cache": {
+            "enabled": false,
+            "mode": "independent_candidates"
+          }
+        }
+      },
+      "checks": {
+        "finite_probability": true,
+        "usage": true,
+        "decision": false,
+        "probability": true,
+        "uninstrumented": true,
+        "baseline_exact": true
+      },
+      "client_start_monotonic_ns": 5005290022734274,
+      "client_end_monotonic_ns": 5005290078517770
+    },
+    "measured_candidate_passes": 0,
+    "raw_source_sha256": "b4693fb5acdb217c172aa4580d2e2b7e728711e2ec41720a25c5551b5dec946d"
+  }
+]

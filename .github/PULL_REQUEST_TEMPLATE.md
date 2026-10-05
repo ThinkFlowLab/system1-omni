@@ -8,6 +8,16 @@
 
 ## Test Result
 
+## Demo / evidence
+
+<!-- Follow .agents/skills/self-review/SKILL.md: exact baseline/head, model, hardware,
+precision, workload/concurrency, reproduction commands, and relevant raw repeated-run
+latency/throughput/memory/quality or parity evidence. Separate cold startup and warm
+runs, and kernel/native/HTTP results. Include useful demo/figure links, source
+revisions, limitations, asset rights and redaction. Label illustrations separately
+from actual runs. Video is optional; use N/A with a reason where evidence does not
+apply, and unverified for relevant measurements that could not be made. -->
+
 ## Self-review
 
 Before marking this PR ready for review or requesting maintainer review, complete

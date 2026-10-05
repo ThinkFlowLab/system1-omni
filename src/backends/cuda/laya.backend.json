@@ -1,0 +1,22 @@
+{
+  "name": "laya",
+  "abi_version": 1,
+  "status": "experimental",
+  "sources": [
+    "kernels/runtime.cu",
+    "kernels/model_ops.cu",
+    "kernels/laya_tilelang.py",
+    "kernels/rope_selected.py",
+    "tools/export.py",
+    "tools/build.py",
+    "tools/export_tables.py",
+    "src/lib.rs"
+  ],
+  "build": {
+    "script": "build.sh",
+    "output": "liblaya_cuda.so",
+    "default_arch": 90,
+    "architectures": [90],
+    "min_capability": 90
+  }
+}
