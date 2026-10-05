@@ -64,5 +64,9 @@ cargo test --locked -p omni-runtime
 cargo test --locked -p omni-cua-s1-native -p omni-open-jev-native
 ```
 
+The [native admission comparison](../../docs/benchmarks/native-admission/README.md)
+records normal-load parity and performance ranges, plus limit-one overload and
+recovery on both real workers.
+
 See the [architecture contracts](../../docs/architecture.md) and
 [benchmark protocol](../../benchmarks/README.md) when changing admission policy.
