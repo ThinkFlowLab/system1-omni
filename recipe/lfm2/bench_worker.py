@@ -7,8 +7,8 @@ weight set is shared by every candidate batch size; each timed call serializes t
 request JSON and runs the real worker with no HTTP transport. The matrix is
 question count 1/3/8 x short/long state x batch 1/8/all with 16 candidates per
 question. Repeats must match the same-config warmup answer (1e-6), usage tokens
-must equal the sum of per-question prompt tokens, and question ids must stay out
-of the prompt. Raw samples append as JSONL beside a source-hash manifest.
+must include each question's shared prefix and unpadded candidate inputs, and
+question ids must stay out of the prompt. Raw samples append as JSONL beside a source-hash manifest.
 """
 
 import argparse
@@ -123,6 +123,7 @@ def main(argv=None):
     def get_worker(batch):
         if batch not in workers:
             workers[batch] = worker_module.Worker(get_engine(batch_size(batch)))
+            workers[batch].warmup()
         return workers[batch]
 
     probe = get_engine(1)
@@ -135,8 +136,8 @@ def main(argv=None):
             questions = build_questions(qcount)
             first = next(iter(questions.values()))
             text = probe.prompt(state, worker_module.build_schema(first["instructions"], first["criteria"]))
-            expected = sum(len(probe.encode(probe.prompt(
-                state, worker_module.build_schema(q["instructions"], q["criteria"]))))
+            expected = sum(H.input_token_count(
+                probe, state, worker_module.build_schema(q["instructions"], q["criteria"]))
                 for q in questions.values())
             for batch in BATCHES:
                 cells.append({"key": "%d|%s|%s" % (qcount, context, batch), "qcount": qcount,
@@ -173,7 +174,7 @@ def main(argv=None):
         "consistency": "every warmup and measured output must match the same-config warmup "
                        "reference choice and probabilities within %g" % TOLERANCE,
         "usage": "usage.input_tokens must equal the sum of independently measured per-question "
-                 "prompt tokens; question ids must not appear in the prompt",
+                 "prefix and unpadded candidate tokens; question ids must not appear in the prompt",
         "caveat": "candidate batch size bounds simultaneous branches, not bytes; reserved memory "
                   "is allocator high-water, not a per-run bound",
     }

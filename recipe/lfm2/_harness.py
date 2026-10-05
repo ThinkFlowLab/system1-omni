@@ -263,6 +263,17 @@ def oracle_scores(engine, context, schema):
     return {"scores": scores, "prompt_tokens": len(prefix), "prefix_token_ids": list(prefix)}
 
 
+def input_token_count(engine, context, schema):
+    """Count the shared prefix and each unpadded branch from tokenized text."""
+    count = len(engine.encode(engine.prompt(context, schema)))
+    for name, spec in schema["properties"].items():
+        values = [True, False] if spec["type"] == "boolean" else spec["enum"]
+        field = engine.encode("  " + json.dumps(name, ensure_ascii=False) + ": ")
+        for value in values:
+            count += len(field) + len(engine.encode(json.dumps(value, ensure_ascii=False) + "\n"))
+    return count
+
+
 def selected_from(scores):
     return {name: max(options, key=lambda option: option["log_likelihood"])["value"]
             for name, options in scores.items()}

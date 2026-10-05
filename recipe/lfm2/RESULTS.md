@@ -2,6 +2,11 @@
 
 A later [token-target reuse comparison](#token-target-reuse-2026-09-29) records the small follow-up optimization separately.
 
+The tables below describe the recorded September revisions. Those workers
+reported prefix-only usage. The October review fix adds candidate input tokens
+and startup warmup; the original measurements and raw records are retained.
+Current validation uses `tests/lfm2` and the updated verifier.
+
 Baseline run (published commit f46f458): 2026-09-28, one NVIDIA L40S (48 GiB), FP16; Python 3.12.14, PyTorch 2.14.0+cu130, Transformers 5.17.0, CUDA 13.0, driver 595.71.05. Batch size is explicit. These are inference/execution measurements on unchanged 350M weights.
 
 All runs completed successfully. Raw unmodified records, manifests, environment freeze and check logs are in [the result bundle](results/l40s-20260928/README.md). The JSON/JSONL files are losslessly compressed; no measurements were removed.

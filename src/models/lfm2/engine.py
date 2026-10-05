@@ -157,6 +157,7 @@ class Engine:
             "text": json.dumps(selected, ensure_ascii=False, allow_nan=False),
             "scores": telemetry,
             "prompt_tokens": len(prefix),
+            "input_tokens": len(prefix) + sum(len(branch[4]) for branch in branches),
             "telemetry": {
                 "branches": len(branches),
                 "candidate_batch_size": self.candidate_batch_size,

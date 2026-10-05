@@ -70,8 +70,11 @@ curl http://127.0.0.1:8080/v1/systemone -H 'Content-Type: application/json' -d '
 `confidence` is required in the response but is normalized-entropy concentration
 of the candidate distribution, not a calibrated correctness probability and not
 the proprietary Jev formula. No calibration evaluation is included.
-`usage.input_tokens` sums the prompt tokens of each independently pre-filled
-question; there is no cross-question shared prefill or cache.
+`usage.input_tokens` sums each question's prefix once and every candidate's
+unpadded field/value suffix. It excludes padding and repeated cache copies and
+is unchanged by candidate batch size. There is no cross-question shared cache.
+Startup completes a real two-candidate decision before opening the HTTP port;
+a failed warmup exits without advertising readiness.
 
 ## Verify on a real GPU
 
@@ -96,7 +99,7 @@ Required checks, all of which must pass for exit code 0:
   `atol=0.015`, `rtol=0.08`, argmax is equal, and the shared cache is unchanged.
 - `api_multi_question`: the same `q1` answer holds when the question is alone,
   combined, reordered, or renamed; `usage.input_tokens` is the sum of the
-  questions' prompt tokens; health and `POST /v1/systemone` match direct calls.
+  questions' prefix and candidate input tokens; health and `POST /v1/systemone` match direct calls.
 - `near_ties`: a fixed set of ambiguous probes reports measured margins (the
   minimum observed margin and any selection flips at every batch size; a near tie is never assumed).
 - Candidate batch sizes `1/8/16/32/64/all` are consistent for every case.
@@ -161,7 +164,7 @@ sizes. The matrix uses 16-candidate choice questions at question count `1/3/8`,
 short/long state and candidate batch `1/8/all`. Every measured output is compared
 with the same-config warmup answer (choice and all probabilities within `1e-6`),
 `usage.input_tokens` is checked against the sum of independently measured
-per-question prompt tokens, and question ids are checked to stay out of the
+per-question prefix and candidate input tokens, and question ids are checked to stay out of the
 prompt. Raw samples append as JSONL, with `p50`/`p95` and allocated/reserved peaks
 in the summary.
 
@@ -207,7 +210,7 @@ source hashes, required-check logs and the original environment freeze.
 
 From the repository root, run the CPU tests with the same environment:
 ```sh
-python -m pytest -q src/models/lfm2/tests
+python -m pytest -q tests/lfm2
 ```
 The pinned reference score gate is empirical on the listed inputs; it is not a
 uniform FP16 error bound or a calibrated model-quality claim.

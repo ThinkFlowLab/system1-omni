@@ -307,6 +307,7 @@ def _http(url, body=None):
 
 def run_api_multi_question(worker_module, engine):
     worker = worker_module.Worker(engine)
+    worker.warmup()
 
     def call(questions):
         payload = {"model": worker.model_alias, "state": API_STATE, "questions": questions}
@@ -337,6 +338,12 @@ def run_api_multi_question(worker_module, engine):
     usage_reorder = reordered["usage"]["input_tokens"] == combined["usage"]["input_tokens"]
     usage_rename = renamed["usage"]["input_tokens"] == usage_alone1
 
+    expected1 = H.input_token_count(
+        engine, API_STATE, worker_module.build_schema(API_Q1["instructions"], API_Q1["criteria"]))
+    expected2 = H.input_token_count(
+        engine, API_STATE, worker_module.build_schema(API_Q2["instructions"], API_Q2["criteria"]))
+    usage_exact = usage_alone1 == expected1 and usage_alone2 == expected2
+
     probabilities_ok = True
     confidence_ok = True
     for answer in (q1_alone, q2_alone):
@@ -362,13 +369,14 @@ def run_api_multi_question(worker_module, engine):
         thread.join(timeout=30)
 
     passed = independent and q2_stable and usage_additive and usage_reorder \
-        and usage_rename and probabilities_ok and confidence_ok \
+        and usage_rename and usage_exact and probabilities_ok and confidence_ok \
         and http_health_ok and http_combined_ok
     return {
         "passed": passed,
         "q1_independent_of_addition_order_and_id": independent,
         "q2_stable": q2_stable,
-        "usage_is_sum_of_prompt_tokens": usage_additive,
+        "usage_is_sum_of_input_tokens": usage_additive,
+        "usage_matches_unpadded_inputs": usage_exact,
         "usage_reorder_unchanged": usage_reorder,
         "usage_rename_unchanged": usage_rename,
         "probabilities_sum_to_one": probabilities_ok,

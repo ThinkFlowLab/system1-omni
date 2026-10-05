@@ -130,9 +130,22 @@ class Worker:
         self.engine = engine
         self.model_alias = model_alias
         self.served_model = served_model
+        self.ready = False
+
+    def warmup(self):
+        self.ready = False
+        request = {
+            "model": self.model_alias,
+            "state": "A customer requests a refund for a duplicate charge.",
+            "questions": {"routing": {"type": "choice", "instructions": "Choose the responsible team.",
+                                      "criteria": {"billing": "Refunds and charges",
+                                                   "technical": "Software issues"}}},
+        }
+        self.systemone(json.dumps(request).encode("utf-8"))
+        self.ready = True
 
     def health(self):
-        return {"status": "ok"}
+        return {"status": "ok" if self.ready else "not ready"}
 
     def systemone(self, raw):
         payload = validate_request(parse_json(raw), self.model_alias)
@@ -152,7 +165,7 @@ class Worker:
                 "probabilities": {option["value"]: p for option, p in zip(options, probabilities)},
                 "confidence": confidence(probabilities),
             }
-            input_tokens += int(result.get("prompt_tokens", 0))
+            input_tokens += result["input_tokens"]
         return {
             "model": self.served_model,
             "answers": answers,
@@ -196,7 +209,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = self.path.split("?", 1)[0]
         if path == "/health":
-            self.send_json(200, self.server.worker.health())
+            self.send_json(200 if self.server.worker.ready else 503, self.server.worker.health())
         else:
             self.send_json(404, {"detail": "not found"})
 
@@ -265,7 +278,9 @@ def build_engine(args):
 def main(argv=None):
     args = parse_args(argv)
     engine = build_engine(args)
-    server = make_server(Worker(engine), args.host, args.port)
+    worker = Worker(engine)
+    worker.warmup()
+    server = make_server(worker, args.host, args.port)
     sys.stderr.write("lfm2 worker listening on http://%s:%d\n" % server.server_address[:2])
     try:
         server.serve_forever()

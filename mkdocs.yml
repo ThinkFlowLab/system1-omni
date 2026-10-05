@@ -56,4 +56,5 @@ nav:
       - Laya text worker: recipe/laya/README.md
       - Cua-S1 text worker: recipe/cua_s1/text.md
       - Cua-S1 native text worker: recipe/cua_s1/native.md
+      - LFM2.5-350M choice worker: recipe/lfm2/README.md
   - Contributing: CONTRIBUTING.md

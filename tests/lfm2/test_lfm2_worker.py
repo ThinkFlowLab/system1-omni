@@ -17,7 +17,7 @@ import urllib.request
 
 import pytest
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "src/models/lfm2"))
 
 import worker as worker_mod  # noqa: E402
 
@@ -28,19 +28,24 @@ Q2 = {"type": "choice", "instructions": {"detail": "urgency"}, "criteria": {"low
 
 
 class FakeEngine:
-    def __init__(self, log_likelihoods=None, prompt_tokens=5):
+    def __init__(self, log_likelihoods=None, prompt_tokens=5, input_tokens=12, fail=False):
         self.log_likelihoods = log_likelihoods or {}
         self.prompt_tokens = prompt_tokens
+        self.input_tokens = input_tokens
+        self.fail = fail
         self.calls = []
 
     def score(self, context, schema):
         self.calls.append((context, copy.deepcopy(schema)))
+        if self.fail:
+            raise RuntimeError("warmup score failed")
         name, spec = next(iter(schema["properties"].items()))
         values = spec["enum"]
         base = self.log_likelihoods.get(name, list(range(len(values))))
         entries = [{"value": value, "log_likelihood": float(base[i])}
                    for i, value in enumerate(values)]
         return {"scores": {name: entries}, "prompt_tokens": self.prompt_tokens,
+                "input_tokens": self.input_tokens,
                 "telemetry": {"branches": len(values)}}
 
 
@@ -72,8 +77,12 @@ def post(base, body, raw=False):
 def serve():
     servers = []
 
-    def start(engine):
-        server = worker_mod.make_server(worker_mod.Worker(engine), "127.0.0.1", 0)
+    def start(engine, warmup=True):
+        worker = engine if isinstance(engine, worker_mod.Worker) else worker_mod.Worker(engine)
+        if warmup:
+            worker.warmup()
+            worker.engine.calls.clear()
+        server = worker_mod.make_server(worker, "127.0.0.1", 0)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         servers.append((server, thread))
@@ -94,7 +103,7 @@ def test_health_and_response_contract(serve):
     status, body = post(base, payload())
     assert status == 200
     assert body["model"] == worker_mod.SERVED_MODEL
-    assert body["usage"] == {"input_tokens": 5, "output_tokens": 0}
+    assert body["usage"] == {"input_tokens": 12, "output_tokens": 0}
     answer = body["answers"]["refund"]
     assert answer["type"] == "choice"
     assert answer["choice"] == "technical"
@@ -226,3 +235,70 @@ def test_invalid_later_question_does_not_run_earlier_one(serve):
     invalid = {"type": "noul", "instructions": "unsupported"}
     assert post(base, payload(questions={"valid": Q1, "invalid": invalid}))[0] == 422
     assert engine.calls == []
+
+
+def test_health_requires_successful_warmup(serve):
+    assert request("GET", serve(FakeEngine(), warmup=False) + "/health") == (503, {"status": "not ready"})
+    engine = FakeEngine(fail=True)
+    worker = worker_mod.Worker(engine)
+    with pytest.raises(RuntimeError, match="warmup score failed"):
+        worker.warmup()
+    assert worker.ready is False
+    assert worker.health() == {"status": "not ready"}
+    assert request("GET", serve(worker, warmup=False) + "/health") == (503, {"status": "not ready"})
+
+
+def test_warmup_runs_complete_request_before_main_binds(monkeypatch):
+    events = []
+    engine = FakeEngine()
+    monkeypatch.setattr(worker_mod, "build_engine", lambda args: engine)
+
+    class StubServer:
+        server_address = ("127.0.0.1", 8000)
+
+        def serve_forever(self):
+            events.append("serve")
+
+        def server_close(self):
+            events.append("close")
+
+    def bind(worker, host, port):
+        assert worker.ready is True
+        assert len(engine.calls) == 1
+        context, schema = engine.calls[0]
+        assert isinstance(context, str) and context
+        assert schema["properties"]["answer"]["enum"] == ["billing", "technical"]
+        events.append("bind")
+        return StubServer()
+
+    monkeypatch.setattr(worker_mod, "make_server", bind)
+    assert worker_mod.main(["--candidate-batch-size", "2"]) == 0
+    assert events == ["bind", "serve", "close"]
+
+
+def test_warmup_failure_prevents_main_bind(monkeypatch):
+    engine = FakeEngine(fail=True)
+    monkeypatch.setattr(worker_mod, "build_engine", lambda args: engine)
+
+    def unexpected_bind(*args):
+        pytest.fail("server bound before successful warmup")
+
+    monkeypatch.setattr(worker_mod, "make_server", unexpected_bind)
+    with pytest.raises(RuntimeError, match="warmup score failed"):
+        worker_mod.main(["--candidate-batch-size", "2"])
+    assert len(engine.calls) == 1
+
+
+def test_usage_sums_full_input_across_questions(serve):
+    base = serve(FakeEngine(prompt_tokens=5, input_tokens=12))
+    status, body = post(base, payload(questions={"first": Q1, "second": Q2}))
+    assert status == 200
+    assert body["usage"] == {"input_tokens": 24, "output_tokens": 0}
+
+
+def test_warmup_uses_configured_model_alias():
+    engine = FakeEngine()
+    worker = worker_mod.Worker(engine, model_alias="custom-model")
+    worker.warmup()
+    assert worker.ready is True
+    assert len(engine.calls) == 1

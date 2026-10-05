@@ -27,7 +27,9 @@ python src/models/lfm2/worker.py --candidate-batch-size 8 --device cuda --dtype 
 
 `--candidate-batch-size` is required and must be a positive integer; there is no
 default. The remaining flags default to the values shown. The first start
-downloads the pinned checkpoint and tokenizer.
+downloads the pinned checkpoint and tokenizer. Before binding the HTTP port, the
+worker runs a complete two-candidate decision through the model and response
+path. Initialization or warmup failure aborts startup.
 
 Health:
 
@@ -86,10 +88,15 @@ Illustrative values, not measured model output:
 sum, returned as a map from each criterion key to its probability. `choice` is the highest score, with
 ties resolved in favour of the first-listed criterion. `confidence` is
 `1 - H / ln(n)` for `n > 1` and `1.0` for a single candidate; it is a heuristic,
-not calibrated. `usage.input_tokens` is the **prompt token count only** — the sum
-of per-question prefix lengths. It is not the number of forward passes or
-candidate tokens; those are reported separately by the engine's `telemetry`
-field (`branches`, `branch_tokens_padded`, `forward_calls`).
+not calibrated. `usage.input_tokens` counts each question's shared prefix once
+plus every candidate's unpadded field suffix and JSON value, including the
+trailing newline. Questions have independent prefixes. Cached copies of the
+prefix and padding are excluded, so changing candidate batch size does not
+change usage. `output_tokens` is zero because the worker scores supplied values.
+
+The engine retains `prompt_tokens` as the prefix-length metric used by scorer
+benchmarks. Its `input_tokens` includes candidate inputs; `telemetry` separately
+reports branch counts, padded branch storage and forward calls.
 
 These scores depend on candidate length, wording and tokenization. Softmax only
 compares the candidates supplied in that question; neither it nor the entropy
@@ -107,6 +114,7 @@ original cache is never mutated.
 | 400 | malformed JSON, duplicate object keys, `NaN`/`Infinity` |
 | 422 | wrong model, type, shape, or an unsupported `score`/`noul` question |
 | 500 | internal failure; the response never contains a traceback |
+| 503 | health checked before successful warmup |
 
 ## Method
 
@@ -122,11 +130,13 @@ and calls `reorder_cache`, which copies both KV tensors and convolution state vi
 ## Tests
 
 ```sh
-python -m pytest src/models/lfm2/tests
+python -m pytest tests/lfm2
 ```
 
-`tests/test_engine.py` builds a tiny randomly initialized `Lfm2ForCausalLM` on
+`tests/lfm2/test_lfm2_engine.py` builds a tiny randomly initialized `Lfm2ForCausalLM` on
 CPU (no download) and checks hybrid-cache isolation and that batched scores and
-argmax match an independent uncached oracle. `tests/test_worker.py` uses a fake
+argmax match an independent uncached oracle. `tests/lfm2/test_lfm2_worker.py` uses a fake
 engine and an in-process loopback server to check validation, prompt
-independence from batching/ordering/renaming, response fields and the CLI.
+independence from batching/ordering/renaming, response fields, warmup before
+binding, failed warmup and unhealthy HTTP status. Token accounting is checked
+against the real model's unpadded forward inputs at multiple batch sizes.

@@ -14,7 +14,7 @@ import pytest
 import torch
 from transformers import Lfm2Config, Lfm2ForCausalLM
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "src/models/lfm2"))
 
 from engine import Engine, fork_cache  # noqa: E402
 
@@ -131,3 +131,30 @@ def test_candidate_batch_size_must_be_positive_integer(tiny):
     for bad in (0, -3, 1.5, True):
         with pytest.raises(ValueError):
             make_engine(tiny, bad)
+
+
+@torch.inference_mode()
+def test_input_usage_counts_effective_tokens_without_padding(tiny):
+    totals = []
+    for batch_size in (1, 2, 8):
+        engine = make_engine(tiny, batch_size)
+        calls = []
+
+        def record_inputs(model, args, kwargs):
+            ids = args[0] if args else kwargs["input_ids"]
+            mask = kwargs.get("attention_mask")
+            effective = ids.numel() if mask is None else int(mask[:, -ids.shape[1]:].sum())
+            calls.append((effective, ids.numel()))
+
+        handle = engine.model.register_forward_pre_hook(record_inputs, with_kwargs=True)
+        try:
+            result = engine.score(CONTEXT, SCHEMA)
+        finally:
+            handle.remove()
+        assert calls[0][0] == result["prompt_tokens"]
+        assert result["input_tokens"] == sum(effective for effective, _ in calls)
+        assert result["input_tokens"] > result["prompt_tokens"]
+        totals.append(result["input_tokens"])
+        if batch_size == 8:
+            assert sum(padded for _, padded in calls) > result["input_tokens"]
+    assert len(set(totals)) == 1

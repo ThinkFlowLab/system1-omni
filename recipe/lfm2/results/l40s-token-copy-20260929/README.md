@@ -34,13 +34,17 @@ script; no model code or tolerance was changed in response to that failure.
 ## Reproduce
 
 Use the pinned environment and model/reference downloads in
-[the recipe](../../README.md). From the repository root:
+[the recipe](../../README.md). Replay the recorded revisions in an isolated
+checkout; later readiness and usage fixes are not part of this comparison.
+From the repository root:
 
 ```sh
+git worktree add --detach .local/lfm/token-replay a402606cd9ee6a8c129be3df51b1c923ec7bf324
+cd .local/lfm/token-replay
 mkdir -p .local/lfm/readiness/baseline .local/lfm/readiness/candidate
 gzip -cd recipe/lfm2/results/l40s-token-copy-20260929/probe.py.gz > .local/lfm/readiness/probe.py
 git show f46f4582f36b525bcaf9b6e202220e3ba032f829:src/models/lfm2/engine.py > .local/lfm/readiness/baseline/engine.py
-cp src/models/lfm2/engine.py src/models/lfm2/worker.py .local/lfm/readiness/candidate/
+git show a402606cd9ee6a8c129be3df51b1c923ec7bf324:src/models/lfm2/engine.py > .local/lfm/readiness/candidate/engine.py
 python .local/lfm/readiness/probe.py /path/to/new-results
 python -m pytest src/models/lfm2/tests
 python recipe/lfm2/verify.py --reference-dir /path/to/pinned/reference --device cuda --output /path/to/new-verify.json
