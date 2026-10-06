@@ -28,7 +28,7 @@ each exact prompt length warms the GEMM plans and captures the forward pass;
 later requests replay it with freshly uploaded token ids. At most eight lengths
 are cached. Growing the scratch allocation clears the captures before freeing
 their buffers. Capture adds first-use latency; leave the variable unset to use
-the eager control. Rebuild both the worker and CUDA library together (ABI 4).
+the eager control. Rebuild both the worker and CUDA library together (ABI 6).
 If capture fails, the worker returns the completed eager result and disables
 Graph capture/replay for its remaining lifetime, logging the failure to stderr.
 

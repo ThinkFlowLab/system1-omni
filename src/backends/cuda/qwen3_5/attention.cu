@@ -5,7 +5,9 @@
 // four warps of 16 rows each, and walks the keys up to its last query in tiles of
 // 32, keeping the output and the online softmax in registers. The probabilities are
 // rounded to bfloat16 for the P*V product, as in flash attention; the running sums
-// stay float32.
+// stay float32. The queries can be the last Tq of Tk positions (cached keys before
+// them); key tiles always start at position 0, so a query sees the same tiles in the
+// same order wherever the queries start, and tiles past its own position change nothing.
 #include "common.cuh"
 #include "mma.cuh"
 #include "ops.h"
@@ -81,7 +83,7 @@ constexpr int SMEM_BYTES = (BM + 2 * BN) * LDS * 2;
 template <bool Gated>
 __global__ void __launch_bounds__(THREADS)
     flash_kernel(const bf16* __restrict__ q, const bf16* __restrict__ k, const bf16* __restrict__ v, int ldv,
-                 const bf16* __restrict__ gate, bf16* __restrict__ out, int T, int Hq, int Hk,
+                 const bf16* __restrict__ gate, bf16* __restrict__ out, int Tq, int Tk, int Hq, int Hk,
                  float scale_log2) {
     extern __shared__ __align__(16) unsigned char smem[];
     bf16* qs = reinterpret_cast<bf16*>(smem);
@@ -92,10 +94,11 @@ __global__ void __launch_bounds__(THREADS)
     const int tid = threadIdx.x, warp = tid / 32, lane = tid % 32;
     const int g = lane / 4, t = lane % 4;
     const int row0 = q0 + warp * 16;  // this warp's first query
+    const int offset = Tk - Tq;       // the position of query 0
 
     for (int c = tid; c < BM * (D / 8); c += THREADS) {
         const int r = c / (D / 8), col = (c % (D / 8)) * 8, row = q0 + r;
-        cp_async16(qs + r * LDS + col, q + ((size_t)min(row, T - 1) * Hq + h) * D + col, row < T);
+        cp_async16(qs + r * LDS + col, q + ((size_t)min(row, Tq - 1) * Hq + h) * D + col, row < Tq);
     }
     cp_async_commit();
 
@@ -104,23 +107,24 @@ __global__ void __launch_bounds__(THREADS)
     for (int n = 0; n < D / 8; n++) o[n][0] = o[n][1] = o[n][2] = o[n][3] = 0.f;
     float m[2] = {-INFINITY, -INFINITY}, l[2] = {0.f, 0.f};
 
-    const int kv_end = min(T, q0 + BM);
+    const int kv_end = min(Tk, offset + q0 + BM);
     for (int k0 = 0; k0 < kv_end; k0 += BN) {
         for (int c = tid; c < BN * (D / 8); c += THREADS) {
             const int r = c / (D / 8), col = (c % (D / 8)) * 8, s = k0 + r;
-            cp_async16(ks + r * LDS + col, k + ((size_t)min(s, T - 1) * Hk + hk) * D + col, s < T);
+            cp_async16(ks + r * LDS + col, k + ((size_t)min(s, Tk - 1) * Hk + hk) * D + col, s < Tk);
         }
         cp_async_commit();
         for (int c = tid; c < BN * (D / 8); c += THREADS) {
             const int r = c / (D / 8), col = (c % (D / 8)) * 8, s = k0 + r;
-            cp_async16(vs + r * LDS + col, v + (size_t)min(s, T - 1) * ldv + (size_t)hk * D + col, s < T);
+            cp_async16(vs + r * LDS + col, v + (size_t)min(s, Tk - 1) * ldv + (size_t)hk * D + col, s < Tk);
         }
         cp_async_commit();
         cp_async_wait<1>();  // Q and K
         __syncthreads();
 
-        // keys past every query of this warp contribute nothing
-        const bool active = k0 <= row0 + 15;
+        // keys past every query of this warp contribute nothing, and rows past the
+        // last query are never stored
+        const bool active = row0 < Tq && k0 <= offset + row0 + 15;
         float sc[BN / 8][4];
 #pragma unroll
         for (int n = 0; n < BN / 8; n++) sc[n][0] = sc[n][1] = sc[n][2] = sc[n][3] = 0.f;
@@ -146,8 +150,8 @@ __global__ void __launch_bounds__(THREADS)
             for (int n = 0; n < BN / 8; n++) {
 #pragma unroll
                 for (int e = 0; e < 4; e++) {
-                    const int key = k0 + n * 8 + 2 * t + (e & 1), row = row0 + g + (e >> 1) * 8;
-                    sc[n][e] = (key <= row && key < T) ? sc[n][e] * scale_log2 : -INFINITY;
+                    const int key = k0 + n * 8 + 2 * t + (e & 1), pos = offset + row0 + g + (e >> 1) * 8;
+                    sc[n][e] = (key <= pos && key < Tk) ? sc[n][e] * scale_log2 : -INFINITY;
                     mx[e >> 1] = fmaxf(mx[e >> 1], sc[n][e]);
                 }
             }
@@ -213,7 +217,7 @@ __global__ void __launch_bounds__(THREADS)
 #pragma unroll
     for (int r = 0; r < 2; r++) {
         const int row = row0 + g + r * 8;
-        if (row >= T) continue;
+        if (row >= Tq) continue;
         bf16* dst = out + ((size_t)row * Hq + h) * D + 2 * t;
 #pragma unroll
         for (int n = 0; n < D / 8; n++) {
@@ -232,20 +236,20 @@ __global__ void __launch_bounds__(THREADS)
 
 template <bool Gated>
 int launch(const void* q, const void* k, const void* v, int ldv, const void* gate, void* out,
-           int T, int Hq, int Hk, int Dh, float scale, void* stream) {
-    if (Dh != D || Hk <= 0 || Hq <= 0 || Hq % Hk != 0 || ldv % 8 != 0 || ldv < Hk * Dh || T < 0)
+           int Tq, int Tk, int Hq, int Hk, int Dh, float scale, void* stream) {
+    if (Dh != D || Hk <= 0 || Hq <= 0 || Hq % Hk != 0 || ldv % 8 != 0 || ldv < Hk * Dh || Tq < 0 || Tk < Tq)
         return cudaErrorInvalidValue;
-    if (T == 0) return cudaSuccess;
+    if (Tq == 0) return cudaSuccess;
     if (Gated && gate == nullptr) return cudaErrorInvalidValue;
     // Once per specialization (for the device current at the first call).
     static const cudaError_t configured = cudaFuncSetAttribute(
         flash_kernel<Gated>, cudaFuncAttributeMaxDynamicSharedMemorySize, SMEM_BYTES);
     if (configured != cudaSuccess) return configured;
     constexpr float LOG2E = 1.4426950408889634f;
-    flash_kernel<Gated><<<dim3((T + BM - 1) / BM, Hq), THREADS, SMEM_BYTES,
+    flash_kernel<Gated><<<dim3((Tq + BM - 1) / BM, Hq), THREADS, SMEM_BYTES,
                          static_cast<cudaStream_t>(stream)>>>(
         static_cast<const bf16*>(q), static_cast<const bf16*>(k), static_cast<const bf16*>(v), ldv,
-        static_cast<const bf16*>(gate), static_cast<bf16*>(out), T, Hq, Hk, scale * LOG2E);
+        static_cast<const bf16*>(gate), static_cast<bf16*>(out), Tq, Tk, Hq, Hk, scale * LOG2E);
     return cudaGetLastError();
 }
 
@@ -274,10 +278,16 @@ extern "C" int cs1_attn_prep(const void* qg, const void* kr, int ld, const void*
 
 extern "C" int cs1_attention(const void* q, const void* k, const void* v, int ldv, void* out, int T, int Hq, int Hk,
                              int Dh, float scale, void* stream) {
-    return flash::launch<false>(q, k, v, ldv, nullptr, out, T, Hq, Hk, Dh, scale, stream);
+    return flash::launch<false>(q, k, v, ldv, nullptr, out, T, T, Hq, Hk, Dh, scale, stream);
 }
 
 extern "C" int cs1_attention_gated(const void* q, const void* k, const void* v, int ldv, const void* gate,
                                    void* out, int T, int Hq, int Hk, int Dh, float scale, void* stream) {
-    return flash::launch<true>(q, k, v, ldv, gate, out, T, Hq, Hk, Dh, scale, stream);
+    return flash::launch<true>(q, k, v, ldv, gate, out, T, T, Hq, Hk, Dh, scale, stream);
+}
+
+extern "C" int cs1_attention_gated_cached(const void* q, const void* k, const void* v, int ldv, const void* gate,
+                                          void* out, int Tq, int Tk, int Hq, int Hk, int Dh, float scale,
+                                          void* stream) {
+    return flash::launch<true>(q, k, v, ldv, gate, out, Tq, Tk, Hq, Hk, Dh, scale, stream);
 }

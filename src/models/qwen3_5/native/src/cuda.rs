@@ -9,7 +9,7 @@ use std::sync::OnceLock;
 use anyhow::{Context, Result, bail, ensure};
 
 /// `CS1_ABI_VERSION` in ops.h.
-const ABI_VERSION: u32 = 5;
+const ABI_VERSION: u32 = 6;
 pub const LIBRARY: &str = "libqwen3_5_cuda.so";
 
 /// A `cudaStream_t`.
@@ -73,6 +73,10 @@ api! {
     cs1_graph_destroy(exec: *mut c_void) -> c_int;
     cs1_upload(dst: *mut c_void, src: *const c_void, bytes: usize, stream: Stream) -> c_int;
     cs1_download(dst: *mut c_void, src: *const c_void, bytes: usize, stream: Stream) -> c_int;
+    cs1_copy_rows(
+        dst: *mut c_void, dst_pitch: usize, src: *const c_void, src_pitch: usize, row_bytes: usize, rows: c_int,
+        stream: Stream,
+    ) -> c_int;
     cs1_embed(ids: *const i32, table: *const c_void, out: *mut c_void, t: c_int, d: c_int, stream: Stream) -> c_int;
     cs1_rms_norm(
         x: *const c_void, w: *const c_void, out: *mut c_void, rows: c_int, d: c_int, eps: f32, stream: Stream,
@@ -89,6 +93,10 @@ api! {
         qkv: *const c_void, ld: c_int, w: *const c_void, q: *mut c_void, k: *mut c_void, v: *mut c_void, t: c_int,
         key_dim: c_int, value_dim: c_int, stream: Stream,
     ) -> c_int;
+    cs1_gdn_conv_history(
+        qkv: *const c_void, ld: c_int, w: *const c_void, history: *const c_void, history_out: *mut c_void,
+        q: *mut c_void, k: *mut c_void, v: *mut c_void, t: c_int, key_dim: c_int, value_dim: c_int, stream: Stream,
+    ) -> c_int;
     cs1_gdn_gates(
         b: *const c_void, a: *const c_void, ld: c_int, a_log: *const c_void, dt_bias: *const c_void,
         beta: *mut c_void, g: *mut f32, t: c_int, h: c_int, stream: Stream,
@@ -97,6 +105,11 @@ api! {
     cs1_gdn_prefill(
         q: *const c_void, k: *const c_void, v: *const c_void, g: *const f32, beta: *const c_void, o: *mut c_void,
         workspace: *mut f32, t: c_int, h: c_int, hk: c_int, scale: f32, stream: Stream,
+    ) -> c_int;
+    cs1_gdn_prefill_state(
+        q: *const c_void, k: *const c_void, v: *const c_void, g: *const f32, beta: *const c_void, o: *mut c_void,
+        workspace: *mut f32, initial_state: *const f32, final_state: *mut f32, t: c_int, h: c_int, hk: c_int,
+        scale: f32, stream: Stream,
     ) -> c_int;
     cs1_attn_prep(
         qg: *const c_void, kr: *const c_void, ld: c_int, qw: *const c_void, kw: *const c_void, cos: *const c_void,
@@ -110,6 +123,10 @@ api! {
     cs1_attention_gated(
         q: *const c_void, k: *const c_void, v: *const c_void, ldv: c_int, gate: *const c_void,
         out: *mut c_void, t: c_int, hq: c_int, hk: c_int, dh: c_int, scale: f32, stream: Stream,
+    ) -> c_int;
+    cs1_attention_gated_cached(
+        q: *const c_void, k: *const c_void, v: *const c_void, ldv: c_int, gate: *const c_void,
+        out: *mut c_void, tq: c_int, tk: c_int, hq: c_int, hk: c_int, dh: c_int, scale: f32, stream: Stream,
     ) -> c_int;
     cs1_sigmoid_gate(x: *mut c_void, gate: *const c_void, n: usize, stream: Stream) -> c_int;
     cs1_silu_mul(gate_up: *const c_void, ld: c_int, out: *mut c_void, t: c_int, i: c_int, stream: Stream) -> c_int;

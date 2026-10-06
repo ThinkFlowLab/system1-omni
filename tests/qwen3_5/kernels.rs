@@ -5,6 +5,7 @@
 //!     CUA_S1_CUDA_LIB=$PWD/target/release/libqwen3_5_cuda.so \
 //!       cargo test --release -p omni-qwen3-5-native --test kernels -- --ignored
 
+use std::ffi::c_void;
 use std::path::PathBuf;
 
 use half::bf16;
@@ -46,6 +47,18 @@ fn f32_to_device(v: &[f32], st: Stream) -> DeviceBuffer {
     // SAFETY: the buffer was allocated for these bytes.
     unsafe { cuda::upload(buf.at(0), &bytes, st).unwrap() };
     buf
+}
+
+fn f32_from_device(buf: &DeviceBuffer, n: usize, st: Stream) -> Vec<f32> {
+    let mut bytes = vec![0u8; n * 4];
+    // SAFETY: the buffer holds n float32 values.
+    unsafe { cuda::download(&mut bytes, buf.at(0), st).unwrap() };
+    let (words, _) = bytes.as_chunks::<4>();
+    words.iter().map(|&b| f32::from_le_bytes(b)).collect()
+}
+
+fn bits(values: &[f32]) -> Vec<u32> {
+    values.iter().map(|v| v.to_bits()).collect()
 }
 
 fn from_device(buf: &DeviceBuffer, n: usize, st: Stream) -> Vec<f32> {
@@ -471,7 +484,8 @@ fn flash_attention_matches_float64_reference() {
 }
 
 /// Transformers' torch_recurrent_gated_delta_rule in float64, one token at a time,
-/// with the L2 norms of q and k and q scaled by K^-1/2.
+/// with the L2 norms of q and k and q scaled by K^-1/2. Also returns the state
+/// [h, K, V] after each count of tokens in `states_at`.
 #[allow(clippy::too_many_arguments)]
 fn gated_delta_reference(
     q: &[bf16],
@@ -483,8 +497,10 @@ fn gated_delta_reference(
     h: usize,
     hk: usize,
     d: usize,
-) -> Vec<f64> {
+    states_at: &[usize],
+) -> (Vec<f64>, Vec<Vec<f64>>) {
     let mut out = vec![0f64; t * h * d];
+    let mut states = vec![vec![0f64; h * d * d]; states_at.len()];
     for head in 0..h {
         let kh = head / (h / hk);
         let mut s = vec![0f64; d * d]; // [K][V]
@@ -516,9 +532,14 @@ fn gated_delta_reference(
             for j in 0..d {
                 out[(tok * h + head) * d + j] = (0..d).map(|i| qv[i] * s[i * d + j]).sum();
             }
+            for (at, state) in states_at.iter().zip(&mut states) {
+                if *at == tok + 1 {
+                    state[head * d * d..][..d * d].copy_from_slice(&s);
+                }
+            }
         }
     }
-    out
+    (out, states)
 }
 
 #[test]
@@ -567,7 +588,7 @@ fn gated_delta_rule_matches_recurrent_reference() {
             .iter()
             .map(|x| bf16::from_f32(x.to_f32() + 0.5))
             .collect();
-        let want = gated_delta_reference(&q, &k, &v, &g, &beta, t, h, hk, d);
+        let (want, _) = gated_delta_reference(&q, &k, &v, &g, &beta, t, h, hk, d, &[]);
         let (qd, kd, vd, gd, bd) = (
             to_device(&q, st),
             to_device(&k, st),
@@ -615,5 +636,479 @@ fn gated_delta_rule_matches_recurrent_reference() {
             "gated delta t = {t}, amplitude {qk_amp}: largest difference {worst:.2e}, largest |reference| {scale:.2e}"
         );
         assert!(worst <= 2e-2 * scale, "t = {t}: {worst} vs scale {scale}");
+    }
+}
+
+/// Prefix lengths around and inside 64-token chunks, and the branch lengths after them.
+const PREFIXES: [usize; 12] = [1, 2, 3, 31, 63, 64, 65, 127, 128, 129, 1000, 1024];
+const BRANCHES: [usize; 5] = [1, 2, 64, 65, 200];
+
+#[test]
+#[ignore = "needs a GPU and CUA_S1_CUDA_LIB"]
+fn conv_with_history_matches_unsplit_conv() {
+    let st = setup();
+    // 4B/9B (16 key heads, 32 value heads) and 27B (48 value heads); each GDN input
+    // row also carries z, b and a after the conv channels.
+    for (key_dim, value_dim, heads) in [(2048usize, 4096usize, 32usize), (2048, 6144, 48)] {
+        let channels = 2 * key_dim + value_dim;
+        let ld = channels + value_dim + 2 * heads;
+        let total = 1300usize;
+        let input = random(total * ld, 31, 4.0);
+        let weights = random(channels * 4, 32, 0.5);
+        let (qkv, w) = (to_device(&input, st), to_device(&weights, st));
+        // q|k|v of rows [at, at + t), each token's channels in order
+        let conv = |at: usize, t: usize, history: *const c_void, history_out: *mut c_void| {
+            let q = DeviceBuffer::new(t * key_dim * 2).unwrap();
+            let k = DeviceBuffer::new(t * key_dim * 2).unwrap();
+            let v = DeviceBuffer::new(t * value_dim * 2).unwrap();
+            // SAFETY: qkv holds rows [at, at + t) of width ld, the outputs t rows each,
+            // and history/history_out are null or 3 rows of the conv channels.
+            unsafe {
+                check(
+                    (api().cs1_gdn_conv_history)(
+                        qkv.at(at * ld * 2),
+                        ld as i32,
+                        w.at(0),
+                        history,
+                        history_out,
+                        q.at(0),
+                        k.at(0),
+                        v.at(0),
+                        t as i32,
+                        key_dim as i32,
+                        value_dim as i32,
+                        st,
+                    ),
+                    "conv with history",
+                )
+                .unwrap();
+            }
+            let (q, k, v) = (
+                from_device(&q, t * key_dim, st),
+                from_device(&k, t * key_dim, st),
+                from_device(&v, t * value_dim, st),
+            );
+            (0..t)
+                .flat_map(|r| {
+                    [
+                        &q[r * key_dim..][..key_dim],
+                        &k[r * key_dim..][..key_dim],
+                        &v[r * value_dim..][..value_dim],
+                    ]
+                    .concat()
+                })
+                .collect::<Vec<f32>>()
+        };
+        // the conv inputs of the three positions before `end`, zeros before the start
+        let source = &input;
+        let history_before = |end: usize| -> Vec<f32> {
+            (0..3)
+                .flat_map(|r| {
+                    let s = end as isize - 3 + r;
+                    (0..channels).map(move |c| {
+                        if s < 0 {
+                            0.0
+                        } else {
+                            source[s as usize * ld + c].to_f32()
+                        }
+                    })
+                })
+                .collect()
+        };
+        let full = conv(0, total, std::ptr::null(), std::ptr::null_mut());
+        let rows = |a: usize, b: usize| bits(&full[a * channels..b * channels]);
+        let null = std::ptr::null();
+        for p in PREFIXES {
+            let history = DeviceBuffer::new(3 * channels * 2).unwrap();
+            assert_eq!(bits(&conv(0, p, null, history.at(0))), rows(0, p));
+            assert_eq!(
+                from_device(&history, 3 * channels, st),
+                history_before(p),
+                "history after {p}"
+            );
+            for b in BRANCHES {
+                let branch = conv(p, b, history.at(0), std::ptr::null_mut());
+                assert_eq!(bits(&branch), rows(p, p + b), "split {p} + {b}");
+            }
+        }
+        // request prefix, question prefix, then a branch; also chains shorter than the kernel
+        for (p1, p2, b) in [
+            (1usize, 2usize, 1usize),
+            (2, 3, 2),
+            (900, 960, 65),
+            (64, 65, 1),
+        ] {
+            let (h1, h2) = (
+                DeviceBuffer::new(3 * channels * 2).unwrap(),
+                DeviceBuffer::new(3 * channels * 2).unwrap(),
+            );
+            conv(0, p1, null, h1.at(0));
+            assert_eq!(bits(&conv(p1, p2 - p1, h1.at(0), h2.at(0))), rows(p1, p2));
+            assert_eq!(from_device(&h2, 3 * channels, st), history_before(p2));
+            assert_eq!(
+                bits(&conv(p2, b, h2.at(0), std::ptr::null_mut())),
+                rows(p2, p2 + b),
+                "chain {p1}, {p2}, {b}"
+            );
+        }
+        // no tokens: history_out is the history itself, shifted by nothing
+        let (h1, h2) = (
+            DeviceBuffer::new(3 * channels * 2).unwrap(),
+            DeviceBuffer::new(3 * channels * 2).unwrap(),
+        );
+        conv(0, 5, null, h1.at(0));
+        conv(5, 0, h1.at(0), h2.at(0));
+        assert_eq!(from_device(&h2, 3 * channels, st), history_before(5));
+    }
+}
+
+#[test]
+#[ignore = "needs a GPU and CUA_S1_CUDA_LIB"]
+fn gated_delta_state_continues_unsplit_prefill() {
+    let st = setup();
+    let d = 128usize;
+    // 4B/9B (32 value heads over 16 key heads) and 27B (48 over 16)
+    for (h, hk) in [(32usize, 16usize), (48, 16)] {
+        let total = 1300usize;
+        let k = random(total * hk * d, 42, 1.0);
+        let q: Vec<bf16> = k
+            .iter()
+            .zip(random(total * hk * d, 41, 1.0))
+            .map(|(k, n)| bf16::from_f32(0.8 * k.to_f32() + 0.2 * n.to_f32()))
+            .collect();
+        let v = random(total * h * d, 43, 1.0);
+        // slow decays, so that the state carries far across the split
+        let g: Vec<f32> = random(total * h, 44, 1.0)
+            .iter()
+            .map(|x| (x.to_f32() - 1.0) * 0.01)
+            .collect();
+        let beta: Vec<bf16> = random(total * h, 45, 0.5)
+            .iter()
+            .map(|x| bf16::from_f32(x.to_f32() + 0.5))
+            .collect();
+        // reference states after each prefix and after each question prefix below
+        let marks: Vec<usize> = PREFIXES.iter().copied().chain([192, 1100]).collect();
+        let (want, ref_states) =
+            gated_delta_reference(&q, &k, &v, &g, &beta, total, h, hk, d, &marks);
+        let ref_state = |at: usize| &ref_states[marks.iter().position(|&m| m == at).unwrap()];
+        let (qd, kd, vd, gd, bd) = (
+            to_device(&q, st),
+            to_device(&k, st),
+            to_device(&v, st),
+            f32_to_device(&g, st),
+            to_device(&beta, st),
+        );
+        // SAFETY: pure function of its arguments.
+        let floats = unsafe { (api().cs1_gdn_workspace_floats)(total as i32, h as i32) };
+        let ws = DeviceBuffer::new(floats * 4).unwrap();
+        let state_floats = h * d * d;
+        let run = |at: usize, t: usize, initial: *const f32, last: *mut f32| {
+            let o = DeviceBuffer::new((t * h * d).max(1) * 2).unwrap();
+            // SAFETY: the inputs hold rows [at, at + t), the workspace fits the longest
+            // run, and the states are null or [h, 128, 128] floats.
+            unsafe {
+                check(
+                    (api().cs1_gdn_prefill_state)(
+                        qd.at(at * hk * d * 2),
+                        kd.at(at * hk * d * 2),
+                        vd.at(at * h * d * 2),
+                        gd.at(at * h * 4).cast::<f32>(),
+                        bd.at(at * h * 2),
+                        o.at(0),
+                        ws.at(0).cast::<f32>(),
+                        initial,
+                        last,
+                        t as i32,
+                        h as i32,
+                        hk as i32,
+                        (d as f32).powf(-0.5),
+                        st,
+                    ),
+                    "gdn prefill with state",
+                )
+                .unwrap();
+            }
+            from_device(&o, t * h * d, st)
+        };
+        let null = std::ptr::null();
+        let full = run(0, total, null, std::ptr::null_mut());
+        let rows = |a: usize, b: usize| &full[a * h * d..b * h * d];
+        let scale_of = |a: usize, b: usize| {
+            want[a * h * d..b * h * d]
+                .iter()
+                .fold(0f64, |m, x| m.max(x.abs()))
+        };
+        let worst = |got: &[f32], want: &[f64]| {
+            got.iter()
+                .zip(want)
+                .map(|(a, b)| (*a as f64 - b).abs())
+                .fold(0f64, f64::max)
+        };
+        for (i, p) in PREFIXES.into_iter().enumerate() {
+            let state = DeviceBuffer::new(state_floats * 4).unwrap();
+            let prefix = run(0, p, null, state.at(0).cast());
+            assert_eq!(
+                bits(&prefix),
+                bits(rows(0, p)),
+                "writing the state changed the output, p = {p}"
+            );
+            let s = f32_from_device(&state, state_floats, st);
+            let s_scale = ref_states[i].iter().fold(0f64, |m, x| m.max(x.abs()));
+            let s_worst = worst(&s, ref_state(p));
+            eprintln!(
+                "gated delta state after {p} ({h} heads): largest difference {s_worst:.2e}, largest |reference| {s_scale:.2e}"
+            );
+            assert!(
+                s_worst <= 2e-2 * s_scale,
+                "state after {p}: {s_worst} vs {s_scale}"
+            );
+            for b in BRANCHES {
+                let branch = run(p, b, state.at(0).cast(), std::ptr::null_mut());
+                assert!(branch.iter().all(|x| x.is_finite()));
+                if p % 64 == 0 {
+                    assert_eq!(
+                        bits(&branch),
+                        bits(rows(p, p + b)),
+                        "aligned split {p} + {b}"
+                    );
+                    continue;
+                }
+                let scale = scale_of(p, p + b);
+                let to_ref = worst(&branch, &want[p * h * d..(p + b) * h * d]);
+                let to_unsplit = branch
+                    .iter()
+                    .zip(rows(p, p + b))
+                    .map(|(a, b)| (a - b).abs() as f64)
+                    .fold(0f64, f64::max);
+                eprintln!(
+                    "gated delta split {p} + {b} ({h} heads): to float64 {to_ref:.2e}, to unsplit {to_unsplit:.2e}, largest |reference| {scale:.2e}"
+                );
+                assert!(
+                    to_ref <= 2e-2 * scale,
+                    "split {p} + {b}: {to_ref} vs {scale}"
+                );
+            }
+        }
+        // request prefix -> question prefix -> branch, also with the question state
+        // updated in place
+        for (p1, p2, b) in [
+            (64usize, 128usize, 65usize),
+            (100, 192, 65),
+            (1000, 1100, 100),
+        ] {
+            let (s1, s2, s1b) = (
+                DeviceBuffer::new(state_floats * 4).unwrap(),
+                DeviceBuffer::new(state_floats * 4).unwrap(),
+                DeviceBuffer::new(state_floats * 4).unwrap(),
+            );
+            run(0, p1, null, s1.at(0).cast());
+            run(0, p1, null, s1b.at(0).cast());
+            let question = run(p1, p2 - p1, s1.at(0).cast(), s2.at(0).cast());
+            let in_place = run(p1, p2 - p1, s1b.at(0).cast(), s1b.at(0).cast());
+            assert_eq!(bits(&question), bits(&in_place));
+            assert_eq!(
+                bits(&f32_from_device(&s2, state_floats, st)),
+                bits(&f32_from_device(&s1b, state_floats, st)),
+                "in-place state {p1}, {p2}"
+            );
+            let branch = run(p2, b, s2.at(0).cast(), std::ptr::null_mut());
+            if p1 % 64 == 0 && p2 % 64 == 0 {
+                assert_eq!(bits(&question), bits(rows(p1, p2)));
+                assert_eq!(
+                    bits(&branch),
+                    bits(rows(p2, p2 + b)),
+                    "aligned chain {p1}, {p2}"
+                );
+            } else {
+                let q_ref = worst(&question, &want[p1 * h * d..p2 * h * d]);
+                assert!(
+                    q_ref <= 2e-2 * scale_of(p1, p2),
+                    "question {p1}, {p2}: {q_ref}"
+                );
+                let s2_ref = ref_state(p2);
+                let s2_worst = worst(&f32_from_device(&s2, state_floats, st), s2_ref);
+                let s2_scale = s2_ref.iter().fold(0f64, |m, x| m.max(x.abs()));
+                assert!(s2_worst <= 2e-2 * s2_scale, "state {p1}, {p2}: {s2_worst}");
+                let scale = scale_of(p2, p2 + b);
+                let to_ref = worst(&branch, &want[p2 * h * d..(p2 + b) * h * d]);
+                eprintln!(
+                    "gated delta chain {p1}, {p2} + {b} ({h} heads): question to float64 {q_ref:.2e}, state {s2_worst:.2e}, branch {to_ref:.2e}"
+                );
+                assert!(to_ref <= 2e-2 * scale, "chain {p1}, {p2} + {b}");
+            }
+        }
+        // no tokens: the final state is the initial one, or zeros without one
+        let (s1, s2) = (
+            DeviceBuffer::new(state_floats * 4).unwrap(),
+            DeviceBuffer::new(state_floats * 4).unwrap(),
+        );
+        run(0, 200, null, s1.at(0).cast());
+        run(200, 0, s1.at(0).cast(), s2.at(0).cast());
+        assert_eq!(
+            bits(&f32_from_device(&s2, state_floats, st)),
+            bits(&f32_from_device(&s1, state_floats, st))
+        );
+        run(200, 0, null, s2.at(0).cast());
+        assert!(
+            f32_from_device(&s2, state_floats, st)
+                .iter()
+                .all(|x| x.to_bits() == 0)
+        );
+        // a misaligned state is rejected before any work is queued
+        for (initial, last) in [
+            (s1.at(4).cast::<f32>().cast_const(), std::ptr::null_mut()),
+            (std::ptr::null(), s2.at(4).cast::<f32>()),
+        ] {
+            // SAFETY: the call returns before launching anything.
+            let code = unsafe {
+                (api().cs1_gdn_prefill_state)(
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    initial,
+                    last,
+                    1,
+                    h as i32,
+                    hk as i32,
+                    1.0,
+                    st,
+                )
+            };
+            assert_ne!(code, 0);
+        }
+    }
+}
+
+#[test]
+#[ignore = "needs a GPU and CUA_S1_CUDA_LIB"]
+fn cached_attention_matches_unsplit_attention() {
+    let st = setup();
+    let dh = 256usize;
+    // 4B/9B (16 query heads) and 27B (24) over 4 KV heads
+    for (hq, hk) in [(16usize, 4usize), (24, 4)] {
+        let total = 1300usize;
+        let ldv = hk * dh + 16; // a strided V buffer, as read from the projection output
+        let q = to_device(&random(total * hq * dh, 51, 2.0), st);
+        let k = to_device(&random(total * hk * dh, 52, 2.0), st);
+        let v = to_device(&random(total * ldv, 53, 1.0), st);
+        let gate = to_device(&random(total * hq * dh, 54, 12.0), st);
+        let row = hq * dh;
+        let attend = |at: usize, tq: usize, tk: usize| {
+            let out = DeviceBuffer::new((tq * row).max(1) * 2).unwrap();
+            // SAFETY: q and gate hold rows [at, at + tq), k and v the first tk rows.
+            unsafe {
+                check(
+                    (api().cs1_attention_gated_cached)(
+                        q.at(at * row * 2),
+                        k.at(0),
+                        v.at(0),
+                        ldv as i32,
+                        gate.at(at * row * 2),
+                        out.at(0),
+                        tq as i32,
+                        tk as i32,
+                        hq as i32,
+                        hk as i32,
+                        dh as i32,
+                        0.0625,
+                        st,
+                    ),
+                    "cached attention",
+                )
+                .unwrap();
+            }
+            from_device(&out, tq * row, st)
+        };
+        // with every position as a query, the cached call runs the same code as the
+        // unsplit one; the check below only guards the two entry points
+        let full = attend(0, total, total);
+        let unsplit = DeviceBuffer::new(total * row * 2).unwrap();
+        // SAFETY: as above, with total rows everywhere.
+        unsafe {
+            check(
+                (api().cs1_attention_gated)(
+                    q.at(0),
+                    k.at(0),
+                    v.at(0),
+                    ldv as i32,
+                    gate.at(0),
+                    unsplit.at(0),
+                    total as i32,
+                    hq as i32,
+                    hk as i32,
+                    dh as i32,
+                    0.0625,
+                    st,
+                ),
+                "gated attention",
+            )
+            .unwrap();
+        }
+        assert_eq!(bits(&full), bits(&from_device(&unsplit, total * row, st)));
+        for p in PREFIXES {
+            for b in BRANCHES {
+                let got = attend(p, b, p + b);
+                assert!(got.iter().all(|x| x.is_finite()));
+                assert_eq!(
+                    bits(&got),
+                    bits(&full[p * row..(p + b) * row]),
+                    "split {p} + {b}, {hq} heads"
+                );
+            }
+        }
+        // no queries is valid; more queries than keys is not
+        // SAFETY: both calls return before launching anything.
+        unsafe {
+            let null = std::ptr::null();
+            let out = std::ptr::null_mut();
+            let call = |tq: i32, tk: i32| {
+                (api().cs1_attention_gated_cached)(
+                    null, null, null, 1024, null, out, tq, tk, 16, 4, 256, 0.0625, st,
+                )
+            };
+            assert_eq!(call(0, 5), 0);
+            assert_ne!(call(2, 1), 0);
+        }
+    }
+}
+
+#[test]
+#[ignore = "needs a GPU and CUA_S1_CUDA_LIB"]
+fn copy_rows_copies_pitched_rows() {
+    let st = setup();
+    let (rows, width, src_pitch, dst_pitch) = (37usize, 1024usize, 10240usize, 2048usize);
+    let src = random(rows * src_pitch / 2, 61, 1.0);
+    let source = to_device(&src, st);
+    let target = to_device(&vec![bf16::from_f32(7.0); rows * dst_pitch / 2], st);
+    // SAFETY: both buffers hold `rows` rows of their pitch, each wider than `width` bytes.
+    unsafe {
+        check(
+            (api().cs1_copy_rows)(
+                target.at(0),
+                dst_pitch,
+                source.at(0),
+                src_pitch,
+                width,
+                rows as i32,
+                st,
+            ),
+            "copy rows",
+        )
+        .unwrap();
+    }
+    let got = from_device(&target, rows * dst_pitch / 2, st);
+    for r in 0..rows {
+        for i in 0..dst_pitch / 2 {
+            let want = if i < width / 2 {
+                src[r * src_pitch / 2 + i].to_f32()
+            } else {
+                7.0
+            };
+            assert_eq!(got[r * dst_pitch / 2 + i], want, "row {r}, element {i}");
+        }
     }
 }

@@ -13,7 +13,7 @@
 #include <stdint.h>
 
 // Bumped whenever the required interface below changes.
-#define CS1_ABI_VERSION 5
+#define CS1_ABI_VERSION 6
 
 #ifdef __cplusplus
 extern "C" {
@@ -36,6 +36,10 @@ int cs1_graph_destroy(void* exec);
 // Copy and wait for the copy.
 int cs1_upload(void* dst, const void* src, size_t bytes, void* stream);
 int cs1_download(void* dst, const void* src, size_t bytes, void* stream);
+// Queue a device-to-device copy of `rows` rows of `row_bytes` bytes, with row
+// pitches in bytes; nothing waits for it.
+int cs1_copy_rows(void* dst, size_t dst_pitch, const void* src, size_t src_pitch, size_t row_bytes,
+                  int rows, void* stream);
 
 // ---- operations ----
 
@@ -59,6 +63,14 @@ int cs1_gated_rms_norm(const void* x, const void* z, int ldz, const void* w, voi
 int cs1_gdn_conv(const void* qkv, int ld, const void* w, void* q, void* k, void* v, int T, int key_dim,
                  int value_dim, void* stream);
 
+// The same conv continuing a sequence: history [3, key_dim*2 + value_dim] holds the conv
+// inputs of the three positions before qkv's first row, oldest first (null: zeros, as at
+// the start of a sequence). If history_out is not null, it receives the inputs of the
+// last three positions in the same layout, taken from history where T < 3. history_out
+// must not overlap history or qkv. Each output equals the unsplit conv's bit for bit.
+int cs1_gdn_conv_history(const void* qkv, int ld, const void* w, const void* history, void* history_out,
+                         void* q, void* k, void* v, int T, int key_dim, int value_dim, void* stream);
+
 // beta = sigmoid(b) (bfloat16) and g = -exp(A_log) * softplus(a + dt_bias) (float32), [T, H];
 // b and a are [T, H] in rows of ld.
 int cs1_gdn_gates(const void* b, const void* a, int ld, const void* A_log, const void* dt_bias,
@@ -69,6 +81,16 @@ int cs1_gdn_gates(const void* b, const void* a, int ld, const void* A_log, const
 size_t cs1_gdn_workspace_floats(int T, int H);
 int cs1_gdn_prefill(const void* q, const void* k, const void* v, const float* g, const void* beta,
                     void* o, float* workspace, int T, int H, int HK, float scale, void* stream);
+
+// The same prefill continuing a sequence from initial_state (float [H, 128, 128], key by
+// value per head; null: zeros) and, if final_state is not null, writing the state after
+// the last token there in the same layout. Both are 8-byte aligned, and either the same
+// buffer or not overlapping. With T = 0, final_state receives initial_state. When every
+// split falls on a multiple of 64 tokens, the outputs match the unsplit prefill bit for
+// bit; elsewhere the chunks fall differently.
+int cs1_gdn_prefill_state(const void* q, const void* k, const void* v, const float* g, const void* beta,
+                          void* o, float* workspace, const float* initial_state, float* final_state, int T,
+                          int H, int HK, float scale, void* stream);
 
 // Attention inputs: q and gate from qg [T, Hq, 2*Dh], k from kr [T, Hk, Dh], both in rows
 // of ld; per-head zero-centred RMSNorm, then rotary embedding on the first 2*half dims
@@ -87,6 +109,14 @@ int cs1_attention(const void* q, const void* k, const void* v, int ldv, void* ou
 // exactly as cs1_attention followed by cs1_sigmoid_gate. gate must be non-null if T > 0.
 int cs1_attention_gated(const void* q, const void* k, const void* v, int ldv, const void* gate,
                         void* out, int T, int Hq, int Hk, int Dh, float scale, void* stream);
+
+// Gated attention for the last Tq of Tk positions: k [Tk, Hk, Dh] and v (Tk rows of ldv)
+// cover all positions, while q, gate and out [Tq, Hq, Dh] are the queries at positions
+// Tk - Tq onwards, each attending to the keys up to its own position. Keys are visited
+// in the same order as in cs1_attention_gated, so each output row matches the unsplit call.
+int cs1_attention_gated_cached(const void* q, const void* k, const void* v, int ldv, const void* gate,
+                               void* out, int Tq, int Tk, int Hq, int Hk, int Dh, float scale,
+                               void* stream);
 
 // x = x * sigmoid(gate), n elements.
 int cs1_sigmoid_gate(void* x, const void* gate, size_t n, void* stream);

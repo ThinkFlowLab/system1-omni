@@ -8,7 +8,8 @@
 //      (bfloat16 with float32 accumulation). Results are stored as bfloat16.
 //   2. gdn_chunk_state, per (head, 32 value columns), over the chunks in order: keeps
 //      the state S in float32 registers, stores it as bfloat16 before each chunk, and
-//      computes v_new = u - w S and S = decay S + kd^T v_new with mma.sync.
+//      computes v_new = u - w S and S = decay S + kd^T v_new with mma.sync. S starts
+//      from zero or from a given float32 state, and the final one can be written out.
 //   3. gdn_chunk_out, per (chunk, head): o = qd S + P v_new with mma.sync.
 // Transformers computes all of this in float32. Keeping the intermediate results in
 // bfloat16, as flash-linear-attention does, makes this kernel less precise than that
@@ -337,7 +338,8 @@ constexpr int SS_LD = BVS + 8;      // bfloat16 row stride of the S copy and v_n
 constexpr int STAGE = C * WS_LD;    // elements of one staged w or kd
 constexpr size_t SMEM2_BYTES = (4 * STAGE + K * SS_LD + C * SS_LD) * 2;
 
-__global__ void __launch_bounds__(ST_THREADS) gdn_chunk_state(Work ws, int NC) {
+__global__ void __launch_bounds__(ST_THREADS)
+    gdn_chunk_state(Work ws, int NC, const float* s0, float* s_out) {  // s0 and s_out may alias
     extern __shared__ __align__(128) unsigned char sm[];
     bf16* wbuf = reinterpret_cast<bf16*>(sm);  // [2][C][WS_LD]
     bf16* kbuf = wbuf + 2 * STAGE;              // [2][C][WS_LD]
@@ -356,12 +358,22 @@ __global__ void __launch_bounds__(ST_THREADS) gdn_chunk_state(Work ws, int NC) {
         cs1::cp_async_commit();
     };
 
-    // S rows warp * 32 + mt * 16 + {g, g + 8}, columns nt * 8 + {2t, 2t + 1}
+    // S rows warp * 32 + mt * 16 + {g, g + 8}, columns nt * 8 + {2t, 2t + 1}; the given
+    // state is float [H, K, V], read and written by the block that owns its columns
     float st[2][4][4];
+    const size_t s_at = (size_t)h * K * V + vb0;
 #pragma unroll
     for (int mt = 0; mt < 2; mt++)
 #pragma unroll
-        for (int nt = 0; nt < 4; nt++) st[mt][nt][0] = st[mt][nt][1] = st[mt][nt][2] = st[mt][nt][3] = 0.f;
+        for (int nt = 0; nt < 4; nt++)
+#pragma unroll
+            for (int r = 0; r < 2; r++) {
+                const int row = warp * 32 + mt * 16 + g + r * 8, col = nt * 8 + 2 * t;
+                const float2 x = s0 ? *reinterpret_cast<const float2*>(s0 + s_at + (size_t)row * V + col)
+                                    : make_float2(0.f, 0.f);
+                st[mt][nt][2 * r] = x.x;
+                st[mt][nt][2 * r + 1] = x.y;
+            }
 
     load(0, 0);
     for (int c = 0; c < NC; c++) {
@@ -437,6 +449,18 @@ __global__ void __launch_bounds__(ST_THREADS) gdn_chunk_state(Work ws, int NC) {
                 }
             }
         }
+    }
+    if (s_out) {
+#pragma unroll
+        for (int mt = 0; mt < 2; mt++)
+#pragma unroll
+            for (int nt = 0; nt < 4; nt++)
+#pragma unroll
+                for (int r = 0; r < 2; r++) {
+                    const int row = warp * 32 + mt * 16 + g + r * 8, col = nt * 8 + 2 * t;
+                    *reinterpret_cast<float2*>(s_out + s_at + (size_t)row * V + col) =
+                        make_float2(st[mt][nt][2 * r], st[mt][nt][2 * r + 1]);
+                }
     }
 }
 
@@ -535,10 +559,19 @@ extern "C" {
 
 size_t cs1_gdn_workspace_floats(int T, int H) { return (Layout(T, H).total + 3) / 4; }
 
-int cs1_gdn_prefill(const void* q, const void* k, const void* v, const float* g, const void* beta,
-                    void* o, float* workspace, int T, int H, int HK, float scale, void* stream) {
-    if (T < 0 || HK <= 0 || H % HK != 0) return cudaErrorInvalidValue;
-    if (T == 0) return cudaSuccess;
+int cs1_gdn_prefill_state(const void* q, const void* k, const void* v, const float* g, const void* beta,
+                          void* o, float* workspace, const float* initial_state, float* final_state, int T,
+                          int H, int HK, float scale, void* stream) {
+    if (T < 0 || H < 0 || HK <= 0 || H % HK != 0) return cudaErrorInvalidValue;
+    if ((reinterpret_cast<uintptr_t>(initial_state) | reinterpret_cast<uintptr_t>(final_state)) & 7)
+        return cudaErrorInvalidValue;
+    if (T == 0) {
+        if (!final_state || final_state == initial_state) return cudaSuccess;
+        const size_t bytes = (size_t)H * K * V * sizeof(float);
+        cudaStream_t st = static_cast<cudaStream_t>(stream);
+        return initial_state ? cudaMemcpyAsync(final_state, initial_state, bytes, cudaMemcpyDeviceToDevice, st)
+                             : cudaMemsetAsync(final_state, 0, bytes, st);
+    }
     // once per process (for the device current at the first call)
     static const cudaError_t configured = [] {
         cudaError_t e = cudaFuncSetAttribute(gdn_chunk_prep, cudaFuncAttributeMaxDynamicSharedMemorySize,
@@ -558,9 +591,14 @@ int cs1_gdn_prefill(const void* q, const void* k, const void* v, const float* g,
     gdn_chunk_prep<<<dim3(NC, H), THREADS, SMEM1_BYTES, st>>>(
         static_cast<const __nv_bfloat16*>(q), static_cast<const __nv_bfloat16*>(k),
         static_cast<const __nv_bfloat16*>(v), g, static_cast<const __nv_bfloat16*>(beta), ws, T, H, HK, scale);
-    gdn_chunk_state<<<dim3(H, V / BVS), ST_THREADS, SMEM2_BYTES, st>>>(ws, NC);
+    gdn_chunk_state<<<dim3(H, V / BVS), ST_THREADS, SMEM2_BYTES, st>>>(ws, NC, initial_state, final_state);
     gdn_chunk_out<<<dim3(NC, H), OUT_THREADS, SMEM3_BYTES, st>>>(ws, static_cast<bf16*>(o), T, H);
     return cudaGetLastError();
+}
+
+int cs1_gdn_prefill(const void* q, const void* k, const void* v, const float* g, const void* beta,
+                    void* o, float* workspace, int T, int H, int HK, float scale, void* stream) {
+    return cs1_gdn_prefill_state(q, k, v, g, beta, o, workspace, nullptr, nullptr, T, H, HK, scale, stream);
 }
 
 }  // extern "C"

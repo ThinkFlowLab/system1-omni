@@ -16,10 +16,13 @@ __global__ void embed_kernel(const int32_t* __restrict__ ids, const Pack8* __res
 }
 
 // F.conv1d in bfloat16 (float32 accumulation, rounded), then SiLU (rounded again),
-// written to three contiguous outputs.
+// written to three contiguous outputs. Positions before the first row come from
+// history [3, channels] when there is one; without it they are skipped, as the zero
+// padding of a sequence's start adds nothing.
 __global__ void gdn_conv_kernel(const bf16* __restrict__ qkv, int ld, const bf16* __restrict__ w,
-                                bf16* __restrict__ q, bf16* __restrict__ k, bf16* __restrict__ v, int T,
-                                int key_dim, int value_dim) {
+                                const bf16* __restrict__ history, bf16* __restrict__ q,
+                                bf16* __restrict__ k, bf16* __restrict__ v, int T, int key_dim,
+                                int value_dim) {
     const int channels = 2 * key_dim + value_dim;
     const size_t idx = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= (size_t)T * channels) return;
@@ -28,7 +31,10 @@ __global__ void gdn_conv_kernel(const bf16* __restrict__ qkv, int ld, const bf16
 #pragma unroll
     for (int j = 0; j < 4; j++) {
         const int s = t - 3 + j;
-        if (s >= 0) acc = fmaf(f32(w[c * 4 + j]), f32(qkv[(size_t)s * ld + c]), acc);
+        if (s >= 0)
+            acc = fmaf(f32(w[c * 4 + j]), f32(qkv[(size_t)s * ld + c]), acc);
+        else if (history)
+            acc = fmaf(f32(w[c * 4 + j]), f32(history[(size_t)(3 + s) * channels + c]), acc);
     }
     const bf16 y = to_bf16(silu(round_bf16(acc)));
     if (c < key_dim)
@@ -37,6 +43,16 @@ __global__ void gdn_conv_kernel(const bf16* __restrict__ qkv, int ld, const bf16
         k[(size_t)t * key_dim + c - key_dim] = y;
     else
         v[(size_t)t * value_dim + c - 2 * key_dim] = y;
+}
+
+// The conv inputs of the last three positions, from qkv or, before its first row, from
+// history (zeros without one).
+__global__ void gdn_conv_history_kernel(const bf16* __restrict__ qkv, int ld, const bf16* __restrict__ history,
+                                        bf16* __restrict__ out, int T, int channels) {
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= 3 * channels) return;
+    const int r = idx / channels, c = idx % channels, s = T - 3 + r;
+    out[idx] = s >= 0 ? qkv[(size_t)s * ld + c] : history ? history[(3 + s) * channels + c] : to_bf16(0.f);
 }
 
 // beta = sigmoid(b) in bfloat16; g = -exp(A_log) * softplus(a + dt_bias) in float32
@@ -101,15 +117,28 @@ extern "C" int cs1_embed(const int32_t* ids, const void* table, void* out, int T
     return cudaGetLastError();
 }
 
+extern "C" int cs1_gdn_conv_history(const void* qkv, int ld, const void* w, const void* history, void* history_out,
+                                    void* q, void* k, void* v, int T, int key_dim, int value_dim, void* stream) {
+    if (T < 0 || key_dim < 0 || value_dim < 0 || ld < 2 * key_dim + value_dim) return cudaErrorInvalidValue;
+    const int channels = 2 * key_dim + value_dim;
+    const size_t n = (size_t)T * channels;
+    const cudaStream_t st = static_cast<cudaStream_t>(stream);
+    if (n > 0) {
+        gdn_conv_kernel<<<blocks(n), THREADS, 0, st>>>(
+            static_cast<const bf16*>(qkv), ld, static_cast<const bf16*>(w), static_cast<const bf16*>(history),
+            static_cast<bf16*>(q), static_cast<bf16*>(k), static_cast<bf16*>(v), T, key_dim, value_dim);
+    }
+    if (history_out && channels > 0) {
+        gdn_conv_history_kernel<<<blocks((size_t)3 * channels), THREADS, 0, st>>>(
+            static_cast<const bf16*>(qkv), ld, static_cast<const bf16*>(history), static_cast<bf16*>(history_out),
+            T, channels);
+    }
+    return cudaGetLastError();
+}
+
 extern "C" int cs1_gdn_conv(const void* qkv, int ld, const void* w, void* q, void* k, void* v, int T, int key_dim,
                             int value_dim, void* stream) {
-    if (T < 0 || key_dim < 0 || value_dim < 0 || ld < 2 * key_dim + value_dim) return cudaErrorInvalidValue;
-    const size_t n = (size_t)T * (2 * key_dim + value_dim);
-    if (n == 0) return cudaSuccess;
-    gdn_conv_kernel<<<blocks(n), THREADS, 0, static_cast<cudaStream_t>(stream)>>>(
-        static_cast<const bf16*>(qkv), ld, static_cast<const bf16*>(w), static_cast<bf16*>(q),
-        static_cast<bf16*>(k), static_cast<bf16*>(v), T, key_dim, value_dim);
-    return cudaGetLastError();
+    return cs1_gdn_conv_history(qkv, ld, w, nullptr, nullptr, q, k, v, T, key_dim, value_dim, stream);
 }
 
 extern "C" int cs1_gdn_gates(const void* b, const void* a, int ld, const void* A_log, const void* dt_bias,
