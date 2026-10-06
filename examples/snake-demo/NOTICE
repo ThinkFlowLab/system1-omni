@@ -1,0 +1,13 @@
+snake/ is ported from mizorewww/laya-mlx (Apache-2.0, see LICENSE-laya-mlx).
+
+Modifications against the upstream laya_mlx/snake module:
+- snake/policy.py: inference backend replaced — decisions are served by a
+  system1-omni /v1/systemone HTTP backend (shim.SystemOneBackend) instead of a
+  local laya_mlx.Agent; metadata now records backend health/device instead of
+  local checkpoint info. The decision logic in decide() is unchanged.
+- snake/cli.py: added --backend URL argument; --model now names the backend-side
+  model; summary "network" field follows policy metadata; startup message updated.
+- snake/{game,ui,__init__,__main__,replay}.py: unchanged copies.
+
+shim.py is new: it maps laya_mlx.Agent's predict(state, questions) interface
+onto the system1-omni /v1/systemone request/response contract.
