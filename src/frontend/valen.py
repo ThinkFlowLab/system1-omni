@@ -61,7 +61,7 @@ def decide(raw: bytes, processor: ValenProcessor, executor: ValenExecutor) -> di
         )
 
 
-def _warmup_request():
+def _image_warmup_request():
     stream = io.BytesIO()
     Image.new("RGB", (2, 2), "white").save(stream, "PNG")
     encoded = base64.b64encode(stream.getvalue()).decode("ascii")
@@ -80,11 +80,27 @@ def _warmup_request():
     )
 
 
+def _text_warmup_request():
+    return parse_request(
+        {
+            "model": MODEL_NAME,
+            "state": "Warmup: choose the only candidate.",
+            "questions": {
+                "_warmup": {
+                    "type": "choice",
+                    "instructions": "Choose the only candidate.",
+                    "criteria": {"ok": "OK"},
+                }
+            },
+        }
+    )
+
+
 def warmup(processor: ValenProcessor, executor: ValenExecutor) -> None:
-    request = _warmup_request()
-    with TemporaryDirectory(prefix="system1-valen-warmup-") as directory:
-        prepared = prepare_request(request, Path(directory))
-        executor.warmup(processor.compile(prepared))
+    for request in (_image_warmup_request(), _text_warmup_request()):
+        with TemporaryDirectory(prefix="system1-valen-warmup-") as directory:
+            prepared = prepare_request(request, Path(directory))
+            executor.warmup(processor.compile(prepared))
 
 
 class WorkerServer(ThreadingHTTPServer):

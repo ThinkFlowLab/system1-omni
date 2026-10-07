@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .protocol import Request, Question
+from .protocol import Question, Request, TextState
 
 
 @dataclass(frozen=True)
@@ -26,8 +26,8 @@ class ResponseContext:
 class PreparedInput:
     record: dict[str, Any]
     media_root: Path
-    image_path: Path
-    image_sha256: str
+    image_path: Path | None
+    image_sha256: str | None
     response_context: ResponseContext
 
 
@@ -82,12 +82,39 @@ def prepare_request(request: Request, media_root: Path) -> PreparedInput:
 
     media_root = Path(media_root)
     media_root.mkdir(parents=True, exist_ok=True)
-    suffix = ".png" if request.image.format == "PNG" else ".jpg"
-    image_path = media_root / f"input{suffix}"
-    with image_path.open("xb") as stream:
-        stream.write(request.image.data)
-    digest = hashlib.sha256(request.image.data).hexdigest()
-
+    if isinstance(request.state, TextState):
+        state = {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": request.state.text}],
+                }
+            ]
+        }
+        assets: list[dict[str, str]] = []
+        image_path = None
+        image_sha256 = None
+    else:
+        image = request.state
+        suffix = ".png" if image.format == "PNG" else ".jpg"
+        image_path = media_root / f"input{suffix}"
+        with image_path.open("xb") as stream:
+            stream.write(image.data)
+        image_sha256 = hashlib.sha256(image.data).hexdigest()
+        state = {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": image_path.name},
+                        }
+                    ],
+                }
+            ]
+        }
+        assets = [{"path": image_path.name, "sha256": image_sha256}]
     criteria = {
         question.name: {
             "type": "choice",
@@ -97,29 +124,14 @@ def prepare_request(request: Request, media_root: Path) -> PreparedInput:
         for question in request.questions
     }
     record = {
-        "request": {
-            "state": {
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image_url",
-                                "image_url": {"url": image_path.name},
-                            }
-                        ],
-                    }
-                ]
-            },
-            "questions": criteria,
-        },
-        "assets": [{"path": image_path.name, "sha256": digest}],
+        "request": {"state": state, "questions": criteria},
+        "assets": assets,
     }
     return PreparedInput(
         record=record,
         media_root=media_root,
         image_path=image_path,
-        image_sha256=digest,
+        image_sha256=image_sha256,
         response_context=ResponseContext(request.model, request.questions),
     )
 

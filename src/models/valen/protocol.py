@@ -1,8 +1,8 @@
 """Wire contract for the Valen-Preview-0923 reference worker.
 
 This module deliberately has no torch dependency. It validates the public
-/v1/systemone request and keeps the model-specific image limits separate
-from the later Valen compiler and executor layers.
+/v1/systemone request and keeps the model-specific image and text-state limits
+separate from the later Valen compiler and executor layers.
 """
 
 from __future__ import annotations
@@ -60,6 +60,13 @@ class ImageData:
 
 
 @dataclass(frozen=True)
+class TextState:
+    """Validated text state: a plain or JSON-serialized string."""
+
+    text: str
+
+
+@dataclass(frozen=True)
 class Question:
     name: str
     instructions: str
@@ -70,7 +77,7 @@ class Question:
 @dataclass(frozen=True)
 class Request:
     model: str
-    image: ImageData
+    state: ImageData | TextState
     questions: tuple[Question, ...]
 
 
@@ -170,6 +177,25 @@ def _image(state: Any) -> ImageData:
     return ImageData(data, expected[prefix], width, height)
 
 
+def _state(value: Any) -> ImageData | TextState:
+    """Accept one inline image or one text state.
+
+    A dict carrying an "image" key always enters image validation, so a
+    mistyped image request fails loudly instead of silently becoming text.
+    Every other string, object or array follows the shared text-state wire
+    convention: objects and arrays are serialized to JSON text.
+    """
+
+    if isinstance(value, dict) and "image" in value:
+        return _image(value)
+    if isinstance(value, (str, dict, list)):
+        text = _text(value, "state")
+        if not text:
+            raise RequestError("state must not be empty")
+        return TextState(text)
+    raise RequestError("state must be an image data URL or text")
+
+
 def parse_request(value: dict[str, Any]) -> Request:
     """Validate the system1-omni wire request."""
 
@@ -217,4 +243,4 @@ def parse_request(value: dict[str, Any]) -> Request:
             raise RequestError("combined question text exceeds 16384 characters")
         parsed.append(Question(name, instructions, tuple(keys), tuple(descriptions)))
 
-    return Request(MODEL_NAME, _image(value["state"]), tuple(parsed))
+    return Request(MODEL_NAME, _state(value["state"]), tuple(parsed))

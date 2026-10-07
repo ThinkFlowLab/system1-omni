@@ -15,19 +15,20 @@ The validated slice is:
 
 - model id: `valen-preview-0923`;
 - the Python reference worker behind the Rust frontend;
-- one inline PNG or JPEG image in `state.image`;
+- text state (a non-empty string; objects and arrays are serialized to JSON
+  text) or one inline PNG or JPEG image in `state.image`;
 - textual instructions and criteria for `choice` questions;
-- BF16 CUDA inference with the pinned Preview checkpoint.
+- BF16 CUDA inference with the pinned Preview checkpoint. The image state is
+  validated; text state is implemented and its GPU validation is pending.
 
-The current worker does not implement text-only state, `noul`, `score`, video,
-multiple images, remote image URLs, or a native Rust/CUDA Valen executor.
-“Text question” means a textual instruction evaluated against the single image.
+The current worker does not implement `noul`, `score`, video, multiple images,
+remote image URLs, or a native Rust/CUDA Valen executor.
 
 The current protocol limits requests to an 8 MiB JSON body, one PNG/JPEG image
 of at most 4 MiB, 2048 pixels per side, 1,048,576 pixels total, and a 200:1
-maximum aspect ratio. A request may contain at most 8 questions and 255
-candidates per question; combined instruction and criterion text is limited to
-16,384 characters.
+maximum aspect ratio. Text state is limited to 16,384 characters, the same
+limit as combined instruction and criterion text. A request may contain at
+most 8 questions and 255 candidates per question.
 
 The first slice follows
 [issue #84](https://github.com/ThinkFlowLab/system1-omni/issues/84): establish
@@ -219,17 +220,20 @@ Observed response:
 }
 ~~~
 
-This is a serving smoke test, not an accuracy result. Valen's original choice
-confidence formula is retained:
+This is a serving smoke test, not an accuracy result. The numbers follow the
+[worker contract](../../src/models/valen/README.md). Confidence semantics remain coordinating
+with [system1-omni#61](https://github.com/ThinkFlowLab/system1-omni/issues/61).
 
-~~~text
-K = 1: confidence = 1
-K > 1: confidence = max(0, (max(p) - 1/K) / (1 - 1/K))
+A text-only request uses a plain string state:
+
+~~~sh
+curl -sS http://127.0.0.1:8000/v1/systemone \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"valen-preview-0923","state":"The card was charged twice for one order.","questions":{"refund":{"type":"choice","instructions":"Decide the refund action.","criteria":{"refund":"Refund the duplicate charge","wait":"Wait for review"}}}}'
 ~~~
 
-For `K=2` and `max(p)=0.5540145913711313`, this gives
-`0.10802918274226259`. This remains coordinated with
-[system1-omni#61](https://github.com/ThinkFlowLab/system1-omni/issues/61).
+Text-state serving is implemented; a recorded GPU response for this example
+will be added after validation.
 
 ## Start and verify the Rust frontend
 
@@ -248,9 +252,8 @@ curl -sS http://127.0.0.1:8080/v1/systemone \
   --data-binary @recipe/valen/example-request.json
 ~~~
 
-The generic `recipe/compare_with_backend.py` sends text and `score`/`noul`
-cases, so it is not suitable for this image-only Valen slice. Compare the
-Valen fixture directly:
+The generic `recipe/compare_with_backend.py` also sends `score`/`noul` cases,
+which this worker rejects, so compare the Valen fixture directly:
 
 ~~~sh
 curl -fsS http://127.0.0.1:8000/v1/systemone \
@@ -267,19 +270,9 @@ types, and byte-identical response bodies.
 
 ## Error behavior
 
-The worker returns JSON errors with one `detail` field:
-
-| Case | Status |
-| --- | ---: |
-| malformed JSON or invalid UTF-8 | 400 |
-| incomplete or invalid `Content-Length` | 400 |
-| unsupported content type | 415 |
-| wrong model | 422 |
-| unsupported `score` or `noul` | 422 |
-| empty or missing questions | 422 |
-| body or image over its limit | 413 |
-| worker busy | 503 |
-| request body timeout | 408 |
+The request, response and error contract — status codes, `detail` bodies,
+confidence, and usage counting — is the
+[worker contract](../../src/models/valen/README.md).
 
 Worker responses are forwarded unchanged. Frontend-generated 502/504 responses
 are frontend errors, not model responses.
@@ -327,8 +320,9 @@ probability tolerance <= 1e-6: PASS
 ~~~
 
 The reference model field is `Valen`; the system1-omni worker deliberately
-uses `valen-preview-0923` as its stable serving identity. Text-only parity is
-not claimed because the current system1-omni protocol requires an image.
+uses `valen-preview-0923` as its stable serving identity. Text-state parity is
+not yet recorded: the text path is implemented and awaits the same comparison
+against the pinned reference.
 
 ## Troubleshooting and limits
 
@@ -344,5 +338,5 @@ not claimed because the current system1-omni protocol requires an image.
 - `/health` is exposed only after model loading and real warmup complete.
 - The memory and smoke-response observations are host-specific; they are not
   general accuracy or performance claims.
-- Video, text-only state, native execution, `noul`, and `score` remain outside
-  this recipe.
+- Video, native execution, `noul`, and `score` remain outside this recipe.
+  Text state is implemented; its GPU validation and parity record are pending.

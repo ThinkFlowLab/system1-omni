@@ -2,8 +2,8 @@
 
 This directory contains the first System1-Omni integration slice for
 Valen-Preview-0923. It is a reference-serving boundary only: the Python worker,
-processor, executor, and postprocessor are implemented for the pinned
-image-backed `choice` slice. Native CUDA execution is not part of this slice.
+processor, executor, and postprocessor are implemented for the pinned text and
+single-image `choice` slice. Native CUDA execution is not part of this slice.
 
 ## Pinned artifacts
 
@@ -21,9 +21,14 @@ does not contain the frozen Qwen base model. The published config uses
 
 ## Current serving scope
 
-- one inline PNG/JPEG image in `state.image`;
-- `choice` questions only;
-- up to 255 named candidates;
+- `state` is either one inline PNG/JPEG image (`{"image": data URL}`) or text
+  (a non-empty string; objects and arrays are serialized to JSON text, matching
+  the shared text-state wire convention);
+- image limits: single-frame PNG/JPEG, at most 4 MiB, 2048 pixels per side,
+  1,048,576 pixels, a 200:1 aspect ratio; text state, instructions and
+  criteria are limited to 16,384 characters;
+- `choice` questions only, at most 8 per request;
+- up to 255 named candidates per question;
 - no `noul`, `score`, video, multi-image, or remote URL inputs;
 - no token generation: the decision head returns candidate logits directly.
 
@@ -43,9 +48,26 @@ The public request keeps the Cua-S1-compatible shape:
 }
 ~~~
 
+A text-only request replaces the image object with plain text:
+
+~~~json
+{
+  "model": "valen-preview-0923",
+  "state": "The card was charged twice for one order.",
+  "questions": {
+    "refund": {
+      "type": "choice",
+      "instructions": "Decide the refund action.",
+      "criteria": {"refund": "Refund the duplicate charge", "wait": "Wait for review"}
+    }
+  }
+}
+~~~
+
 Preprocessing validates and decodes the data URL, writes it to a request-scoped
 directory, hashes the bytes, and converts it to Valen's local-media
-`messages` record. The worker owns that directory's lifetime. Postprocessing
+`messages` record. Text state skips materialization and compiles a text-only
+user message with no assets. The worker owns that directory's lifetime. Postprocessing
 uses Valen's original choice confidence formula for this reference slice:
 
 ~~~text
@@ -57,6 +79,44 @@ This confidence choice is intentionally temporary. The shared `/v1/systemone`
 contract, including confidence semantics, error details, busy behavior, model
 identity, and usage fields, remains coordinated with
 [system1-omni#61](https://github.com/ThinkFlowLab/system1-omni/issues/61).
+
+Each answer is `{"type": "choice", "choice": ..., "probabilities": ...,
+"confidence": ...}`: `choice` is the candidate with the highest probability,
+ties go to the earliest candidate in request order, and `probabilities` maps
+every candidate key to its probability in request order.
+
+The response `model` is `valen-preview-0923`, the worker's stable serving
+identity. `usage.input_tokens` counts the compiled prompt's logical tokens:
+the shared state tokens plus each question's task suffix, counted once.
+`usage.output_tokens` is 0; the decision head returns logits without
+generation. `internal_usage.compute_tokens` counts the full per-question
+branch lengths the executor runs, with the shared state repeated per branch.
+
+## Errors
+
+An error rejects the whole request. Its body is `{"detail": "<message>"}`, and
+the message names the problem.
+
+The status is `400` when the body is not a usable JSON object (invalid JSON or
+UTF-8, non-finite numbers, a repeated key) or the declared `Content-Length`
+does not match the received bytes.
+
+The status is `411` without exactly one `Content-Length`; chunked requests are
+unsupported. `408` means the body read timed out, `413` that the body or image
+exceeded its limit, `415` that the content type is not `application/json`,
+and `503` that another inference is running.
+
+The status is `422` when a well-formed request cannot be evaluated:
+
+- a `model` other than `valen-preview-0923`;
+- a `score` or `noul` question, or unsupported request or question fields;
+- text over its limit, or containing a media control token such as
+  `<|image_pad|>`;
+- an empty text state, or a state that is neither an image data URL nor text;
+- an image that is not a single-frame PNG/JPEG matching its MIME type and
+  limits.
+
+Any other failure is `500` with a generic detail.
 
 ## Ownership boundary
 
