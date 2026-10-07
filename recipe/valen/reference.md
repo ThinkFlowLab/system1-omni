@@ -287,17 +287,19 @@ cargo fmt --all --check
 cargo test -p omni-jev --test frontend --locked
 cargo build --release --locked
 python recipe/test_compare_with_backend.py
+python recipe/valen/test_compare_reference.py
 ~~~
 
 Validated results:
 
 ~~~text
-pytest tests/valen: 13 passed in 0.11s
+pytest tests/valen: 16 passed in 0.14s
 compileall: passed
 cargo fmt --all --check: passed
 frontend integration: 12 passed; 0 failed
 cargo build --release --locked: passed
 compare_with_backend: ok
+compare_reference tests: ok
 ~~~
 
 ## Reference parity
@@ -321,8 +323,29 @@ probability tolerance <= 1e-6: PASS
 
 The reference model field is `Valen`; the system1-omni worker deliberately
 uses `valen-preview-0923` as its stable serving identity. Text-state parity is
-not yet recorded: the text path is implemented and awaits the same comparison
-against the pinned reference.
+not yet recorded: run the text case below after restoring the artifacts and
+record its block here.
+
+Reproduce with [`compare_reference.py`](compare_reference.py). The script loads
+one pinned model instance and drives each request through two paths: a
+Valen-native record compiled by the pinned `Compiler` and decoded with a plain
+softmax, and the production `frontend.valen.decide` pipeline. The decision
+criteria are exact choice agreement, equal token accounting and the declared
+probability tolerance (default `1e-6`, `--tolerance` to override):
+
+~~~sh
+PYTHONPATH=src .venv/bin/python recipe/valen/compare_reference.py \
+  --valen-source "$VALEN_SRC" --checkpoint "$VALEN_CKPT" \
+  --base "$VALEN_BASE" --device cuda --dtype bf16 --case image
+
+PYTHONPATH=src .venv/bin/python recipe/valen/compare_reference.py \
+  --valen-source "$VALEN_SRC" --checkpoint "$VALEN_CKPT" \
+  --base "$VALEN_BASE" --device cuda --dtype bf16 --case text
+~~~
+
+The image case uses [`example-request.json`](example-request.json); the text
+case uses the recipe's text example unless `--text-body` points elsewhere.
+The block above is the recorded image-case output.
 
 ## Troubleshooting and limits
 
