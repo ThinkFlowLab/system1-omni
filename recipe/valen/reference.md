@@ -299,9 +299,12 @@ python recipe/test_compare_with_backend.py
 Validated results:
 
 ~~~text
-13 passed in 0.09s
+pytest tests/valen: 13 passed in 0.11s
 compileall: passed
+cargo fmt --all --check: passed
 frontend integration: 12 passed; 0 failed
+cargo build --release --locked: passed
+compare_with_backend: ok
 ~~~
 
 ## Reference parity

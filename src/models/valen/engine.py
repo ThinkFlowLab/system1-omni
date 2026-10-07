@@ -19,7 +19,6 @@ from .preprocess import CompiledInput
 from .protocol import MODEL_NAME
 
 REFERENCE_REVISION = "750bfcfbb48a5275534a9c912257ebe83ca57a97"
-CHECKPOINT_REVISION = "81b9c63"
 CHECKPOINT_SHA256 = (
     "836622efe78fe757e2627aa6050c223d461c424ea430a1c110c15e6f42f5a012"
 )
