@@ -1,9 +1,9 @@
 # Valen-Preview-0923 reference contract
 
 This directory contains the first System1-Omni integration slice for
-Valen-Preview-0923. It is a reference-serving boundary only: the worker and
-executor will be added after the protocol tests are stable. Native CUDA
-execution is not part of this slice.
+Valen-Preview-0923. It is a reference-serving boundary only: the Python worker,
+processor, executor, and postprocessor are implemented for the pinned
+image-backed `choice` slice. Native CUDA execution is not part of this slice.
 
 ## Pinned artifacts
 
@@ -29,7 +29,7 @@ does not contain the frozen Qwen base model. The published config uses
 
 The public request keeps the Cua-S1-compatible shape:
 
-```json
+~~~json
 {
   "model": "valen-preview-0923",
   "state": {"image": "data:image/png;base64,..."},
@@ -41,17 +41,17 @@ The public request keeps the Cua-S1-compatible shape:
     }
   }
 }
-```
+~~~
 
 Preprocessing validates and decodes the data URL, writes it to a request-scoped
 directory, hashes the bytes, and converts it to Valen's local-media
 `messages` record. The worker owns that directory's lifetime. Postprocessing
 uses Valen's original choice confidence formula for this reference slice:
 
-```text
+~~~text
 K = 1: confidence = 1
 K > 1: confidence = max(0, (max(p) - 1/K) / (1 - 1/K))
-```
+~~~
 
 This confidence choice is intentionally temporary. The shared `/v1/systemone`
 contract, including confidence semantics, error details, busy behavior, model
@@ -62,9 +62,12 @@ identity, and usage fields, remains coordinated with
 
 - `protocol.py` owns wire validation and safe inline-image limits.
 - `preprocess.py` owns media materialization and the Valen compiler record.
+- `engine.py` owns the pinned model, forward pass, learned head, device state,
+  and warmup.
 - `postprocess.py` owns probability normalization, confidence, and response
   reconstruction.
-- The future executor will own the pinned base, Valen checkpoint, forward pass,
-  decision head, device state, and warmup.
+- `src/frontend/valen.py` owns HTTP lifecycle and worker orchestration.
 
 The current tests are CPU-only and do not require model weights or a GPU.
+The real worker path additionally requires the pinned source, checkpoint, base,
+and a CUDA-capable PyTorch environment.
