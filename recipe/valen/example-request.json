@@ -1,0 +1,16 @@
+{
+  "model": "valen-preview-0923",
+  "state": {
+    "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP8//8/AwMDEwMDAwMDAwAkBgMB/DXemwAAAABJRU5ErkJggg=="
+  },
+  "questions": {
+    "color": {
+      "type": "choice",
+      "instructions": "What color is the square?",
+      "criteria": {
+        "white": "The square is white.",
+        "black": "The square is black."
+      }
+    }
+  }
+}
