@@ -96,6 +96,29 @@ remain responsible for understanding the changes and verifying the results.
 Self-review helps maintainers focus on design and correctness; it does not
 replace maintainer review.
 
+### Large code changes
+
+PRs with **more than 3,000 changed lines of authored code** need extra contributor
+attention before requesting review. Count additions plus deletions against the
+PR's merge base in source files, tests, and build or validation scripts. Report
+this count separately from the total diff size; exclude documentation, generated
+output, lockfiles, and static fixtures from the code count, while still reviewing
+those files for relevance and correctness.
+
+- Complete a full self-review of every affected component and its integration
+  boundaries. A quick precheck alone is insufficient; keep the PR in draft until
+  the contributor self-review is complete.
+- Consider splitting independent features, refactors, and cleanup into focused
+  PRs. If the change needs to stay together, explain why in the PR description
+  and provide a component map and suggested review order.
+- Include the code-line count and a validation summary for each affected area in
+  the PR description: commands, results, and unverified behavior with reasons.
+  Cover changed interfaces between components as well as individual components.
+
+Size signals the need for closer review; it is not itself a correctness finding.
+Choose checks based on the changed behavior and risk. Crossing this threshold
+alone does not require GPU benchmarks or other expensive experiments.
+
 ## Documentation site
 
 The site at <https://thinkflowlab.github.io/system1-omni/> is built with MkDocs

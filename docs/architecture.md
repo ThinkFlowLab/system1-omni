@@ -9,7 +9,11 @@ design. Concrete input/output types follow each executor's supported layout.
 The [Rust frontend](../src/frontend/README.md) currently forwards HTTP requests
 to separately running workers. Cua-S1 and Open-Jev have native Rust/CUDA workers
 that share the [Qwen3.5/3.8 executor](../src/models/qwen3_5/native/), which accepts
-one prompt per forward call. [Laya's native worker](../src/models/laya/README.md)
+single prompts and bounded packed prefill. Cua-S1 and Open-Jev-9B use
+single-prompt calls; Open-Jev-27B-v1.1 packs candidates within one request for
+input and gate/up GEMMs while preserving per-sequence mixers and output/down GEMM
+shapes.
+[Laya's native worker](../src/models/laya/README.md)
 uses a separate Hopper CUDA backend for one complete padded request. All three
 coordinate independent processors and executors through
 `prepare` → `execute` → `finish` and use the
@@ -37,8 +41,11 @@ and candidate identity, usage, and response metadata outside the executor.
 | Open-Jev | Token-ID vectors grouped by question, then independent candidate, in request order. | One FP32 learned scalar per candidate in the same grouping. | Add the `noul` false logit of zero, calibrate across each complete question, and restore typed answers, usage, and metadata. |
 | Laya | One padded request: token IDs, true lengths, question types and ordered option markers; at most 16 questions, 512 tokens per row and 2048 markers. | Per-question FP32 option logits and two action logits copied back after GPU heads. | Calibrate and decode ordered `choice`, `score` and `noul` answers, usage and metadata. |
 
-Qwen input collections are serial work, not GPU batches; Laya batches questions
-within one request. Shared runtime
+Cua-S1 and Open-Jev-9B input collections are serial work. For Open-Jev-27B-v1.1,
+Open-Jev's model-specific batch adapter packs up to 16 independent candidates and
+4096 tokens per group; longer prompts
+execute alone. It restores question/candidate grouping before normalization.
+Laya batches questions within one request. Shared runtime
 admission precedes blocking dispatch: Cua-S1 admits one question forward at a
 time; Open-Jev and Laya admit one complete request. Cua-S1's CPU letter projection
 stays outside admission; Open-Jev's scalar heads and Laya's GPU heads and

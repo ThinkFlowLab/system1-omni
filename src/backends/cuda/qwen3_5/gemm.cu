@@ -22,7 +22,7 @@ struct Plan {
     cublasLtMatmulAlgo_t algo{};
 };
 
-using Key = std::tuple<int, int, int, int>;  // M, N, K, ldy
+using Key = std::tuple<int, int, int, int, bool, bool>;  // M, N, K, ldy, FP32, bias
 
 struct Gemm {
     cublasLtHandle_t handle = nullptr;
@@ -41,26 +41,32 @@ void destroy(Plan& p) {
     p = Plan{};
 }
 
-int describe(int M, int N, int K, int ldy, Plan& p) {
+int describe(int M, int N, int K, int ldy, Plan& p, bool fp32, bool bias) {
     cublasStatus_t s = cublasLtMatmulDescCreate(&p.op, CUBLAS_COMPUTE_32F, CUDA_R_32F);
     if (s != CUBLAS_STATUS_SUCCESS) return status(s);
     const cublasOperation_t ta = CUBLAS_OP_T, tb = CUBLAS_OP_N;
     cublasLtMatmulDescSetAttribute(p.op, CUBLASLT_MATMUL_DESC_TRANSA, &ta, sizeof(ta));
     cublasLtMatmulDescSetAttribute(p.op, CUBLASLT_MATMUL_DESC_TRANSB, &tb, sizeof(tb));
-    if ((s = cublasLtMatrixLayoutCreate(&p.a, CUDA_R_16BF, K, N, K)) != CUBLAS_STATUS_SUCCESS) return status(s);
-    if ((s = cublasLtMatrixLayoutCreate(&p.b, CUDA_R_16BF, K, M, K)) != CUBLAS_STATUS_SUCCESS) return status(s);
-    if ((s = cublasLtMatrixLayoutCreate(&p.c, CUDA_R_16BF, N, M, ldy)) != CUBLAS_STATUS_SUCCESS) return status(s);
+    if (bias) {
+        cublasLtEpilogue_t epilogue = CUBLASLT_EPILOGUE_BIAS;
+        if ((s = cublasLtMatmulDescSetAttribute(p.op, CUBLASLT_MATMUL_DESC_EPILOGUE, &epilogue, sizeof(epilogue))) != CUBLAS_STATUS_SUCCESS) return status(s);
+    }
+    const cudaDataType_t dtype = fp32 ? CUDA_R_32F : CUDA_R_16BF;
+    if ((s = cublasLtMatrixLayoutCreate(&p.a, dtype, K, N, K)) != CUBLAS_STATUS_SUCCESS) return status(s);
+    if ((s = cublasLtMatrixLayoutCreate(&p.b, dtype, K, M, K)) != CUBLAS_STATUS_SUCCESS) return status(s);
+    if ((s = cublasLtMatrixLayoutCreate(&p.c, dtype, N, M, ldy)) != CUBLAS_STATUS_SUCCESS) return status(s);
     return 0;
 }
 
-// The heuristic's first choice, without in-place split-K reductions.
-int first_choice(Gemm& g, Plan& p) {
+// The heuristic's first choice. Vision disables all split-K to avoid BF16
+// intermediate reductions; existing language GEMMs exclude only in-place reductions.
+int first_choice(Gemm& g, Plan& p, bool vision) {
     cublasLtMatmulPreference_t pref;
     cublasStatus_t s = cublasLtMatmulPreferenceCreate(&pref);
     if (s != CUBLAS_STATUS_SUCCESS) return status(s);
     cublasLtMatmulPreferenceSetAttribute(pref, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &g.workspace_bytes,
                                          sizeof(g.workspace_bytes));
-    const uint32_t schemes = CUBLASLT_REDUCTION_SCHEME_MASK & ~CUBLASLT_REDUCTION_SCHEME_INPLACE;
+    const uint32_t schemes = vision ? CUBLASLT_REDUCTION_SCHEME_NONE : (CUBLASLT_REDUCTION_SCHEME_MASK & ~CUBLASLT_REDUCTION_SCHEME_INPLACE);
     cublasLtMatmulPreferenceSetAttribute(pref, CUBLASLT_MATMUL_PREF_REDUCTION_SCHEME_MASK, &schemes,
                                          sizeof(schemes));
     cublasLtMatmulHeuristicResult_t r{};
@@ -74,16 +80,16 @@ int first_choice(Gemm& g, Plan& p) {
 }
 
 // The plan for a shape, created on first use.
-int plan_for(Gemm& g, int M, int N, int K, int ldy, Plan*& out) {
-    const Key key{M, N, K, ldy};
+int plan_for(Gemm& g, int M, int N, int K, int ldy, Plan*& out, bool fp32 = false, bool bias = false) {
+    const Key key{M, N, K, ldy, fp32, bias};
     auto it = g.plans.find(key);
     if (it != g.plans.end()) {
         out = &it->second;
         return 0;
     }
     Plan p;
-    int rc = describe(M, N, K, ldy, p);
-    if (rc == 0) rc = first_choice(g, p);
+    int rc = describe(M, N, K, ldy, p, fp32, bias);
+    if (rc == 0) rc = first_choice(g, p, fp32 || bias);
     if (rc != 0) {
         destroy(p);
         return rc;
@@ -123,6 +129,34 @@ extern "C" int cs1_gemm(void* gemm, const void* x, const void* w, void* y, int M
     Plan* p = nullptr;
     const int rc = plan_for(*g, M, N, K, ldy, p);
     if (rc != 0) return rc;
+    const float alpha = 1.f, beta = 0.f;
+    return status(cublasLtMatmul(g->handle, p->op, &alpha, w, p->a, x, p->b, &beta, y, p->c, y, p->c, &p->algo,
+                                 g->workspace, g->workspace_bytes, static_cast<cudaStream_t>(stream)));
+}
+
+// Vision's biased BF16 linears round only after adding bias. The patch
+// convolution passes zero bias here and applies its bias after BF16 rounding.
+extern "C" int cs1_vision_linear(void* gemm, const void* x, const void* w, const void* bias,
+                                  void* y, int M, int N, int K, void* stream) {
+    Gemm* g = static_cast<Gemm*>(gemm);
+    if (!g || !bias || M <= 0 || N <= 0 || K <= 0) return cudaErrorInvalidValue;
+    Plan* p = nullptr;
+    int rc = plan_for(*g, M, N, K, N, p, false, true);
+    if (rc) return rc;
+    auto s = cublasLtMatmulDescSetAttribute(p->op, CUBLASLT_MATMUL_DESC_BIAS_POINTER, &bias, sizeof(bias));
+    if (s != CUBLAS_STATUS_SUCCESS) return status(s);
+    const float alpha = 1.f, beta = 0.f;
+    return status(cublasLtMatmul(g->handle, p->op, &alpha, w, p->a, x, p->b, &beta, y, p->c, y, p->c, &p->algo,
+                                 g->workspace, g->workspace_bytes, static_cast<cudaStream_t>(stream)));
+}
+// Separate unmerged LoRA matrices and intermediates stay FP32. No TF32 fast compute.
+extern "C" int cs1_gemm_f32(void* gemm, const float* x, const float* w, float* y,
+                             int M, int N, int K, void* stream) {
+    Gemm* g = static_cast<Gemm*>(gemm);
+    if (!g || M <= 0 || N <= 0 || K <= 0) return cudaErrorInvalidValue;
+    Plan* p = nullptr;
+    int rc = plan_for(*g, M, N, K, N, p, true, false);
+    if (rc) return rc;
     const float alpha = 1.f, beta = 0.f;
     return status(cublasLtMatmul(g->handle, p->op, &alpha, w, p->a, x, p->b, &beta, y, p->c, y, p->c, &p->algo,
                                  g->workspace, g->workspace_bytes, static_cast<cudaStream_t>(stream)));

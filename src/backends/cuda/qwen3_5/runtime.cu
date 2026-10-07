@@ -20,6 +20,8 @@ int cs1_stream_create(void** stream) {
     return cudaStreamCreateWithFlags(reinterpret_cast<cudaStream_t*>(stream), cudaStreamNonBlocking);
 }
 
+int cs1_stream_destroy(void* stream) { return cudaStreamDestroy(static_cast<cudaStream_t>(stream)); }
+
 int cs1_stream_sync(void* stream) { return cudaStreamSynchronize(static_cast<cudaStream_t>(stream)); }
 
 int cs1_upload(void* dst, const void* src, size_t bytes, void* stream) {
