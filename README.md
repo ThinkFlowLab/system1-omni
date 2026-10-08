@@ -167,6 +167,7 @@ Python screenshot worker, and CLM has a stub-encoder contract recipe:
 | Cua-S1 4B 0.2 (`text` adapter) | [Python worker](recipe/cua_s1/text.md); [native worker](recipe/cua_s1/native.md), CUDA, run on sm_89 |
 | Cua-S1 4B 0.2 (`multimodal` adapter) | [Python CUDA worker](src/frontend/cua_s1.py); one PNG/JPEG screenshot, `choice`; native screenshot execution remains in progress |
 | Open-Jev-27B-v1.1 | [Native Rust/CUDA worker](recipe/open_jev/native.md); eager independent text candidates; [H200 validation](recipe/open_jev/validation.md) |
+| Valen-Preview-0923 | [Python reference worker](recipe/valen/reference.md); text state or one inline PNG/JPEG image, `choice`; BF16 CUDA validated on RTX 5060 Laptop GPU |
 | Open-Jev-9B | The same [native Rust/CUDA worker](recipe/open_jev/native.md); eager independent text candidates; [reference comparison on sm_89](recipe/open_jev/validation-9b.md) |
 | CLM-v0.1-8B | [External worker with a CPU stub encoder](recipe/clm/README.md); contract checks only, real Qwen3-8B decisions unverified by this recipe |
 

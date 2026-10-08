@@ -1,0 +1,143 @@
+"""Valen-specific prepared-input and compiler processing.
+
+The public contract carries an inline image for compatibility with Cua-S1.
+Valen's pinned compiler requires a local media path and an optional audited
+hash, so this layer materializes one request-scoped file and produces the
+upstream record shape. The worker owns the lifetime of media_root.
+"""
+
+from __future__ import annotations
+
+import hashlib
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from .protocol import DEFAULT_SPECIAL_TOKENS, Question, Request, TextState
+
+
+@dataclass(frozen=True)
+class ResponseContext:
+    model: str
+    questions: tuple[Question, ...]
+
+
+@dataclass(frozen=True)
+class PreparedInput:
+    record: dict[str, Any]
+    media_root: Path
+    image_path: Path | None
+    image_sha256: str | None
+    response_context: ResponseContext
+
+
+@dataclass(frozen=True)
+class CompiledInput:
+    """Model-specific compiled state plus the response identity context."""
+
+    state: Any
+    response_context: ResponseContext
+
+
+class ValenProcessor:
+    """Own the pinned tokenizer/processor and Valen compiler boundary."""
+
+    def __init__(
+        self,
+        base: str | Path,
+        max_length: int,
+        media_kwargs: dict[str, Any] | None = None,
+    ) -> None:
+        try:
+            from transformers import AutoProcessor
+            from valen.data.compiler import Compiler
+        except ImportError as exc:
+            raise RuntimeError(
+                "install the pinned Valen source and reference dependencies before starting"
+            ) from exc
+        self._compiler_type = Compiler
+        self._max_length = max_length
+        self._media_kwargs = media_kwargs or {}
+        self.processor = AutoProcessor.from_pretrained(
+            str(base), local_files_only=True
+        )
+        tokenizer = getattr(self.processor, "tokenizer", self.processor)
+        # Resolve loudly: a silent fallback to the media-only set would reopen
+        # the special-token gap the worker promises to close.
+        self.special_tokens = tuple(
+            dict.fromkeys((*DEFAULT_SPECIAL_TOKENS, *tokenizer.all_special_tokens))
+        )
+
+    def compile(self, prepared: PreparedInput) -> CompiledInput:
+        """Compile one prepared request without owning model/device state."""
+
+        compiler = self._compiler_type(
+            self.processor,
+            media_root=prepared.media_root,
+            max_length=self._max_length,
+            media_kwargs=self._media_kwargs,
+        )
+        return CompiledInput(
+            compiler.compile(prepared.record),
+            prepared.response_context,
+        )
+
+
+def prepare_request(request: Request, media_root: Path) -> PreparedInput:
+    """Materialize one validated request into the pinned Valen record format."""
+
+    media_root = Path(media_root)
+    media_root.mkdir(parents=True, exist_ok=True)
+    if isinstance(request.state, TextState):
+        state = {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": request.state.text}],
+                }
+            ]
+        }
+        assets: list[dict[str, str]] = []
+        image_path = None
+        image_sha256 = None
+    else:
+        image = request.state
+        suffix = ".png" if image.format == "PNG" else ".jpg"
+        image_path = media_root / f"input{suffix}"
+        with image_path.open("xb") as stream:
+            stream.write(image.data)
+        image_sha256 = hashlib.sha256(image.data).hexdigest()
+        state = {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": image_path.name},
+                        }
+                    ],
+                }
+            ]
+        }
+        assets = [{"path": image_path.name, "sha256": image_sha256}]
+    criteria = {
+        question.name: {
+            "type": "choice",
+            "instructions": question.instructions,
+            "criteria": dict(zip(question.keys, question.descriptions)),
+        }
+        for question in request.questions
+    }
+    record = {
+        "request": {"state": state, "questions": criteria},
+        "assets": assets,
+    }
+    return PreparedInput(
+        record=record,
+        media_root=media_root,
+        image_path=image_path,
+        image_sha256=image_sha256,
+        response_context=ResponseContext(request.model, request.questions),
+    )
+
