@@ -1,3 +1,3 @@
 [workspace]
-members = ["src/frontend", "src/runtime", "src/models/clm", "src/models/cua_s1/native", "src/models/qwen3_5/native", "src/models/open_jev/native", "src/models/laya", "src/backends/cuda"]
+members = ["src/frontend", "src/runtime", "src/models/clm", "src/models/cua_s1/native", "src/models/qwen3_5/native", "src/models/open_jev/native", "src/models/openjev/native", "src/models/laya", "src/backends/cuda"]
 resolver = "3"

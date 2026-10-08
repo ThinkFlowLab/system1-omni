@@ -1,0 +1,6 @@
+The request compilation and response calibration in src/contract.rs and the chat-template rendering in
+src/processing.rs follow helper/shim.py from openjev/openjev at revision
+ac97900fd034fdd7e7e536f3d4c21b836cae0750 (https://huggingface.co/openjev/openjev), released by the OpenJev
+project under the Apache License, Version 2.0 (LICENSE.openjev-helper). No helper file is copied here.
+
+The OpenJev weights are released under CC BY-NC 4.0 and are not distributed here.

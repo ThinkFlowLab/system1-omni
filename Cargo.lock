@@ -1166,6 +1166,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "omni-openjev-native"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "omni-qwen3-5-native",
+ "serde_json",
+ "tokenizers 0.22.2",
+]
+
+[[package]]
 name = "omni-qwen3-5-native"
 version = "0.1.0"
 dependencies = [
