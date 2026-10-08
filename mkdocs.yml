@@ -44,6 +44,7 @@ markdown_extensions:
         kwds:
           case: lower
   - pymdownx.superfences
+  - pymdownx.tasklist
 
 nav:
   - Overview: README.md
@@ -51,6 +52,7 @@ nav:
   - 中文入口: docs/getting-started.zh.md
   - Architecture and contracts: docs/architecture.md
   - Supported models and hardware: docs/supported-models.md
+  - Roadmap: docs/roadmap.md
   - Frontend: src/frontend/README.md
   - Native runtime: src/runtime/README.md
   - Optimization notes:

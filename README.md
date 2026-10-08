@@ -185,13 +185,13 @@ numerical checks and links to the separate experiments.
 
 ## Roadmap
 
-The current focus is the native Cua-S1 and Open-Jev CUDA workers and the serving
-benchmark harness. Planned work extends the shared runtime with processing
-orchestration, admission budgets, compatibility grouping and bounded dynamic
-batching with batch-capable executors,
-additional model engines and GPU backends
-including Metal, and per-model
-performance measurements as implementations are added and validated.
+The [roadmap checklist](docs/roadmap.md) tracks concrete TODOs for model support,
+engine features, and integration with System1-Agents, with related issues and
+PRs. The next milestones establish serving contracts and reproducible baselines,
+qualify reusable execution and additional models, and deliver bounded batching
+and joint agent evaluation. Native Metal and quantization remain scoped pilots.
+Claim tasks and track completion in
+[the roadmap issue (#125)](https://github.com/ThinkFlowLab/system1-omni/issues/125).
 
 <a id="contributing"></a>
 
