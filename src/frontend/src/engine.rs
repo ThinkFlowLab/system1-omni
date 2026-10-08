@@ -16,6 +16,7 @@
 //! learn which mode it is talking to in order to read a timeout.
 
 use std::{
+    error::Error as StdError,
     future::Future,
     sync::Arc,
     time::{Duration, Instant},
@@ -29,6 +30,7 @@ use axum::{
     response::Response,
     routing::{get, post},
 };
+use http_body_util::LengthLimitError;
 use omni_runtime::engine::{Answer, Engine, EngineError, Readiness};
 use tokio::net::TcpListener;
 
@@ -125,7 +127,18 @@ async fn infer(State(service): State<Service>, request: Request) -> Response {
     .await
     {
         Ok(Ok(bytes)) => bytes.to_vec(),
-        Ok(Err(_)) => return fail(StatusCode::PAYLOAD_TOO_LARGE, "request body too large"),
+        // Too large and could-not-be-read are different answers: `to_bytes` reports both as one
+        // error type, so the length limit is told apart by the source it wraps, which is what
+        // axum's own documentation checks.
+        Ok(Err(error)) => {
+            let too_large =
+                StdError::source(&error).is_some_and(|source| source.is::<LengthLimitError>());
+            return if too_large {
+                fail(StatusCode::PAYLOAD_TOO_LARGE, "request body too large")
+            } else {
+                fail(StatusCode::BAD_REQUEST, "request body could not be read")
+            };
+        }
         Err(_) => {
             return fail(
                 StatusCode::GATEWAY_TIMEOUT,

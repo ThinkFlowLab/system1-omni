@@ -39,8 +39,10 @@ pub struct Report {
     /// The depth at which admission starts refusing, so a reader can see how close the queue is
     /// to back-pressure without knowing the configuration.
     pub capacity: usize,
-    /// Work the worker did not complete since it started: refused because there was no room, or
-    /// accepted and then dropped because its caller had gone. Monotonic.
+    /// Work this worker refused since it started, counted by whatever admission it reports
+    /// through: a bound counts the requests it turned away, and anything else the reporter
+    /// counts of its own. What is *not* counted here is work that was accepted and then dropped
+    /// before it finished, which its own owner measures. Monotonic.
     pub rejected: u64,
 }
 

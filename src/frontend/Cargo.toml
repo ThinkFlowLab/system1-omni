@@ -7,6 +7,7 @@ description = "Model-independent HTTP frontend for Jev-style decision workers"
 
 [dependencies]
 axum = "0.8"
+http-body-util = "0.1"
 omni-runtime = { path = "../runtime" }
 reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls", "stream"] }
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal"] }

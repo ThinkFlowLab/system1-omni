@@ -15,7 +15,12 @@ use std::{
 
 use omni_jev::engine::{QUEUE_DEPTH, ServiceConfig, app};
 use omni_runtime::engine::{Answer, Engine, EngineError, Readiness, Reply, Report};
-use tokio::sync::oneshot;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpStream,
+    sync::oneshot,
+    time::timeout,
+};
 mod common;
 
 use common::{client, listen};
@@ -210,6 +215,48 @@ async fn a_body_over_the_limit_is_refused_before_the_worker_sees_it() {
     .await;
     assert_eq!(post(&url, &"x".repeat(64)).await.status(), 413);
     assert_eq!(seen.load(Ordering::Acquire), 0);
+}
+
+#[tokio::test]
+async fn a_body_that_cannot_be_read_is_not_reported_as_too_large() {
+    // One error type covers both a body over the limit and a body that never arrives, so this
+    // is the case that tells them apart: the declared chunk size is not hex, so the body ends
+    // as a read error rather than as a length error. Read from a raw socket because a client
+    // library will not send a malformed body.
+    let (url, seen) = start(Mode::Ready, ServiceConfig::default()).await;
+    let port = url.rsplit(':').next().unwrap();
+
+    let mut stream = TcpStream::connect(("127.0.0.1", port.parse::<u16>().unwrap()))
+        .await
+        .unwrap();
+    stream
+        .write_all(
+            b"POST /v1/systemone HTTP/1.1\r\nHost: localhost\r\n\
+              Transfer-Encoding: chunked\r\nContent-Type: application/json\r\n\r\nzz\r\n",
+        )
+        .await
+        .unwrap();
+
+    let mut response = Vec::new();
+    timeout(Duration::from_secs(5), stream.read_to_end(&mut response))
+        .await
+        .expect("the service must answer a body it cannot read rather than wait for it")
+        .unwrap();
+    let response = String::from_utf8_lossy(&response);
+
+    assert!(
+        response.starts_with("HTTP/1.1 400"),
+        "a body that could not be read is bad input, not an oversized one: {response}"
+    );
+    assert!(
+        response.contains("request body could not be read"),
+        "{response}"
+    );
+    assert_eq!(
+        seen.load(Ordering::Acquire),
+        0,
+        "a body that never arrived must not become work"
+    );
 }
 
 #[tokio::test]
