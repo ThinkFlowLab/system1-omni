@@ -81,12 +81,14 @@ impl BoundedAdmission {
     ///
     /// The permit is the reservation: capacity is held until it is dropped, which is what
     /// makes "outstanding" mean "accepted and not yet finished with" rather than "accepted".
-    /// A refusal is counted and nothing is reserved.
+    /// A refusal is counted and nothing is reserved. The fit check and the reserve use the same
+    /// saturating arithmetic, so the two cannot disagree about a request that is near `usize::MAX`.
     pub fn try_admit(&self, units: usize) -> Option<Permit<'_>> {
         let mut held = self.lock();
         let fits_requests = held.outstanding < self.requests;
+        let sum = held.units.saturating_add(units);
         let fits_units = match self.units {
-            Some(ceiling) => held.units.saturating_add(units) <= ceiling,
+            Some(ceiling) => sum <= ceiling,
             None => true,
         };
         if !fits_requests || !fits_units {
@@ -94,7 +96,7 @@ impl BoundedAdmission {
             return None;
         }
         held.outstanding += 1;
-        held.units += units;
+        held.units = sum;
         Some(Permit {
             admission: self,
             units,
