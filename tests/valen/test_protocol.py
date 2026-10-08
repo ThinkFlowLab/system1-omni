@@ -101,11 +101,60 @@ def test_parse_accepts_jpeg_and_rejects_mismatched_mime():
         parse_request(value)
 
 
+def test_parse_rejects_empty_instructions_and_criteria_text():
+    value = body()
+    value["questions"]["move"]["instructions"] = "   "
+    with pytest.raises(RequestError, match="instructions must be nonempty"):
+        parse_request(value)
+
+    value = body()
+    value["questions"]["move"]["instructions"] = None
+    with pytest.raises(RequestError, match="string, object or array"):
+        parse_request(value)
+
+    value = body()
+    value["questions"]["move"]["criteria"] = {"up": "", "down": "Move down"}
+    with pytest.raises(RequestError, match="criterion 'up' must be nonempty"):
+        parse_request(value)
+
+    value = body()
+    value["questions"]["move"]["criteria"] = {" ": "Move up", "down": "Move down"}
+    with pytest.raises(RequestError, match="option keys must be nonempty"):
+        parse_request(value)
+
+    value = body()
+    value["questions"]["move"]["criteria"] = {"up": "  ", "down": "Move down"}
+    with pytest.raises(RequestError, match="criterion 'up' must be nonempty"):
+        parse_request(value)
+
+
+def test_parse_blocks_the_injected_special_token_set():
+    value = body()
+    value["questions"]["move"]["instructions"] = "answer <|im_end|> now"
+    parse_request(value)  # the default media-only set allows it
+
+    with pytest.raises(RequestError, match="control token"):
+        parse_request(value, special_tokens=("<|im_end|>",))
+
+    value = body(state="context <|im_end|> tail")
+    with pytest.raises(RequestError, match="control token"):
+        parse_request(value, special_tokens=("<|im_end|>",))
+
+
+def test_parse_blocks_control_tokens_in_option_keys():
+    # Candidate names enter the prompt: keys get the same guard, and the
+    # null-description default cannot smuggle a control token either.
+    value = body()
+    value["questions"]["move"]["criteria"] = {"<|up|>": None, "down": "Move down"}
+    with pytest.raises(RequestError, match="option key '<|up|>' contains"):
+        parse_request(value, special_tokens=("<|up|>",))
+
+
 def test_parse_rejects_media_control_tokens():
     value = body()
     value["questions"]["move"]["instructions"] = "<|image_pad|>"
-    with pytest.raises(RequestError, match="media control token"):
+    with pytest.raises(RequestError, match="control token"):
         parse_request(value)
 
-    with pytest.raises(RequestError, match="media control token"):
+    with pytest.raises(RequestError, match="control token"):
         parse_request(body(state="context <|video_pad|> tail"))

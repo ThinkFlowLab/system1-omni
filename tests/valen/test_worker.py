@@ -1,13 +1,18 @@
 import json
 
+import pytest
+
 from frontend.valen import decide
 from models.valen.engine import ExecutorOutput
 from models.valen.preprocess import CompiledInput
+from models.valen.protocol import DEFAULT_SPECIAL_TOKENS, RequestError
 
 from .test_protocol import body
 
 
 class FakeProcessor:
+    special_tokens = DEFAULT_SPECIAL_TOKENS
+
     def __init__(self):
         self.seen_media = None
 
@@ -16,6 +21,11 @@ class FakeProcessor:
             assert prepared.image_path.is_file()
             self.seen_media = prepared.image_path
         return CompiledInput(object(), prepared.response_context)
+
+
+class RejectingProcessor(FakeProcessor):
+    def compile(self, prepared):
+        raise ValueError("Reserved tokenizer control token in state")
 
 
 class FakeExecutor:
@@ -62,4 +72,27 @@ def test_decide_rejects_executor_cardinality_mismatch():
         assert "answer count" in str(error)
     else:
         raise AssertionError("executor cardinality mismatch was accepted")
+
+
+def test_decide_maps_pinned_compiler_value_errors_to_422():
+    executor = FakeExecutor(ExecutorOutput(((0.0, 1.0),), 1, 1))
+    with pytest.raises(RequestError) as excinfo:
+        decide(json.dumps(body()).encode("utf-8"), RejectingProcessor(), executor)
+
+    assert excinfo.value.status == 422
+    assert "pinned compiler" in str(excinfo.value)
+    assert "Reserved tokenizer control token" in str(excinfo.value)
+
+
+def test_decide_keeps_request_errors_unwrapped():
+    class WireErrorProcessor(FakeProcessor):
+        def compile(self, prepared):
+            raise RequestError("wire problem", 422)
+
+    executor = FakeExecutor(ExecutorOutput(((0.0, 1.0),), 1, 1))
+    with pytest.raises(RequestError) as excinfo:
+        decide(json.dumps(body()).encode("utf-8"), WireErrorProcessor(), executor)
+
+    assert excinfo.value.status == 422
+    assert str(excinfo.value) == "wire problem"
 

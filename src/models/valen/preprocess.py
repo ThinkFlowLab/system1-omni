@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .protocol import Question, Request, TextState
+from .protocol import DEFAULT_SPECIAL_TOKENS, Question, Request, TextState
 
 
 @dataclass(frozen=True)
@@ -60,6 +60,12 @@ class ValenProcessor:
         self._media_kwargs = media_kwargs or {}
         self.processor = AutoProcessor.from_pretrained(
             str(base), local_files_only=True
+        )
+        tokenizer = getattr(self.processor, "tokenizer", self.processor)
+        # Resolve loudly: a silent fallback to the media-only set would reopen
+        # the special-token gap the worker promises to close.
+        self.special_tokens = tuple(
+            dict.fromkeys((*DEFAULT_SPECIAL_TOKENS, *tokenizer.all_special_tokens))
         )
 
     def compile(self, prepared: PreparedInput) -> CompiledInput:

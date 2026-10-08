@@ -40,10 +40,20 @@ LOG = logging.getLogger(__name__)
 def decide(raw: bytes, processor: ValenProcessor, executor: ValenExecutor) -> dict:
     """Prepare, compile, execute, and finish one complete request."""
 
-    request = parse_request(parse_body(raw))
+    request = parse_request(parse_body(raw), special_tokens=processor.special_tokens)
     with TemporaryDirectory(prefix="system1-valen-") as directory:
         prepared = prepare_request(request, Path(directory))
-        compiled = processor.compile(prepared)
+        try:
+            compiled = processor.compile(prepared)
+        except RequestError:
+            raise
+        except ValueError as exc:
+            # The pinned compiler is the input-validation authority for what
+            # the wire layer cannot foresee (token budget, reserved tokens);
+            # its rejections are client errors, not worker failures.
+            raise RequestError(
+                f"request rejected by the pinned compiler: {exc}", 422
+            ) from exc
         output = executor.execute(compiled)
         if not isinstance(output, ExecutorOutput):
             raise RuntimeError("Valen executor returned an invalid output object")
@@ -181,8 +191,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(exc.status, {"detail": str(exc)})
         except (TimeoutError, socket.timeout):
             self.send_json(408, {"detail": "request body timed out"})
-        except Exception:
-            LOG.exception("Valen inference failed")
+        except Exception as exc:
+            LOG.error("Valen inference failed: %s", type(exc).__name__)
             self.send_json(500, {"detail": "inference failed"})
         finally:
             self.server.inference_lock.release()

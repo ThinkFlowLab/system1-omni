@@ -99,6 +99,7 @@ Pillow: 12.3.0
 av: 16.1.0
 GPU capability: sm_120
 dtype: bfloat16
+system1-omni: 2fd8ce9 (GPU serving, smoke and parity records on this branch)
 ~~~
 
 FP32 and BF16 small-operator checks passed. Startup memory was approximately
@@ -308,7 +309,7 @@ python recipe/valen/test_compare_reference.py
 Validated results:
 
 ~~~text
-pytest tests/valen: 16 passed in 0.14s
+pytest tests/valen: 28 passed in 0.68s
 compileall: passed
 cargo fmt --all --check: passed
 frontend integration: 12 passed; 0 failed

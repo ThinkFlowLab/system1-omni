@@ -26,7 +26,7 @@ MAX_QUESTIONS = 8
 MAX_OPTIONS = 255
 MAX_TEXT = 16384
 
-_MEDIA_CONTROL_TOKENS = (
+DEFAULT_SPECIAL_TOKENS = (
     "<|image_pad|>",
     "<|video_pad|>",
     "<|vision_start|>",
@@ -116,7 +116,7 @@ def parse_body(raw: bytes) -> dict[str, Any]:
     return value
 
 
-def _text(value: Any, field: str) -> str:
+def _text(value: Any, field: str, special_tokens=DEFAULT_SPECIAL_TOKENS) -> str:
     if not isinstance(value, (str, dict, list)):
         raise RequestError(f"{field} must be a string, object or array")
     try:
@@ -125,8 +125,8 @@ def _text(value: Any, field: str) -> str:
         raise RequestError(f"invalid {field}") from exc
     if len(result) > MAX_TEXT:
         raise RequestError(f"{field} exceeds {MAX_TEXT} characters")
-    if any(token in result for token in _MEDIA_CONTROL_TOKENS):
-        raise RequestError(f"{field} contains an unsupported media control token")
+    if any(token in result for token in special_tokens):
+        raise RequestError(f"{field} contains an unsupported tokenizer control token")
     return result
 
 
@@ -177,7 +177,7 @@ def _image(state: Any) -> ImageData:
     return ImageData(data, expected[prefix], width, height)
 
 
-def _state(value: Any) -> ImageData | TextState:
+def _state(value: Any, special_tokens=DEFAULT_SPECIAL_TOKENS) -> ImageData | TextState:
     """Accept one inline image or one text state.
 
     A dict carrying an "image" key always enters image validation, so a
@@ -189,15 +189,22 @@ def _state(value: Any) -> ImageData | TextState:
     if isinstance(value, dict) and "image" in value:
         return _image(value)
     if isinstance(value, (str, dict, list)):
-        text = _text(value, "state")
+        text = _text(value, "state", special_tokens)
         if not text:
             raise RequestError("state must not be empty")
+        if not text.strip():
+            raise RequestError("state must not be only whitespace")
         return TextState(text)
     raise RequestError("state must be an image data URL or text")
 
 
-def parse_request(value: dict[str, Any]) -> Request:
-    """Validate the system1-omni wire request."""
+def parse_request(value: dict[str, Any], special_tokens=DEFAULT_SPECIAL_TOKENS) -> Request:
+    """Validate the system1-omni wire request.
+
+    ``special_tokens`` extends the blocked tokenizer control tokens; the
+    worker injects the loaded tokenizer's full special-token set so anything
+    the pinned compiler would reject as reserved is named a 422 here.
+    """
 
     if not isinstance(value, dict) or set(value) != {"model", "state", "questions"}:
         raise RequestError("request must contain model, state and questions only")
@@ -222,9 +229,11 @@ def parse_request(value: dict[str, Any]) -> Request:
             raise RequestError(f"question {name!r}: only choice is supported")
         if "instructions" not in question:
             raise RequestError(f"question {name!r}: instructions is required")
-        instructions = (
-            "" if question["instructions"] is None else _text(question["instructions"], "instructions")
+        instructions = _text(
+            question["instructions"], f"question {name!r} instructions", special_tokens
         )
+        if not instructions.strip():
+            raise RequestError(f"question {name!r}: instructions must be nonempty")
         criteria = question.get("criteria")
         if not isinstance(criteria, dict) or not 1 <= len(criteria) <= MAX_OPTIONS:
             raise RequestError(
@@ -233,14 +242,26 @@ def parse_request(value: dict[str, Any]) -> Request:
         keys: list[str] = []
         descriptions: list[str] = []
         for key, label in criteria.items():
-            if not isinstance(key, str) or not key or len(key) > 256:
-                raise RequestError("option keys must contain 1 to 256 characters")
+            if not isinstance(key, str) or not key.strip() or len(key) > 256:
+                raise RequestError("option keys must be nonempty and at most 256 characters")
+            if any(token in key for token in special_tokens):
+                # Candidate names enter the prompt, so keys get the same
+                # control-token guard as instructions and descriptions.
+                raise RequestError(
+                    f"question {name!r}: option key {key!r} contains an"
+                    " unsupported tokenizer control token"
+                )
             keys.append(key)
-            descriptions.append(
-                key if label is None else _text(label, f"criteria {key!r}")
+            description = (
+                key
+                if label is None
+                else _text(label, f"question {name!r} criteria {key!r}", special_tokens)
             )
+            if not description.strip():
+                raise RequestError(f"question {name!r}: criterion {key!r} must be nonempty")
+            descriptions.append(description)
         if len(instructions) + sum(map(len, descriptions)) > MAX_TEXT:
             raise RequestError("combined question text exceeds 16384 characters")
         parsed.append(Question(name, instructions, tuple(keys), tuple(descriptions)))
 
-    return Request(MODEL_NAME, _state(value["state"]), tuple(parsed))
+    return Request(MODEL_NAME, _state(value["state"], special_tokens), tuple(parsed))

@@ -22,11 +22,13 @@ does not contain the frozen Qwen base model. The published config uses
 ## Current serving scope
 
 - `state` is either one inline PNG/JPEG image (`{"image": data URL}`) or text
-  (a non-empty string; objects and arrays are serialized to JSON text, matching
-  the shared text-state wire convention);
+  (a non-empty, non-whitespace string; objects and arrays are serialized to
+  JSON text, matching the shared text-state wire convention);
 - image limits: single-frame PNG/JPEG, at most 4 MiB, 2048 pixels per side,
   1,048,576 pixels, a 200:1 aspect ratio; text state, instructions and
   criteria are limited to 16,384 characters;
+- `instructions` must be non-empty after trimming; criterion keys and texts
+  must be non-empty after trimming (a null criterion text defaults to its key);
 - `choice` questions only, at most 8 per request;
 - up to 255 named candidates per question;
 - no `noul`, `score`, video, multi-image, or remote URL inputs;
@@ -110,13 +112,23 @@ The status is `422` when a well-formed request cannot be evaluated:
 
 - a `model` other than `valen-preview-0923`;
 - a `score` or `noul` question, or unsupported request or question fields;
-- text over its limit, or containing a media control token such as
-  `<|image_pad|>`;
+- text over its limit, or containing a tokenizer control token — the media
+  tokens such as `<|image_pad|>` at minimum, plus the loaded tokenizer's full
+  special-token set (for example `<|im_end|>`) when the worker is serving;
+  this guard covers text state, instructions, criterion texts and option keys
+  (candidate names enter the prompt);
+- empty or whitespace-only `instructions`, option keys, criterion texts, or
+  text state;
 - an empty text state, or a state that is neither an image data URL nor text;
 - an image that is not a single-frame PNG/JPEG matching its MIME type and
-  limits.
+  limits;
+- anything else the pinned compiler rejects, for example a question whose
+  compiled prompt exceeds the checkpoint's 8192-token `max_length`; the
+  compiler's message is passed through with a `request rejected by the pinned
+  compiler` prefix.
 
-Any other failure is `500` with a generic detail.
+Any other failure is `500` with a generic detail and no request content in
+the log (the exception type only).
 
 ## Ownership boundary
 
