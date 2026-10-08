@@ -321,19 +321,20 @@ compare_reference tests: ok
 
 A real image fixture was compared with the pinned Valen reference using the
 same checkpoint, base revision, image, question, candidate order, and
-temperature:
+temperature. The block below is the verbatim `compare_reference.py` output:
 
 ~~~text
+case: image
 reference model: Valen
 worker model: valen-preview-0923
-choice agreement: exact
 input_tokens: 108 == 108
 output_tokens: 0 == 0
 compute_tokens: 108 == 108
-max probability delta: 1.1299724378e-08
-confidence delta: 2.2599448757e-08
+max probability delta: 2.7810645453e-08
+confidence delta: 5.5621290906e-08
 decision agreement: PASS
-probability tolerance <= 1e-6: PASS
+probability tolerance <= 1e-06: PASS
+token accounting: PASS
 ~~~
 
 The text-state case, same host, methodology and tolerances:
@@ -374,7 +375,7 @@ PYTHONPATH=src .venv/bin/python recipe/valen/compare_reference.py \
 
 The image case uses [`example-request.json`](example-request.json); the text
 case uses the recipe's text example unless `--text-body` points elsewhere.
-The block above is the recorded image-case output.
+Both blocks above are verbatim output of the committed tool.
 
 ## Troubleshooting and limits
 
