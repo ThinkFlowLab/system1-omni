@@ -309,7 +309,7 @@ python recipe/valen/test_compare_reference.py
 Validated results:
 
 ~~~text
-pytest tests/valen: 28 passed in 0.68s
+pytest tests/valen: 29 passed in 0.67s
 compileall: passed
 cargo fmt --all --check: passed
 frontend integration: 12 passed; 0 failed
