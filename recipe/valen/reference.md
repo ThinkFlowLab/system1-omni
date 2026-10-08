@@ -18,8 +18,9 @@ The validated slice is:
 - text state (a non-empty string; objects and arrays are serialized to JSON
   text) or one inline PNG or JPEG image in `state.image`;
 - textual instructions and criteria for `choice` questions;
-- BF16 CUDA inference with the pinned Preview checkpoint. The image state is
-  validated; text state is implemented and its GPU validation is pending.
+- BF16 CUDA inference with the pinned Preview checkpoint. Image and text
+  state are serving-validated on the GPU host, with recorded reference parity
+  for both.
 
 The current worker does not implement `noul`, `score`, video, multiple images,
 remote image URLs, or a native Rust/CUDA Valen executor.
@@ -232,8 +233,21 @@ curl -sS http://127.0.0.1:8000/v1/systemone \
   -d '{"model":"valen-preview-0923","state":"The card was charged twice for one order.","questions":{"refund":{"type":"choice","instructions":"Decide the refund action.","criteria":{"refund":"Refund the duplicate charge","wait":"Wait for review"}}}}'
 ~~~
 
-Text-state serving is implemented; a recorded GPU response for this example
-will be added after validation.
+Observed response, same host as the image fixture:
+
+~~~json
+{
+  "model": "valen-preview-0923",
+  "answers": {"refund": {
+    "type": "choice",
+    "choice": "refund",
+    "probabilities": {"refund": 0.5159631044115068, "wait": 0.4840368955884932},
+    "confidence": 0.03192620882301367
+  }},
+  "usage": {"input_tokens": 48, "output_tokens": 0},
+  "internal_usage": {"compute_tokens": 48}
+}
+~~~
 
 ## Start and verify the Rust frontend
 
@@ -265,8 +279,9 @@ curl -fsS http://127.0.0.1:8080/v1/systemone \
 cmp /tmp/valen-worker.json /tmp/valen-frontend.json
 ~~~
 
-The validated run returned 200 from both endpoints, matching JSON content
-types, and byte-identical response bodies.
+The validated runs returned 200 from both endpoints with matching JSON content
+types and byte-identical response bodies, for the image fixture above and for
+the text-only example.
 
 ## Error behavior
 
@@ -321,10 +336,24 @@ decision agreement: PASS
 probability tolerance <= 1e-6: PASS
 ~~~
 
+The text-state case, same host, methodology and tolerances:
+
+~~~text
+case: text
+reference model: Valen
+worker model: valen-preview-0923
+input_tokens: 48 == 48
+output_tokens: 0 == 0
+compute_tokens: 48 == 48
+max probability delta: 2.6866340819e-08
+confidence delta: 5.3732681637e-08
+decision agreement: PASS
+probability tolerance <= 1e-06: PASS
+token accounting: PASS
+~~~
+
 The reference model field is `Valen`; the system1-omni worker deliberately
-uses `valen-preview-0923` as its stable serving identity. Text-state parity is
-not yet recorded: run the text case below after restoring the artifacts and
-record its block here.
+uses `valen-preview-0923` as its stable serving identity.
 
 Reproduce with [`compare_reference.py`](compare_reference.py). The script loads
 one pinned model instance and drives each request through two paths: a
@@ -362,4 +391,3 @@ The block above is the recorded image-case output.
 - The memory and smoke-response observations are host-specific; they are not
   general accuracy or performance claims.
 - Video, native execution, `noul`, and `score` remain outside this recipe.
-  Text state is implemented; its GPU validation and parity record are pending.
