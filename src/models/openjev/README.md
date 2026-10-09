@@ -32,8 +32,9 @@ Everything follows `helper/shim.py` at ac97900 (sha256 `81a22f1b...`) with the s
   connection on the latter).
 - A missing or non-finite candidate score fails the request, as the helper does with `READOUT_TARGETED=1`.
 
-Known gaps against Python: `str.isprintable` is approximated for unassigned and private-use code points, and
-integers beyond 64 bits are read as floats.
+Known gaps against Python: `str.isprintable` follows a fixed table of the non-printable assigned characters of
+Unicode 15.0 (Python 3.12), so unassigned and private-use code points, and characters a later Unicode version
+classes differently, may render differently; integers beyond 64 bits are read as floats.
 
 ## Tests
 

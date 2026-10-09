@@ -80,9 +80,9 @@ fn write_str(out: &mut String, s: &str) {
     out.push(quote);
 }
 
-/// `str.isprintable()` for the characters a request is likely to carry: the space is printable; control
-/// characters (Cc), the other separators (Zs, Zl, Zp) and the common format characters (Cf) are not.
-/// Unassigned and private-use code points (Cn, Co) are taken as printable here, unlike Python.
+/// `str.isprintable()`: the space is printable; every assigned control character (Cc), separator other than the
+/// space (Zs, Zl, Zp), format character (Cf) and surrogate (Cs) of Unicode 15.0 (Python 3.12) is not, as listed
+/// below. Unassigned and private-use code points (Cn, Co) are taken as printable here, unlike Python.
 fn printable(c: char) -> bool {
     let n = c as u32;
     !(n < 0x20
@@ -92,6 +92,8 @@ fn printable(c: char) -> bool {
         || n == 0x61c
         || n == 0x6dd
         || n == 0x70f
+        || (0x890..=0x891).contains(&n)
+        || n == 0x8e2
         || n == 0x1680
         || n == 0x180e
         || (0x2000..=0x200f).contains(&n)
@@ -104,6 +106,7 @@ fn printable(c: char) -> bool {
         || (0xfff9..=0xfffb).contains(&n)
         || n == 0x110bd
         || n == 0x110cd
+        || (0x13430..=0x1343f).contains(&n)
         || (0x1bca0..=0x1bca3).contains(&n)
         || (0x1d173..=0x1d17a).contains(&n)
         || n == 0xe0001

@@ -131,7 +131,10 @@ fn missing_or_non_finite_scores_fail_the_request() {
     let questions = compile(&serde_json::to_vec(&request).unwrap()).unwrap();
     assert!(answer(&questions[0], &[0.0]).is_err());
     assert!(answer(&questions[0], &[0.0, f64::NAN]).is_err());
-    assert!(answer(&questions[0], &[0.0, 1.0, 2.0]).is_err());
+    let error = answer(&questions[0], &[0.0, 1.0, 2.0])
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("2 candidates but 3 scores"), "{error}");
     assert!(answer(&questions[0], &[0.0, 1.0]).is_ok());
 }
 
@@ -157,6 +160,10 @@ fn python_repr_of_decoded_json() {
         (
             json!("tab\tnl\nbs\\ bell\u{7} nbsp\u{a0} zwsp\u{200b} é 東 🚀"),
             "'tab\\tnl\\nbs\\\\ bell\\x07 nbsp\\xa0 zwsp\\u200b é 東 🚀'",
+        ),
+        (
+            json!("\u{890}\u{8e2}\u{13430}"),
+            "'\\u0890\\u08e2\\U00013430'",
         ),
         (json!([]), "[]"),
         (json!({}), "{}"),

@@ -183,13 +183,17 @@ fn description(v: &Value) -> String {
 /// choice is picked before rounding, the first maximum winning.
 pub fn answer(q: &Question, scores: &[f64]) -> Result<Value> {
     // The helper fails the request rather than flooring a missing score (READOUT_TARGETED=1).
-    let bad = q.keys.len().saturating_sub(scores.len())
-        + scores.iter().filter(|s| !s.is_finite()).count();
-    if scores.len() > q.keys.len() || bad > 0 {
+    if scores.len() != q.keys.len() {
         bail!(
-            "{bad} of {} candidate scores missing or not finite",
-            q.keys.len()
+            "questions.{} has {} candidates but {} scores",
+            q.id,
+            q.keys.len(),
+            scores.len()
         );
+    }
+    let bad = scores.iter().filter(|s| !s.is_finite()).count();
+    if bad > 0 {
+        bail!("{bad} of {} candidate scores not finite", q.keys.len());
     }
     let p = softmax(scores, TEMPERATURE);
     let probabilities = |keys: &[String]| -> Map<String, Value> {
