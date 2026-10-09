@@ -22,6 +22,9 @@ For a first real decision, follow the [complete CPU walkthrough](../docs/getting
 - [CLM behind the frontend](clm/README.md): run CLM's own server behind the frontend on
   CPU with a stub encoder, and what the response comparison has to allow for.
 
+- [LFM2.5-350M choice worker](lfm2/README.md): score text decisions with independent
+  questions, hybrid cache branching and configurable candidate batches.
+
 Recipes contain setup, launch commands and examples. Reusable implementation code
 belongs under `src/`.
 
