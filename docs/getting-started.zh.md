@@ -136,7 +136,8 @@ PY
 Apple Silicon Mac 没有 `torch==2.8.0+cpu` wheel，第 1 步的两条安装命令会报
 `No matching distribution found for torch==2.8.0+cpu`。改用下面两条命令安装普通 macOS wheel
 和其余固定依赖，其他步骤不变；编译器和链接器来自 Xcode Command Line Tools
-（`xcode-select --install`）。在 M5 Pro、macOS 26.6 上，第 4、5 步的答案与实际运行记录一致。
+（`xcode-select --install`）。在 M5 Pro、macOS 26.6 上，其他步骤均原样跑通，
+输出的答案与[实际运行记录](../recipe/laya/validation.md)一致。
 
 ```sh
 .venv/bin/python -m pip install 'torch==2.8.0' --index-url https://download.pytorch.org/whl/cpu
