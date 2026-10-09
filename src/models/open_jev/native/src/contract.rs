@@ -5,9 +5,67 @@ use anyhow::{Context, Result, bail, ensure};
 use omni_qwen3_5_native::json;
 use serde_json::{Map, Value, json};
 
-pub const MODEL_ID: &str = "Qwen/Qwen3.8-27B";
-pub const BASE_REVISION: &str = "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0";
-pub const CHECKPOINT_REVISION: &str = "28cf73067d5b337860bbef3c85b8b82ba8730956";
+/// A pinned Open-Jev checkpoint, selected by its export's `model_id`.
+pub struct Checkpoint {
+    pub name: &'static str,
+    /// The base model, which Open-Jev also returns as the response model.
+    pub model_id: &'static str,
+    pub base_revision: &'static str,
+    pub checkpoint_revision: &'static str,
+    /// Accepted as the request model, besides `model_id`, `open-jev` and `jev-latest`.
+    pub alias: &'static str,
+    /// Hidden, intermediate, layers, attention, KV, linear key and linear value heads.
+    pub backbone: (usize, usize, usize, usize, usize, usize, usize),
+    /// Pack a request's candidates for shared GEMMs. Packing was validated against
+    /// per-candidate execution on 27B only, so 9B runs candidates one at a time.
+    pub pack_candidates: bool,
+}
+
+pub static CHECKPOINTS: [Checkpoint; 2] = [
+    Checkpoint {
+        name: "Open-Jev-27B-v1.1",
+        model_id: "Qwen/Qwen3.8-27B",
+        base_revision: "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+        checkpoint_revision: "28cf73067d5b337860bbef3c85b8b82ba8730956",
+        alias: "open-jev-27b-v1.1",
+        backbone: (5120, 17408, 64, 24, 4, 16, 48),
+        pack_candidates: true,
+    },
+    Checkpoint {
+        name: "Open-Jev-9B",
+        model_id: "Qwen/Qwen3.5-9B",
+        base_revision: "c202236235762e1c871ad0ccb60c8ee5ba337b9a",
+        checkpoint_revision: "47e966881e489511c0c7f5633a9e1960a676a551",
+        alias: "open-jev-9b",
+        backbone: (4096, 12288, 32, 16, 4, 16, 32),
+        pack_candidates: false,
+    },
+];
+
+impl Checkpoint {
+    /// The pinned checkpoint that produced a merged export manifest.
+    pub fn from_export(manifest: &Value) -> Result<&'static Self> {
+        ensure!(
+            manifest["format"] == "open-jev-text-merged/1",
+            "expected an Open-Jev merged text export"
+        );
+        let checkpoint = CHECKPOINTS
+            .iter()
+            .find(|c| manifest["model_id"] == c.model_id)
+            .context("expected an Open-Jev-27B-v1.1 or Open-Jev-9B export")?;
+        ensure!(
+            manifest["base_revision"] == checkpoint.base_revision
+                && manifest["checkpoint_revision"] == checkpoint.checkpoint_revision,
+            "expected a pinned {} export",
+            checkpoint.name
+        );
+        Ok(checkpoint)
+    }
+
+    fn serves(&self, model: &str) -> bool {
+        [self.model_id, "open-jev", "jev-latest", self.alias].contains(&model)
+    }
+}
 
 #[derive(Debug, PartialEq)]
 pub enum Kind {
@@ -42,14 +100,13 @@ fn description(value: &Value) -> Result<String> {
     Ok(render(value))
 }
 
-pub fn compile(raw: &[u8]) -> Result<Vec<Question>> {
+pub fn compile(raw: &[u8], checkpoint: &Checkpoint) -> Result<Vec<Question>> {
     let request = json::parse(raw).map_err(anyhow::Error::msg)?;
     ensure!(
         matches!(request.get("model"), None | Some(Value::Null))
-            || matches!(
-                request["model"].as_str(),
-                Some(MODEL_ID | "open-jev" | "jev-latest" | "open-jev-27b-v1.1")
-            ),
+            || request["model"]
+                .as_str()
+                .is_some_and(|model| checkpoint.serves(model)),
         "requested model is not loaded"
     );
     let state = request.get("state").context("request requires state")?;

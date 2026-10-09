@@ -3,3 +3,5 @@
 pub mod cuda;
 pub mod json;
 pub mod model;
+
+pub mod inputs;

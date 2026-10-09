@@ -1,5 +1,16 @@
 use super::*;
 
+#[test]
+fn precision_features_preserve_numbers_and_private_marker_keys() {
+    let raw = br#"{"a":1.5,"b":1e-5,"$serde_json::private::Number":"literal","nested":{"$serde_json::private::RawValue":2}}"#;
+    let values = parse(raw).unwrap();
+    assert_eq!(values["a"], serde_json::json!(1.5));
+    assert_eq!(values["$serde_json::private::Number"], "literal");
+    assert_eq!(values["nested"]["$serde_json::private::RawValue"], 2);
+    assert!(dumps(&Value::Object(values)).contains("\"b\": 1e-05"));
+    assert!(err(r#"{"a":{"b":1,"b":2}}"#).contains("duplicate key"));
+}
+
 fn err(body: &str) -> String {
     parse(body.as_bytes()).unwrap_err()
 }

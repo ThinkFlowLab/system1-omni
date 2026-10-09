@@ -8,23 +8,29 @@ design. Concrete input/output types follow each executor's supported layout.
 
 The [Rust frontend](../src/frontend/README.md) currently forwards HTTP requests
 to separately running workers. Cua-S1 and Open-Jev have native Rust/CUDA workers
-that share the [Qwen3.5/3.8 executor](../src/models/qwen3_5/native/). Their
-model-specific workers coordinate independent processor and executor modules
-through `prepare` → `execute` → `finish`. The shared Qwen executor accepts one
-prompt per forward call. Both workers use the
+that share the [Qwen3.5/3.8 executor](../src/models/qwen3_5/native/), which accepts
+single prompts and bounded packed prefill. Cua-S1 and Open-Jev-9B use
+single-prompt calls; Open-Jev-27B-v1.1 packs candidates within one request for
+input and gate/up GEMMs while preserving per-sequence mixers and output/down GEMM
+shapes.
+[Laya's native worker](../src/models/laya/README.md)
+uses a separate Hopper CUDA backend for one complete padded request. All three
+coordinate independent processors and executors through
+`prepare` → `execute` → `finish` and use the
 [native runtime](../src/runtime/README.md) for FIFO admission and blocking dispatch
 per loaded executor. Shared processing orchestration, batch budgets,
 compatibility grouping and dynamic batching are planned.
 
-The native workers currently compute their decision heads on the CPU after
-downloading the final hidden state. GPU head execution belongs to the target
-model/backend integration. LAYA's native executor and the Metal backend are
-also planned; Python workers retain their documented reference/serving roles.
+Qwen workers compute their decision heads on the CPU after downloading the final
+hidden state. Laya computes its scorer and action head on CUDA. Its fixed-shape
+Graph captures Encoder/Decision; gather, scorer/action head and synchronized
+readback remain outside capture. Native Metal remains planned; Python workers
+retain their documented reference/serving roles.
 
 ## Native worker boundaries
 
-Both native workers separate `processing.rs` from `executor.rs`; `engine.rs`
-assembles them with a `SerialScheduler` per loaded executor, and the HTTP handler
+The native workers separate `processing.rs` from `executor.rs`; their worker
+assembly owns a `SerialScheduler` per loaded executor, and the HTTP handler
 coordinates the three stages. Preparation validates the entire request before
 any forward call and returns executor inputs plus a response context. The context retains question
 and candidate identity, usage, and response metadata outside the executor.
@@ -33,13 +39,24 @@ and candidate identity, usage, and response metadata outside the executor.
 | --- | --- | --- | --- |
 | Cua-S1 | One unpadded token-ID vector and option count per question, in request order. | One FP32 answer-letter logit vector per question. | Per-question softmax, choice/confidence, ordered answers, and token usage. |
 | Open-Jev | Token-ID vectors grouped by question, then independent candidate, in request order. | One FP32 learned scalar per candidate in the same grouping. | Add the `noul` false logit of zero, calibrate across each complete question, and restore typed answers, usage, and metadata. |
+| Laya | One padded request: token IDs, true lengths, question types and ordered option markers; at most 16 questions, 512 tokens per row and 2048 markers. | Per-question FP32 option logits and two action logits copied back after GPU heads. | Calibrate and decode ordered `choice`, `score` and `noul` answers, usage and metadata. |
 
-These input collections are serial work, not GPU batches. Shared runtime
+Cua-S1 and Open-Jev-9B input collections are serial work. For Open-Jev-27B-v1.1,
+Open-Jev's model-specific batch adapter packs up to 16 independent candidates and
+4096 tokens per group; longer prompts
+execute alone. It restores question/candidate grouping before normalization.
+Laya batches questions within one request. Shared runtime
 admission precedes blocking dispatch: Cua-S1 admits one question forward at a
-time; Open-Jev admits one complete request. Cua-S1's CPU letter projection stays
-outside admission; Open-Jev's scalar heads remain inside its request unit. The
-model mutexes guard mutable state, retaining per-question/request granularity.
-Executors own the loaded Qwen model and CPU head weights, preserving FP64 accumulation and
+time; Open-Jev and Laya admit one complete request. Cua-S1's CPU letter projection
+stays outside admission; Open-Jev's scalar heads and Laya's GPU heads and
+synchronized readback remain inside their request unit. Qwen model mutexes guard
+mutable state. Laya's dedicated owning thread confines its non-Send CUDA state
+and receives admitted work over a rendezvous channel. Cancellation after
+dispatch retains the scheduler permit until execution completes. Laya
+synchronizes and disposes a failed model before returning an inference error
+and reports unavailable health thereafter.
+
+Qwen executors own loaded models and CPU head weights, preserving FP64 accumulation and
 the existing FP32 rounding and bias order. Finishing checks output cardinality
 before reconstruction. HTTP validation, error status/body conventions, and real
 warmup before readiness remain model-specific and unchanged.
@@ -81,7 +98,9 @@ semantics.
 
 Cua-S1 prepares one prompt per question and reads option-letter logits.
 Open-Jev prepares independent candidate prompts and normalizes across the
-complete question's candidates. A request, question, and GPU batch therefore
+complete question's candidates. Laya pads prepared questions into one request
+batch and normalizes each question's complete option set. A request, question,
+and GPU batch therefore
 have different boundaries. Scheduler grouping must preserve those distinctions;
 probabilities must not be normalized across unrelated questions or requests.
 

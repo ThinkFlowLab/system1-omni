@@ -1,6 +1,6 @@
 # Native execution runtime
 
-`omni-runtime` provides `SerialScheduler` for the Cua-S1 and Open-Jev native
+`omni-runtime` provides `SerialScheduler` for the Cua-S1, Open-Jev and Laya native
 workers. Their engines assemble a processor, one scheduler for the loaded
 executor, and the executor. HTTP handlers still coordinate
 `prepare` → `execute` → `finish`.
@@ -15,6 +15,7 @@ state. Waiting requests no longer occupy blocking threads waiting for that mutex
 | --- | --- | --- |
 | Cua-S1 | One question's unpadded Qwen forward. Release before admitting its next question. | Request preparation, CPU letter projection and response finishing. |
 | Open-Jev | One complete request's independent candidate forwards and CPU scalar heads. | Request preparation and calibrated response finishing. |
+| Laya | One complete padded request, including GPU scorer/action head and copyback. | Request preparation/padding and calibrated response finishing. |
 
 Models retain weights, heads, device state, scratch buffers and graph caches.
 The scheduler takes an owned closure and returns its result; it does not know

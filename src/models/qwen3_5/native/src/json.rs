@@ -11,14 +11,13 @@ use std::io;
 
 use serde::Serialize;
 use serde::de::{self, Deserializer, MapAccess, SeqAccess, Visitor};
+use serde_json::value::RawValue;
 use serde_json::{Map, Number, Value};
 
 /// Decode a request body into its top-level object; the error is the 400 message.
 pub fn parse(raw: &[u8]) -> Result<Map<String, Value>, String> {
-    let mut de = serde_json::Deserializer::from_slice(raw);
-    let value = de
-        .deserialize_any(NoDuplicates)
-        .and_then(|v| de.end().map(|()| v))
+    let value = serde_json::from_slice::<Box<RawValue>>(raw)
+        .and_then(|raw| parse_value(&raw, 0))
         .map_err(|e| format!("request body is not valid JSON: {e}"))?;
     match value {
         Value::Object(map) => Ok(map),
@@ -26,67 +25,59 @@ pub fn parse(raw: &[u8]) -> Result<Map<String, Value>, String> {
     }
 }
 
-/// Builds a `Value` like serde_json does, but fails on a repeated key.
-struct NoDuplicates;
-
-impl<'de> de::Deserialize<'de> for Wrapped {
-    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        d.deserialize_any(NoDuplicates).map(Wrapped)
-    }
-}
-
-struct Wrapped(Value);
-
-impl<'de> Visitor<'de> for NoDuplicates {
-    type Value = Value;
-
-    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        f.write_str("a JSON value")
-    }
-    fn visit_unit<E>(self) -> Result<Value, E> {
-        Ok(Value::Null)
-    }
-    fn visit_bool<E>(self, b: bool) -> Result<Value, E> {
-        Ok(Value::Bool(b))
-    }
-    fn visit_i64<E>(self, n: i64) -> Result<Value, E> {
-        Ok(Value::Number(n.into()))
-    }
-    fn visit_u64<E>(self, n: u64) -> Result<Value, E> {
-        Ok(Value::Number(n.into()))
-    }
-    fn visit_f64<E: de::Error>(self, x: f64) -> Result<Value, E> {
-        Number::from_f64(x)
-            .map(Value::Number)
-            .ok_or_else(|| E::custom("number out of range"))
-    }
-    fn visit_str<E>(self, s: &str) -> Result<Value, E> {
-        Ok(Value::String(s.to_owned()))
-    }
-    fn visit_string<E>(self, s: String) -> Result<Value, E> {
-        Ok(Value::String(s))
-    }
-    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Value, A::Error> {
-        let mut items = Vec::new();
-        while let Some(Wrapped(v)) = seq.next_element()? {
-            items.push(v);
-        }
-        Ok(Value::Array(items))
-    }
-    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Value, A::Error> {
-        let mut obj = Map::new();
-        while let Some(key) = map.next_key::<String>()? {
-            let Wrapped(v) = map.next_value()?;
-            if obj.contains_key(&key) {
-                return Err(de::Error::custom(format_args!(
-                    "duplicate key {}",
-                    quote(&key)
-                )));
+// Read containers as raw JSON so feature unification with arbitrary_precision
+// cannot confuse numeric values or legitimate private-marker object keys.
+fn parse_value(raw: &RawValue, depth: usize) -> serde_json::Result<Value> {
+    let text = raw.get();
+    if !matches!(text.as_bytes()[0], b'{' | b'[') {
+        let value: Value = serde_json::from_str(text)?;
+        return if let Value::Number(n) = value {
+            if n.is_i64() || n.is_u64() {
+                Ok(Value::Number(n))
+            } else {
+                n.as_f64()
+                    .and_then(Number::from_f64)
+                    .map(Value::Number)
+                    .ok_or_else(|| de::Error::custom("number out of range"))
             }
-            obj.insert(key, v);
-        }
-        Ok(Value::Object(obj))
+        } else {
+            Ok(value)
+        };
     }
+    if depth >= 127 {
+        return Err(de::Error::custom("recursion limit exceeded"));
+    }
+    struct Container(usize);
+    impl<'de> Visitor<'de> for Container {
+        type Value = Value;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a JSON object or array")
+        }
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Value, A::Error> {
+            let mut items = Vec::new();
+            while let Some(raw) = seq.next_element::<Box<RawValue>>()? {
+                items.push(parse_value(&raw, self.0 + 1).map_err(de::Error::custom)?);
+            }
+            Ok(Value::Array(items))
+        }
+        fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Value, A::Error> {
+            let mut obj = Map::new();
+            while let Some((key, raw)) = map.next_entry::<String, Box<RawValue>>()? {
+                if obj.contains_key(&key) {
+                    return Err(de::Error::custom(format_args!(
+                        "duplicate key {}",
+                        quote(&key)
+                    )));
+                }
+                obj.insert(
+                    key,
+                    parse_value(&raw, self.0 + 1).map_err(de::Error::custom)?,
+                );
+            }
+            Ok(Value::Object(obj))
+        }
+    }
+    serde_json::Deserializer::from_str(text).deserialize_any(Container(depth))
 }
 
 /// A string as a JSON literal, which is also how error messages quote names.
@@ -123,6 +114,18 @@ impl serde_json::ser::Formatter for PyFormatter {
     }
     fn begin_object_value<W: ?Sized + io::Write>(&mut self, w: &mut W) -> io::Result<()> {
         w.write_all(b": ")
+    }
+    fn write_number_str<W: ?Sized + io::Write>(
+        &mut self,
+        w: &mut W,
+        value: &str,
+    ) -> io::Result<()> {
+        if value.contains(['.', 'e', 'E']) {
+            let x: f64 = value.parse().map_err(io::Error::other)?;
+            w.write_all(float_repr(x).as_bytes())
+        } else {
+            w.write_all(value.as_bytes())
+        }
     }
     fn write_f64<W: ?Sized + io::Write>(&mut self, w: &mut W, x: f64) -> io::Result<()> {
         w.write_all(float_repr(x).as_bytes())

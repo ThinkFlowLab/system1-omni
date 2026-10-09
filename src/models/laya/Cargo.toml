@@ -10,10 +10,15 @@ half = "2"
 memmap2 = "0.9"
 safetensors = "0.6"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision", "raw_value"] }
+tokenizers = { version = "0.23.2", default-features = false, features = ["fancy-regex"] }
+sha2 = "0.10"
+omni-cuda = { path = "../../backends/cuda", optional = true }
+omni-runtime = { path = "../../runtime", optional = true }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "sync"], optional = true }
+axum = { version = "0.8", optional = true }
 
 [dev-dependencies]
-sha2 = "0.10"
 tempfile = "3"
 
 [[test]]
@@ -23,3 +28,23 @@ path = "../../../tests/laya/checkpoint.rs"
 [[test]]
 name = "weights"
 path = "../../../tests/laya/weights.rs"
+
+[features]
+cuda = ["dep:omni-cuda"]
+serve = ["cuda", "dep:omni-runtime", "dep:tokio", "dep:axum"]
+
+[[test]]
+name = "preprocess"
+path = "../../../tests/laya/preprocess.rs"
+
+[[test]]
+name = "packing"
+path = "../../../tests/laya/packing.rs"
+
+[[test]]
+name = "decision"
+path = "../../../tests/laya/decision.rs"
+
+[[test]]
+name = "batch"
+path = "../../../tests/laya/batch.rs"

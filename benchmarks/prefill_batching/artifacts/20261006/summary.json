@@ -1,0 +1,257 @@
+{
+  "date": "2026-10-06",
+  "baseline_sha": "47eff9cdeda01e4847a4fb9634a43f2cab6a233f",
+  "candidate_runtime_sha": "82b5e7e60363405614bccd79ba83ab774e7513f5",
+  "raw_evidence_url": "https://github.com/ThinkFlowLab/system1-omni/tree/7d03326d51debde070f2a0d3a925405032275270/benchmarks/prefill_batching/artifacts/20261006",
+  "input_manifest_sha256": "02a9a45a381a231fa81579f0f642e5ad23f35410fe5f8e2f013ffac3326a2113",
+  "collector_sha256": "8ff176a09380aa257b23c9b8a566dd5fa2862ac40280ea76c9c65993cfbd9d4a",
+  "runtime_source_sha256": {
+    "src/models/qwen3_5/native/src/model.rs": "161599ea12a890b7f1926fa5ce786ffbfeda3cd53149d87e335b5cede9207aec",
+    "src/models/open_jev/native/src/executor.rs": "cea8e9f85514d3d4524702f9a3d7c04be159a1bbd028e67c5f187fdea0326888",
+    "src/models/open_jev/native/src/batching.rs": "32cce2ee7d4ede1f493f6b61fe98efc2e23681aeee018ba614b159364adcb28a",
+    "src/models/open_jev/native/src/lib.rs": "df6a9d85476ed24e1b5c95acf98735086325d1839b04a7d2e9056531753f54f8"
+  },
+  "controls": {
+    "independent_variable": "Within-request input and gate/up GEMM packing; output/down projections and mixers stay sequence-local.",
+    "gpu": "One H200, SM90, 132 SMs; driver/scheduler label L20X",
+    "gpu_id": 2,
+    "gpu_uuid": "GPU-cbf66259-f4ab-0ede-1811-82037dde5924",
+    "numa_node": 0,
+    "cpu_affinity": "0-15",
+    "precision": "BF16 weights/activations, FP32 GEMM accumulation",
+    "cuda_abi": 5,
+    "cuda_toolkit": "13.0 (nvcc 13.0.88)",
+    "rustc": "1.98.1",
+    "model": "Qwen/Qwen3.8-27B with merged Open-Jev-27B-v1.1 adapter and decision head",
+    "base_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+    "checkpoint_revision": "28cf73067d5b337860bbef3c85b8b82ba8730956",
+    "temperature": 2.5343690298472983,
+    "max_length": 16384,
+    "gemm_workspace_bytes": 33554432,
+    "packing_max_sequences": 16,
+    "packing_max_tokens": 4096,
+    "oversized_prompt": "singleton, original length",
+    "concurrency": 1,
+    "graphs": "CUA_S1_GRAPH=0 during HTTP measurements; 1 in separate correctness tests",
+    "profiler": "disabled during measurements",
+    "matched": "CUDA library, frontend, exported weights, tokenizer, head, temperature and max length",
+    "cache": "warm; no shared cache resets or clock changes",
+    "server_reuse": "one worker/frontend pair per arm, reused across all slices",
+    "budget": {
+      "feasibility_passes_per_arm_slice": 1,
+      "measured_passes_per_arm_slice": 2,
+      "no_extra_measured_runs": true
+    },
+    "timing": "localhost HTTP through the same frontend, includes tokenization, inference and UTF8 response receipt; excludes JSON body construction and JSON parsing, preparation, process-to-readiness, validated first request and full feasibility passes. Profiling disabled during measured runs.",
+    "p50": "median of per-request latencies within each measured pass",
+    "p95": "nearest rank within each measured pass",
+    "reductions": "100 * (1 - mean(candidate pass metrics) / mean(baseline pass metrics))",
+    "decision_rate": "number of question answers / sum of successful request latencies; excludes gaps between requests",
+    "acceptance": {
+      "multi_question_mean_reduction_percent": 15,
+      "single_mean_max_regression_percent": 2,
+      "single_p95_max_regression_percent": 2,
+      "maximum_probability_or_score_drift": 0.001,
+      "decision_flips": 0,
+      "request_failures": 0
+    },
+    "stop_condition": "Stop on reservation/UUID/affinity mismatch, CUDA error, output drift above tolerance, decision flip, request failure or run cap. Preserve failed evidence. Do not silently relax numerical or performance gates."
+  },
+  "workloads": {
+    "single": {
+      "requests": 74,
+      "definition": "original 74 real single-question JevBench Noul requests"
+    },
+    "questions-4": {
+      "requests": 60,
+      "definition": "synthetic repeated questions from short JevBench requests"
+    },
+    "questions-8": {
+      "requests": 60,
+      "definition": "synthetic repeated questions from short JevBench requests"
+    },
+    "mixed-types": {
+      "requests": 12,
+      "definition": "repository Choice/Noul/Score example with varied lengths"
+    }
+  },
+  "measured_requests": 824,
+  "measured_decisions": 3320,
+  "fidelity_comparison": "Every measured and feasibility response matches its baseline feasibility reference after removing metadata.inference_seconds.",
+  "validation": {
+    "workspace_tests": {
+      "passed": 90,
+      "ignored": 13
+    },
+    "cuda_reference_tests_passed": 6,
+    "full_checkpoint_packing_test": "passed with graph replay, updated inputs, ordering, unequal lengths, splitting and singleton execution",
+    "cuda_graph_launches_in_correctness_trace": 4,
+    "cuda_graph_trace_sha256": "300dc52f657c7ac976557f868ded9d08ec562f68cf001b69a44e606c870974ea",
+    "format_clippy_release_build_strict_docs": "passed; original commands and logs in raw evidence snapshot",
+    "task_owned_process_cleanup": "all exited; GPU returned available with 0 MB used"
+  },
+  "status": "complete",
+  "results": {
+    "baseline": {
+      "single": [
+        {
+          "requests": 74,
+          "mean_ms": 48.04829193430172,
+          "p50_ms": 24.96585389599204,
+          "p95_ms": 221.37836087495089,
+          "successful_decisions_per_second": 20.812394358728472
+        },
+        {
+          "requests": 74,
+          "mean_ms": 48.14348654267756,
+          "p50_ms": 24.60308652371168,
+          "p95_ms": 222.03110624104738,
+          "successful_decisions_per_second": 20.77124179848367
+        }
+      ],
+      "questions-4": [
+        {
+          "requests": 60,
+          "mean_ms": 98.70255975984037,
+          "p50_ms": 80.30658261850476,
+          "p95_ms": 154.39793188124895,
+          "successful_decisions_per_second": 40.52579801104106
+        },
+        {
+          "requests": 60,
+          "mean_ms": 98.6181381624192,
+          "p50_ms": 80.3435486741364,
+          "p95_ms": 153.67948170751333,
+          "successful_decisions_per_second": 40.56048993149919
+        }
+      ],
+      "questions-8": [
+        {
+          "requests": 60,
+          "mean_ms": 197.46969395006695,
+          "p50_ms": 160.7643635943532,
+          "p95_ms": 310.2688295766711,
+          "successful_decisions_per_second": 40.51254569738136
+        },
+        {
+          "requests": 60,
+          "mean_ms": 197.50209141833088,
+          "p50_ms": 160.67188186571002,
+          "p95_ms": 312.95446306467056,
+          "successful_decisions_per_second": 40.50590017831827
+        }
+      ],
+      "mixed-types": [
+        {
+          "requests": 12,
+          "mean_ms": 258.3781545981765,
+          "p50_ms": 250.29732752591372,
+          "p95_ms": 407.54649974405766,
+          "successful_decisions_per_second": 11.610888717219643
+        },
+        {
+          "requests": 12,
+          "mean_ms": 257.5930858341356,
+          "p50_ms": 249.6383930556476,
+          "p95_ms": 405.721134506166,
+          "successful_decisions_per_second": 11.646275327171251
+        }
+      ]
+    },
+    "candidate": {
+      "single": [
+        {
+          "requests": 74,
+          "mean_ms": 48.30653577841617,
+          "p50_ms": 24.934389162808657,
+          "p95_ms": 220.3979603946209,
+          "successful_decisions_per_second": 20.701132546267367
+        },
+        {
+          "requests": 74,
+          "mean_ms": 48.08322312562047,
+          "p50_ms": 25.28876857832074,
+          "p95_ms": 227.83073224127293,
+          "successful_decisions_per_second": 20.797274704057102
+        }
+      ],
+      "questions-4": [
+        {
+          "requests": 60,
+          "mean_ms": 80.79964901941518,
+          "p50_ms": 59.089095797389746,
+          "p95_ms": 142.11427047848701,
+          "successful_decisions_per_second": 49.50516553653406
+        },
+        {
+          "requests": 60,
+          "mean_ms": 80.91472735007603,
+          "p50_ms": 58.53466596454382,
+          "p95_ms": 142.37547758966684,
+          "successful_decisions_per_second": 49.43475843024318
+        }
+      ],
+      "questions-8": [
+        {
+          "requests": 60,
+          "mean_ms": 157.55837899632752,
+          "p50_ms": 113.72156580910087,
+          "p95_ms": 279.7259949147701,
+          "successful_decisions_per_second": 50.774830580012946
+        },
+        {
+          "requests": 60,
+          "mean_ms": 157.9782015644014,
+          "p50_ms": 114.35522744432092,
+          "p95_ms": 280.32094053924084,
+          "successful_decisions_per_second": 50.63989791489505
+        }
+      ],
+      "mixed-types": [
+        {
+          "requests": 12,
+          "mean_ms": 230.44868713865677,
+          "p50_ms": 231.44325334578753,
+          "p95_ms": 379.89793717861176,
+          "successful_decisions_per_second": 13.018082408058826
+        },
+        {
+          "requests": 12,
+          "mean_ms": 230.4904266881446,
+          "p50_ms": 229.0079789236188,
+          "p95_ms": 377.71117873489857,
+          "successful_decisions_per_second": 13.015724961362599
+        }
+      ]
+    }
+  },
+  "reductions": {
+    "single": {
+      "mean_reduction_percent": -0.2058184495515203,
+      "p95_reduction_percent": -1.0868567040844823
+    },
+    "questions-4": {
+      "mean_reduction_percent": 18.044899459455866,
+      "p95_reduction_percent": 7.656408577908424
+    },
+    "questions-8": {
+      "mean_reduction_percent": 20.111614993860428,
+      "p95_reduction_percent": 10.137034018670422
+    },
+    "mixed-types": {
+      "mean_reduction_percent": 10.665735276136978,
+      "p95_reduction_percent": 6.8438132777811305
+    }
+  },
+  "gates": {
+    "multi_question": true,
+    "single_mean": true,
+    "single_p95": true,
+    "fidelity": true
+  },
+  "maximum_drift": 0.0,
+  "failures": 0,
+  "decision_flips": 0,
+  "dataset_revision": "f8ce71361165846101d02ebc83ad44e47ae44fc3",
+  "unique_measured_cases": 206
+}
