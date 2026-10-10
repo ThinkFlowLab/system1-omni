@@ -72,6 +72,7 @@ def number(value):
 
 
 WIRE_DECIMALS = 4  # workers round probabilities on the wire to four decimal places
+SCORE_WIRE_DECIMALS = 2
 
 
 def sum_allowance(count):
@@ -80,6 +81,33 @@ def sum_allowance(count):
     flat 1e-4 rejected four-value distributions summing to 0.9999 at the float boundary
     (PR #40, first GPU run)."""
     return count * 0.5 * 10**-WIRE_DECIMALS + 1e-9
+
+
+def score_allowance(count):
+    """Bound independent rounding of the scalar and its weighted probabilities."""
+    return (
+        0.5 * 10**-SCORE_WIRE_DECIMALS
+        + 0.5 * 10**-WIRE_DECIMALS * count * (count - 1) / 2
+        + 1e-9
+    )
+
+
+def zero_score_fit(answer, probabilities):
+    """Recognize Decider's isolated Score response when no level has any fit."""
+    level_fit = answer.get("level_fit")
+    return (
+        answer.get("type") == "score"
+        and all(p == 0 for p in probabilities.values())
+        and isinstance(level_fit, dict)
+        and set(level_fit) == set(probabilities)
+        and all(v == 0 and number(v) for v in level_fit.values())
+        and all(
+            answer.get(key) == 0 and number(answer[key])
+            for key in ("score", "confidence", "x_p_max", "fit_mass")
+        )
+        and answer.get("certainty") == 1
+        and number(answer["certainty"])
+    )
 
 
 def read_answers(case, payload):
@@ -109,7 +137,9 @@ def read_answers(case, payload):
         if any(not number(p) or not 0 <= p <= 1 for p in probabilities.values()):
             raise ValueError("probabilities must be finite and in [0, 1]")
         total = math.fsum(probabilities.values())
-        if abs(total - 1) > sum_allowance(len(probabilities)):
+        if abs(total - 1) > sum_allowance(len(probabilities)) and not (
+            kind == "score" and total == 0 and zero_score_fit(answer, probabilities)
+        ):
             raise ValueError("probabilities must sum to one")
         if kind == "choice":
             if value not in probabilities or probabilities[value] != max(
@@ -119,8 +149,12 @@ def read_answers(case, payload):
         elif not number(value):
             raise ValueError("decision value must be finite")
         if kind == "score":
-            expected = sum(int(k) * p for k, p in probabilities.items())
-            if not math.isclose(value, expected, abs_tol=1e-4):
+            if not 0 <= value <= len(probabilities) - 1:
+                raise ValueError("score must be in the level range")
+            expected = math.fsum(int(k) * p for k, p in probabilities.items())
+            if not math.isclose(
+                value, expected, rel_tol=0, abs_tol=score_allowance(len(probabilities))
+            ):
                 raise ValueError("score must equal the expected level")
         normalized[qid] = {"value": value, "probabilities": probabilities}
     return normalized
