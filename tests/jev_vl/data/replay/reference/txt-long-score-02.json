@@ -1,0 +1,37 @@
+{
+ "id": "txt-long-score-02",
+ "status": 200,
+ "body": {
+  "kind": "score",
+  "effective_kind": "score",
+  "options": [
+   "0",
+   "1",
+   "2",
+   "3",
+   "4",
+   "5"
+  ],
+  "probabilities": [
+   0.09859059729775924,
+   0.453785456442352,
+   0.18268606765438766,
+   0.23293951972743235,
+   0.02444569167384195,
+   0.007552667204226905
+  ],
+  "choice_index": 1,
+  "choice": "1",
+  "adaptation": "native",
+  "protocol": "jev27-bare-v1",
+  "model": "autotrust/JEV-27B-VL",
+  "usage": {
+   "prompt_tokens": 577,
+   "completion_tokens": 1,
+   "total_tokens": 578
+  },
+  "elapsed_seconds": 0.09436440467834473,
+  "num_model_requests": 1
+ },
+ "client_s": 0.09522213973104954
+}

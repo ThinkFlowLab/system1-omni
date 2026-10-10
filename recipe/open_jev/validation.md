@@ -1,8 +1,8 @@
-# Open-Jev H200 validation
+# Open-Jev-27B-v1.1 H200 validation
 
 ## Raw HF Transformers comparison, 2026-10-03
 
-The native Rust/CUDA worker delivers a **7.47× speedup over raw HF Transformers**
+With Open-Jev-27B-v1.1, the native Rust/CUDA worker delivers a **7.47× speedup over raw HF Transformers**
 by mean warm HTTP latency: **362.21→48.50 ms (86.61% lower)** on one H200.
 This comparison covers 74 real JevBench `noul` requests, one candidate each,
 80–3399 tokens, BF16, max length 16384 and concurrency 1. Each backend reuses

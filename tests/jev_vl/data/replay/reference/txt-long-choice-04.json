@@ -1,0 +1,41 @@
+{
+ "id": "txt-long-choice-04",
+ "status": 200,
+ "body": {
+  "kind": "choice",
+  "effective_kind": "choice",
+  "options": [
+   "Escalation notice",
+   "Apology plus refund",
+   "Follow-up question",
+   "Closing summary",
+   "How-to guide link",
+   "Policy explanation",
+   "Apology plus replacement",
+   "Coupon offer"
+  ],
+  "probabilities": [
+   0.012406859695961505,
+   0.06944540046655052,
+   0.0036260668405236817,
+   0.0014195525745783787,
+   0.0006630043647213238,
+   0.6358392794055509,
+   0.276536715868584,
+   6.312078352968671e-05
+  ],
+  "choice_index": 5,
+  "choice": "Policy explanation",
+  "adaptation": "native",
+  "protocol": "jev27-bare-v1",
+  "model": "autotrust/JEV-27B-VL",
+  "usage": {
+   "prompt_tokens": 619,
+   "completion_tokens": 1,
+   "total_tokens": 620
+  },
+  "elapsed_seconds": 0.09457945823669434,
+  "num_model_requests": 1
+ },
+ "client_s": 0.09544820617884398
+}

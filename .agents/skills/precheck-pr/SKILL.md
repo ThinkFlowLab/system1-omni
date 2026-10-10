@@ -23,6 +23,10 @@ user instructions for those actions.
 - Record the head and base commit IDs. Review the complete diff from their merge
   base, plus staged, unstaged, and relevant untracked changes. State which changes
   are not yet part of the PR. Disclose if the remote base could not be refreshed.
+- Count changed authored-code lines separately from total diff size using the
+  [contributor guide](../../../CONTRIBUTING.md#large-code-changes). Above 3,000,
+  require a full self-review, the contributor's split rationale and review map,
+  and component/integration validation; a quick precheck cannot establish readiness.
 - Read changed files and enough surrounding code and callers to understand the
   behavior; do not rely only on diff fragments.
 
@@ -30,6 +34,10 @@ user instructions for those actions.
 
 - Match the implementation to the stated problem. Flag unrelated changes, new
   unused code, duplicated logic, or abstractions without a current need.
+- Apply [committed artifact hygiene](../self-review/SKILL.md#committed-artifact-hygiene)
+  in every precheck, including quick checks. Account for retained fixtures and
+  flag redundant generated run output; verify cleanup preserves evidence and
+  does not break replay commands or documentation links.
 - Check ownership against the architecture contracts: transport, independent
   processing and scheduling, model-specific adapters and executors, and hardware
   operations. In the native target, Rust orchestrates host work and dispatch;

@@ -1,7 +1,8 @@
-"""Export the pinned Open-Jev-27B-v1.1 text backbone and scalar head on CPU.
+"""Export a pinned Open-Jev text backbone and scalar head on CPU.
 
 Use the reference environment documented in native.md. This preparation step
-needs about 110 GB of host RAM and 52 GB of output storage, without a GPU.
+runs without a GPU. Open-Jev-27B-v1.1 needs about 110 GB of host RAM and 52 GB
+of output storage; Open-Jev-9B needs about 20 GB of RAM and 16 GB of storage.
 """
 
 import argparse
@@ -12,8 +13,19 @@ import torch
 from peft import PeftModel
 from transformers import AutoModelForImageTextToText, AutoTokenizer
 
-BASE_REVISION = "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
-CHECKPOINT_REVISION = "28cf73067d5b337860bbef3c85b8b82ba8730956"
+# Base model -> (base revision, checkpoint revision, scalar head width).
+CHECKPOINTS = {
+    "Qwen/Qwen3.8-27B": (
+        "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+        "28cf73067d5b337860bbef3c85b8b82ba8730956",
+        5120,
+    ),
+    "Qwen/Qwen3.5-9B": (
+        "c202236235762e1c871ad0ccb60c8ee5ba337b9a",
+        "47e966881e489511c0c7f5633a9e1960a676a551",
+        4096,
+    ),
+}
 
 
 def main():
@@ -24,8 +36,10 @@ def main():
     parser.add_argument("--max-length", type=int, default=4096)
     args = parser.parse_args()
     config = json.loads((args.checkpoint / "model.json").read_text())
-    if config["model_id"] != "Qwen/Qwen3.8-27B" or config["revision"] != BASE_REVISION:
-        raise ValueError("expected Open-Jev-27B-v1.1's pinned base")
+    pins = CHECKPOINTS.get(config["model_id"])
+    if pins is None or config["revision"] != pins[0]:
+        raise ValueError("expected Open-Jev-27B-v1.1's or Open-Jev-9B's pinned base")
+    base_revision, checkpoint_revision, width = pins
     if args.out.exists():
         raise ValueError("output already exists; choose a new export directory")
     if not 1 <= args.max_length <= 16384:
@@ -41,8 +55,8 @@ def main():
         raise ValueError("expected a single-user text chat template")
     prefix, suffix = chat.split(marker)
     head = torch.load(args.checkpoint / "head.pt", map_location="cpu", weights_only=True)
-    if head["weight"].shape != (1, 5120) or head["bias"].shape != (1,):
-        raise ValueError("expected a 5120-wide trained scalar head")
+    if head["weight"].shape != (1, width) or head["bias"].shape != (1,):
+        raise ValueError(f"expected a {width}-wide trained scalar head")
     if not all(torch.isfinite(v).all() for v in head.values()):
         raise ValueError("non-finite scalar head")
     full = AutoModelForImageTextToText.from_pretrained(
@@ -58,8 +72,8 @@ def main():
     # Written last: the native worker refuses incomplete exports or plain base weights.
     (args.out / "open_jev_export.json").write_text(json.dumps({
         "format": "open-jev-text-merged/1",
-        "model_id": config["model_id"], "base_revision": BASE_REVISION,
-        "checkpoint_revision": CHECKPOINT_REVISION, "temperature": temperature,
+        "model_id": config["model_id"], "base_revision": base_revision,
+        "checkpoint_revision": checkpoint_revision, "temperature": temperature,
         "max_length": args.max_length, "chat_prefix": prefix, "chat_suffix": suffix,
         "head_weight": head["weight"].float().reshape(-1).tolist(),
         "head_bias": head["bias"].float().item(),

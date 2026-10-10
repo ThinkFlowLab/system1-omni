@@ -1,0 +1,33 @@
+[package]
+name = "omni-jev-vl-native"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Native Rust/CUDA System-1 worker for autotrust/JEV-27B-VL (verbalizer readout)"
+
+[dependencies]
+anyhow = "1.0.100"
+axum = "0.8.8"
+half = "2.7.1"
+sha2 = "0.11"
+omni-qwen3-5-native = { path = "../../qwen3_5/native" }
+omni-runtime = { path = "../../../runtime" }
+safetensors = "0.8.0"
+serde_json = { version = "1.0.149", features = ["float_roundtrip", "preserve_order"] }
+tokenizers = { version = "=0.22.2", default-features = false, features = ["onig"] }
+tokio = { version = "1.49.0", features = ["macros", "net", "rt-multi-thread", "sync"] }
+
+[[test]]
+name = "jev_vl_contract"
+path = "../../../../tests/jev_vl/contract.rs"
+
+[[test]]
+name = "jev_vl_images"
+path = "../../../../tests/jev_vl/images.rs"
+
+[[test]]
+name = "jev_vl_prefix"
+path = "../../../../tests/jev_vl/prefix.rs"
+
+[dev-dependencies]
+tempfile = "3"

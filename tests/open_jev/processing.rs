@@ -1,4 +1,5 @@
 use super::*;
+use crate::contract::CHECKPOINTS;
 use tokenizers::{
     models::wordlevel::WordLevel, pre_tokenizers::whitespace::WhitespaceSplit,
     processors::template::TemplateProcessing,
@@ -54,6 +55,7 @@ fn processor(max_length: usize) -> Processor {
             .unwrap(),
     ));
     Processor {
+        checkpoint: &CHECKPOINTS[0],
         tokenizer,
         prefix: "".into(),
         suffix: "".into(),
@@ -123,13 +125,33 @@ fn prepared_candidates_have_exact_ids_and_finished_responses_keep_mapping() {
         body["metadata"]["method"],
         "native_merged_lora_decision_head"
     );
-    assert_eq!(body["metadata"]["base_revision"], BASE_REVISION);
+    assert_eq!(
+        body["metadata"]["base_revision"],
+        CHECKPOINTS[0].base_revision
+    );
     assert_eq!(
         body["metadata"]["prefix_cache"],
         json!({"enabled":false,"mode":"independent_candidates"})
     );
     assert!(body["metadata"]["inference_seconds"].as_f64().unwrap() >= 0.0);
-    assert_eq!(body["model"], contract::MODEL_ID);
+    assert_eq!(body["model"], CHECKPOINTS[0].model_id);
+}
+
+#[test]
+fn responses_name_the_loaded_checkpoint() {
+    let mut processor = processor(4096);
+    processor.checkpoint = &CHECKPOINTS[1];
+    let body = processor
+        .prepare(REQUEST)
+        .unwrap()
+        .context
+        .finish(vec![vec![3.0, 3.0], vec![0.0]])
+        .unwrap();
+    assert_eq!(body["model"], "Qwen/Qwen3.5-9B");
+    assert_eq!(
+        body["metadata"]["base_revision"],
+        "c202236235762e1c871ad0ccb60c8ee5ba337b9a"
+    );
 }
 
 #[test]

@@ -78,17 +78,20 @@ constexpr int D = 256, BM = 64, BN = 32, THREADS = 128;
 constexpr int LDS = D + 8;  // shared row stride in elements: 528 bytes keeps ldmatrix conflict-free
 constexpr int SMEM_BYTES = (BM + 2 * BN) * LDS * 2;
 
+// q_base offsets row 0 of the q/gate/out buffers: this launch covers the window
+// [q_base, T_total) while k/v cover [0, T_total). Used by the cached-prefix
+// continuation; q_base = 0 reduces to the plain full pass.
 template <bool Gated>
 __global__ void __launch_bounds__(THREADS)
     flash_kernel(const bf16* __restrict__ q, const bf16* __restrict__ k, const bf16* __restrict__ v, int ldv,
                  const bf16* __restrict__ gate, bf16* __restrict__ out, int T, int Hq, int Hk,
-                 float scale_log2) {
+                 float scale_log2, int q_base) {
     extern __shared__ __align__(16) unsigned char smem[];
     bf16* qs = reinterpret_cast<bf16*>(smem);
     bf16* ks = qs + BM * LDS;
     bf16* vs = ks + BN * LDS;
     const int h = blockIdx.y, hk = h / (Hq / Hk);
-    const int q0 = (gridDim.x - 1 - blockIdx.x) * BM;  // the longest blocks first
+    const int q0 = q_base + (gridDim.x - 1 - blockIdx.x) * BM;  // the longest blocks first
     const int tid = threadIdx.x, warp = tid / 32, lane = tid % 32;
     const int g = lane / 4, t = lane % 4;
     const int row0 = q0 + warp * 16;  // this warp's first query
@@ -232,20 +235,21 @@ __global__ void __launch_bounds__(THREADS)
 
 template <bool Gated>
 int launch(const void* q, const void* k, const void* v, int ldv, const void* gate, void* out,
-           int T, int Hq, int Hk, int Dh, float scale, void* stream) {
+           int T, int Hq, int Hk, int Dh, float scale, int q_base, void* stream) {
     if (Dh != D || Hk <= 0 || Hq <= 0 || Hq % Hk != 0 || ldv % 8 != 0 || ldv < Hk * Dh || T < 0)
         return cudaErrorInvalidValue;
-    if (T == 0) return cudaSuccess;
+    if (q_base < 0 || q_base % BM || q_base > T) return cudaErrorInvalidValue;
+    if (T == q_base) return cudaSuccess;
     if (Gated && gate == nullptr) return cudaErrorInvalidValue;
     // Once per specialization (for the device current at the first call).
     static const cudaError_t configured = cudaFuncSetAttribute(
         flash_kernel<Gated>, cudaFuncAttributeMaxDynamicSharedMemorySize, SMEM_BYTES);
     if (configured != cudaSuccess) return configured;
     constexpr float LOG2E = 1.4426950408889634f;
-    flash_kernel<Gated><<<dim3((T + BM - 1) / BM, Hq), THREADS, SMEM_BYTES,
+    flash_kernel<Gated><<<dim3((T - q_base + BM - 1) / BM, Hq), THREADS, SMEM_BYTES,
                          static_cast<cudaStream_t>(stream)>>>(
         static_cast<const bf16*>(q), static_cast<const bf16*>(k), static_cast<const bf16*>(v), ldv,
-        static_cast<const bf16*>(gate), static_cast<bf16*>(out), T, Hq, Hk, scale * LOG2E);
+        static_cast<const bf16*>(gate), static_cast<bf16*>(out), T, Hq, Hk, scale * LOG2E, q_base);
     return cudaGetLastError();
 }
 
@@ -274,10 +278,18 @@ extern "C" int cs1_attn_prep(const void* qg, const void* kr, int ld, const void*
 
 extern "C" int cs1_attention(const void* q, const void* k, const void* v, int ldv, void* out, int T, int Hq, int Hk,
                              int Dh, float scale, void* stream) {
-    return flash::launch<false>(q, k, v, ldv, nullptr, out, T, Hq, Hk, Dh, scale, stream);
+    return flash::launch<false>(q, k, v, ldv, nullptr, out, T, Hq, Hk, Dh, scale, 0, stream);
 }
 
 extern "C" int cs1_attention_gated(const void* q, const void* k, const void* v, int ldv, const void* gate,
                                    void* out, int T, int Hq, int Hk, int Dh, float scale, void* stream) {
-    return flash::launch<true>(q, k, v, ldv, gate, out, T, Hq, Hk, Dh, scale, stream);
+    return flash::launch<true>(q, k, v, ldv, gate, out, T, Hq, Hk, Dh, scale, 0, stream);
+}
+
+// Same layout contract as the full pass; only the covered query rows differ:
+// q_base is a multiple of 64 and rows below it keep whatever was already in k/v.
+extern "C" int cs1_attention_gated_prefix(const void* q, const void* k, const void* v, int ldv, const void* gate,
+                                          void* out, int T, int Hq, int Hk, int Dh, float scale, int q_base,
+                                          void* stream) {
+    return flash::launch<true>(q, k, v, ldv, gate, out, T, Hq, Hk, Dh, scale, q_base, stream);
 }

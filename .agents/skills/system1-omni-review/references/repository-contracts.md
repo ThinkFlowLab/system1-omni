@@ -29,7 +29,7 @@ Read `src/models/open_jev/README.md`, `src/models/open_jev/native/src/contract.r
 
 - The reference compiler/readout is pinned to Open-Jev `3308a15ccd7eea1df7a37d6ddc39b023b801ba16`; backbone and checkpoint identities are checked in the exported manifest. Cua-S1's prompt, option limit, JSON ordering, and confidence formula do not apply to this model.
 - Each candidate has an independent prompt and scalar head score. Preserve candidate order and sorted structured-input rendering. Normalize across each complete question using the saved temperature; `noul` uses logits `[0, score]`. Candidate regrouping must preserve question identity and token usage.
-- The worker validates and tokenizes every candidate before inference, warms up before binding, and uses the shared Qwen executor/CUDA ABI. Current scoring is independent single-prompt execution with a CPU head. Use `recipe/open_jev/validation.md` for the scope and limitations of full-checkpoint comparisons.
+- The worker validates and tokenizes every candidate before inference, warms up before binding, and uses the shared Qwen executor/CUDA ABI. Current scoring is independent single-prompt execution with a CPU head. Use `recipe/open_jev/validation.md` (27B on H200) and `recipe/open_jev/validation-9b.md` (9B) for the scope and limitations of full-checkpoint comparisons.
 
 ## CUDA, graph and compatibility evidence
 

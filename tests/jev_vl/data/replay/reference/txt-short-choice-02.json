@@ -1,0 +1,41 @@
+{
+ "id": "txt-short-choice-02",
+ "status": 200,
+ "body": {
+  "kind": "choice",
+  "effective_kind": "choice",
+  "options": [
+   "Request refund",
+   "Report a bug",
+   "Update address",
+   "Ask about shipping",
+   "Praise the agent",
+   "Redeem a coupon",
+   "Change plan",
+   "Cancel subscription"
+  ],
+  "probabilities": [
+   0.4353974435221486,
+   0.16274732073273007,
+   0.0009389917900967553,
+   0.39712310418754215,
+   0.0015717930267701737,
+   0.0012243747114455818,
+   0.0009262602858734789,
+   7.071174339308264e-05
+  ],
+  "choice_index": 0,
+  "choice": "Request refund",
+  "adaptation": "native",
+  "protocol": "jev27-bare-v1",
+  "model": "autotrust/JEV-27B-VL",
+  "usage": {
+   "prompt_tokens": 125,
+   "completion_tokens": 1,
+   "total_tokens": 126
+  },
+  "elapsed_seconds": 0.09241795539855957,
+  "num_model_requests": 1
+ },
+ "client_s": 0.09328750986605883
+}
