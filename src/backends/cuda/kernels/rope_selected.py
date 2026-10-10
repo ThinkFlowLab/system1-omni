@@ -14,10 +14,15 @@ import torch
 
 DT, ACC = "bfloat16", "float"
 FAST = {tilelang.PassConfigKey.TL_ENABLE_FAST_MATH: True}
+# These kernels are Hopper-only: the export embeds compute_90a and callers
+# compile with -gencode=arch=compute_90a. Pinning the target here keeps the
+# export from inferring one from whatever device happens to be attached. With
+# no device TileLang falls back to sm_50, which nvcc rejects.
+TARGET = {"kind": "cuda", "arch": "sm_90a"}
 VARIANTS = {"r1_h4": (1, 4), "r2_h4": (2, 4), "r1_h8": (1, 8)}
 
 
-@tilelang.jit(pass_configs=FAST)
+@tilelang.jit(target=TARGET, pass_configs=FAST)
 def _kernel(H, Dh, rows, heads):
     M, L = T.dynamic("M"), T.dynamic("L")
     half = Dh // 2
