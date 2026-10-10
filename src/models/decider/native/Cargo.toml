@@ -1,0 +1,43 @@
+[package]
+name = "omni-decider-native"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Native Rust/CUDA text worker for Decider-2B v11"
+[dependencies]
+anyhow = "1.0.100"
+serde = "1.0.229"
+serde_json = { version = "1.0.149", features = ["float_roundtrip", "preserve_order", "raw_value"] }
+tokenizers = { version = "=0.22.2", default-features = false, features = ["onig"] }
+sha2 = "0.10"
+half = "2.7.1"
+memmap2 = "0.9.9"
+safetensors = "0.8.0"
+omni-qwen3-5-native = { path = "../../qwen3_5/native" }
+omni-runtime = { path = "../../../runtime" }
+axum = "0.8.8"
+tokio = { version = "1.49.0", features = ["macros", "net", "rt-multi-thread", "sync", "signal"] }
+
+[[bin]]
+name = "omni-decider"
+path = "src/main.rs"
+
+[[test]]
+name = "gpu"
+path = "../../../../tests/decider/gpu.rs"
+
+[[test]]
+name = "contract"
+path = "../../../../tests/decider/contract.rs"
+
+[[test]]
+name = "config"
+path = "../../../../tests/decider/config.rs"
+
+[[test]]
+name = "batching"
+path = "../../../../tests/decider/batching.rs"
+
+[[example]]
+name = "decider-run"
+path = "../../../../tests/decider/runner.rs"
