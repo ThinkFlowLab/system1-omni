@@ -49,7 +49,7 @@ change. Schema:
 ```json
 {
   "name": "qwen3_5",
-  "abi_version": 4,
+  "abi_version": 7,
   "status": "validated",
   "sources": ["common.cuh", "mma.cuh", "ops.h", "norm.cu", "elementwise.cu",
               "attention.cu", "gdn_prefill.cu", "gemm.cu", "runtime.cu"],
@@ -136,7 +136,7 @@ reference for the shape. The contract fixes four points:
    whose value it does not know. The manifest's `abi_version` is **that number**,
    not a version of this document, and the checker reads the macro out of the
    declared sources and requires the two to agree. `#19`'s `ops.h` says
-   `CS1_ABI_VERSION 4` today, so a `qwen3_5` manifest declares 4.
+   `CS1_ABI_VERSION 7` today, so a `qwen3_5` manifest declares 7.
 
    Two backends may declare different values. They are independent libraries, and
    the repository layout says CUDA and Metal implementations need not share

@@ -34,8 +34,10 @@ existing failure behavior.
 This implements serial admission per executor within a worker process. Admitted
 concurrency is one. Queue-length limits, token budgets, compatibility grouping,
 shared processing orchestration and GPU batching remain planned. The Qwen
-executor still accepts one prompt per forward; this scheduler does not pack
-inputs or coordinate separately running workers.
+executor runs single prompts, bounded packed prefill (Open-Jev-27B-v1.1's
+candidates within a request) or prompts that share prefixes in one call, which no
+worker uses yet; this scheduler does not pack inputs or coordinate separately
+running workers.
 
 CPU tests cover FIFO serialization, queued cancellation, retention of admission
 and resources after dispatched cancellation, errors/panics, and independent

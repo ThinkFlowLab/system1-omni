@@ -27,7 +27,7 @@ For the local CUDA Graph experiment, also set `CUA_S1_GRAPH=1`. The first use of
 each exact ordered prompt-length vector warms the GEMM plans and captures the forward pass;
 later requests replay it with freshly uploaded token ids. The text worker keeps a 64-entry FIFO cache. Growing the scratch allocation clears the captures before freeing
 their buffers. Capture adds first-use latency; leave the variable unset to use
-the eager control. Rebuild both the worker and CUDA library together (ABI 6).
+the eager control. Rebuild both the worker and CUDA library together (ABI 7).
 If capture fails, the worker returns the completed eager result and disables
 Graph capture/replay for its remaining lifetime, logging the failure to stderr.
 
