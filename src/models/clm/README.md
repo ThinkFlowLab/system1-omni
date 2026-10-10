@@ -2,17 +2,26 @@
 
 CLM is the second model the project tracks ([#9](https://github.com/ThinkFlowLab/system1-omni/issues/9)), after LAYA. It decides differently in a way LAYA does not cover: **the engine does not compute embeddings.** A frozen `Qwen/Qwen3-8B` encoder runs as its own process behind an OpenAI-compatible `/v1/embeddings` endpoint, and the engine owns everything after it — two projection heads, the cosine score, and the typed answer.
 
-That split is the point of implementing it second. LAYA's engine owns one forward pass; this one owns a client to someone else's server, plus a candidate-vector cache that persists across requests.
+That split is the point of implementing it second. LAYA's engine owns one forward pass; this one owns a client to someone else's server, and embeds every text on every call — no candidate-vector cache is kept across requests. Upstream's `clm-serve` does keep one, which is why `input_tokens` moves with its cache state there and not here.
 
 ## What is here
 
-`omni-clm` reads a converted checkpoint and computes decisions. It does not call an embeddings endpoint and does not serve HTTP yet; those belong with the runtime that owns the request path.
+`omni-clm` reads a converted checkpoint and answers a request. It does not serve HTTP; the request path is a library plus the `clm-run` harness, and the frontend owns the socket.
 
 | module | responsibility |
 | --- | --- |
 | `config` | the head geometry, read from the safetensors metadata |
 | `weights` | tensor inventory, shape checks, FP32 loading |
 | `scoring` | projection, cosine score, softmax, and the three answer types |
+| `embedding` | the `/v1/embeddings` client, and a hashing encoder for CPU-only checks |
+| `serve` | request parsing, the text the heads see, and the answer shape |
+
+Object keys in rendered state, instructions and criteria must be unique, including
+nested objects and keys with equivalent JSON escapes. Duplicate keys fail preparation
+before embedding; otherwise collapsing a key can bind a number to another field's
+original literal. Unique-key requests retain Python-compatible number formatting.
+
+`clm-run CHECKPOINT_DIR --emb-url URL` reads one request object per line and writes one response per line, which is how `recipe/clm/native/compare_with_reference.py` drives it.
 
 ## The checkpoint is converted first
 
@@ -56,4 +65,17 @@ CLM_EXPORT=/tmp/clm-export cargo test -p omni-clm -- --ignored
 
 Two tests run there: every tensor's FP32 conversion hash against the export oracle, and **five decisions checked against an independent NumPy implementation of the same arithmetic** (`head_oracle.py`) on synthesised embeddings, so the two sides need no encoder to disagree. The embeddings are hash-derived and carry no meaning as model output — the check is that two implementations of the same maths agree.
 
+The text the heads see is pinned the same way, against `clm.schema` itself:
+
+```sh
+python recipe/clm/native/text_oracle.py /tmp/text-oracle.json
+CLM_TEXT_ORACLE=/tmp/text-oracle.json cargo test -p omni-clm -- --ignored
+```
+
+`to_text`, `state_text` and `candidates` are compared byte for byte over six states and five questions. A separator in the wrong place does not fail loudly — it shifts every probability — so the oracle is produced by importing the reference rather than by transcribing it.
+
 The default CI job skips these because it does not download the checkpoint.
+
+## Checking a real decision
+
+With an encoder reachable, `recipe/clm/native/compare_with_reference.py` sends the same request to `clm-run` and to the reference engine and compares the answers case by case. Both sides call the same embeddings endpoint, so the vectors are identical and the only difference left is the code between the vectors and the answer.

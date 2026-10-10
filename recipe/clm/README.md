@@ -90,3 +90,7 @@ GPU=0 PORT=8090 UTIL=0.35 ./serve_qwen3_8b.sh     # from the CLM checkout; needs
 ```
 
 Everything downstream is unchanged, which is the property this recipe is meant to demonstrate.
+
+`recipe/clm/native/VALIDATION.md` records what that path measures when it is run against the
+native engine instead of `clm-serve`: the engine alone on identical vectors, and the whole
+path on a real Qwen3-8B.

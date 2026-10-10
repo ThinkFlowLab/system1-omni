@@ -1,6 +1,7 @@
-//! CPU checks for the CLM head loader. No GPU and no encoder, but the frozen export.
+//! CPU checks for the CLM head loader. No GPU, no encoder server, but the frozen export.
 use omni_clm::{
-    Config, Kind, Question, Weights, answer, confidence, distribution, head_tensors, weights::Heads,
+    Config, HashingEncoder, Kind, Question, Weights, answer, confidence, distribution,
+    head_tensors, weights::Heads,
 };
 use std::path::PathBuf;
 
@@ -51,10 +52,13 @@ fn decisions_match_the_reference_implementation() {
         let temperature = case["temperature"].as_f64().unwrap() as f32;
         let expected: Vec<f32> = serde_json::from_value(case["probabilities"].clone()).unwrap();
 
-        let state = embedding(&format!("state::{name}"), heads.config.head.hidden_size);
+        let state =
+            HashingEncoder::vector(&format!("state::{name}"), heads.config.head.hidden_size);
         let candidates: Vec<Vec<f32>> = keys
             .iter()
-            .map(|k| embedding(&format!("cand::{name}::{k}"), heads.config.head.hidden_size))
+            .map(|k| {
+                HashingEncoder::vector(&format!("cand::{name}::{k}"), heads.config.head.hidden_size)
+            })
             .collect();
 
         let probs = distribution(&heads, &state, &candidates, temperature).unwrap();
@@ -76,7 +80,10 @@ fn decisions_match_the_reference_implementation() {
             kind,
             keys,
         };
-        let answer = answer(&question, &probs).unwrap();
+        // The oracle carries keys and probabilities, not candidate texts; the legend a
+        // score answer is built from is checked in `text.rs`, where `candidates` supplies
+        // the texts.
+        let answer = answer(&question, &question.keys, &probs).unwrap();
         match (&answer, case.get("choice")) {
             (
                 omni_clm::Answer::Choice {
@@ -119,26 +126,6 @@ fn decisions_match_the_reference_implementation() {
             (other, _) => panic!("{name}: unexpected answer {other:?}"),
         }
     }
-}
-
-/// The same synthesised embedding the oracle uses, so both sides see identical vectors.
-fn embedding(text: &str, dim: usize) -> Vec<f32> {
-    use sha2::{Digest, Sha256};
-
-    let mut out: Vec<f32> = Vec::with_capacity(dim);
-    let mut counter = 0u32;
-    while out.len() < dim {
-        let digest = Sha256::digest(format!("{counter}:{text}").as_bytes());
-        for chunk in digest.as_chunks::<4>().0 {
-            if out.len() == dim {
-                break;
-            }
-            out.push(u32::from_be_bytes(*chunk) as f64 as f32 / 2f64.powi(31) as f32 - 1.0);
-        }
-        counter += 1;
-    }
-    let norm = out.iter().map(|v| v * v).sum::<f32>().sqrt();
-    out.iter().map(|v| v / norm).collect()
 }
 
 #[test]
@@ -271,6 +258,6 @@ fn a_tied_score_label_keeps_the_first_level() {
         kind: Kind::Score,
         keys: vec!["0".into(), "1".into(), "2".into()],
     };
-    let tied = answer(&question, &[0.5, 0.5, 0.0]).unwrap();
+    let tied = answer(&question, &question.keys, &[0.5, 0.5, 0.0]).unwrap();
     assert_eq!(tied.label(), "0");
 }
