@@ -175,3 +175,9 @@ python -m unittest discover -s tests/benchmarks -p 'test_*.py' -v
 [`laya_mps/`](laya_mps/README.md) holds the scripts behind the numbers of the
 [Apple Silicon recipe](../recipe/laya/apple-silicon.md): in-process and HTTP latency, paired comparisons,
 profiling and the report with its output-parity section.
+
+## Frozen serving matrix
+
+See [the matrix client guide](serving_matrix.md) and [example plan](serving_matrix.example.json)
+for exact response oracles, workload variants, concurrency rounds, pinned runtime
+metadata and environment-based bearer authentication.

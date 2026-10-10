@@ -1,0 +1,43 @@
+{
+  "endpoint": "http://127.0.0.1:8000/v1/systemone",
+  "health_endpoint": "http://127.0.0.1:8000/health",
+  "cases": [
+    {
+      "name": "two-decisions",
+      "request": {
+        "model": "test"
+      },
+      "expected_response": {
+        "answers": {
+          "a": {
+            "choice": "yes"
+          },
+          "b": {
+            "noul": 0.75
+          }
+        }
+      }
+    }
+  ],
+  "concurrency": [
+    1,
+    2
+  ],
+  "requests_per_case": 4,
+  "repetitions": 2,
+  "warmup_per_case": 2,
+  "timeout_seconds": 2,
+  "metadata": {
+    "gpu": "N/A: synthetic local CPU server",
+    "gpu_ids": "N/A",
+    "driver": "N/A",
+    "cuda": "N/A",
+    "precision": "N/A",
+    "model_revision": "synthetic-test-v1",
+    "runtime_revision": "local-test-server-v1",
+    "cache_policy": "none",
+    "cuda_evidence": "N/A: no CUDA execution",
+    "reservation": "N/A: local CPU fixture",
+    "host": "127.0.0.1: synthetic CPU fixture"
+  }
+}
