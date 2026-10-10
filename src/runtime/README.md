@@ -1,6 +1,6 @@
 # Native execution runtime
 
-`omni-runtime` provides `SerialScheduler` for the Cua-S1, Open-Jev and Laya native
+`omni-runtime` provides `SerialScheduler` for the Cua-S1, Open-Jev, Decider and Laya native
 workers. Their engines assemble a processor, one scheduler for the loaded
 executor, and the executor. HTTP handlers still coordinate
 `prepare` → `execute` → `finish`.
@@ -15,6 +15,7 @@ state. Waiting requests no longer occupy blocking threads waiting for that mutex
 | --- | --- | --- |
 | Cua-S1 | One question's unpadded Qwen forward. Release before admitting its next question. | Request preparation, CPU letter projection and response finishing. |
 | Open-Jev | One complete request's independent candidate forwards and CPU scalar heads. | Request preparation and calibrated response finishing. |
+| Decider | One complete request's backbone rows, selected CUDA label head and synchronized readback. | Request preparation and whole-question calibrated response finishing. |
 | Laya | One complete padded request, including GPU scorer/action head and copyback. | Request preparation/padding and calibrated response finishing. |
 
 Models retain weights, heads, device state, scratch buffers and graph caches.
@@ -34,8 +35,10 @@ existing failure behavior.
 This implements serial admission per executor within a worker process. Admitted
 concurrency is one. Queue-length limits, token budgets, compatibility grouping,
 shared processing orchestration and GPU batching remain planned. The Qwen
-executor still accepts one prompt per forward; this scheduler does not pack
-inputs or coordinate separately running workers.
+executor runs single prompts, bounded packed prefill (Open-Jev-27B-v1.1's
+candidates within a request and Decider's complete rows) or prompts that share
+prefixes in one call (Decider opt-in); this scheduler does not pack inputs or coordinate separately
+running workers.
 
 CPU tests cover FIFO serialization, queued cancellation, retention of admission
 and resources after dispatched cancellation, errors/panics, and independent

@@ -11,19 +11,45 @@ The norm, elementwise and q/k preparation kernels round to bfloat16 where Transf
 `cs1_attention_gated` fuses the sigmoid gate into the attention epilogue, preserving
 the BF16 rounding of both attention and sigmoid before multiplication. The native
 workers use this entry point; the separate operations remain available for kernel
-comparisons. Rebuild the library and workers together for ABI version 6, which
-includes vision, CUDA Graph, gated attention and prefix-continuation entry points.
+comparisons. Rebuild the library and workers together for ABI version 7, which
+includes vision, CUDA Graph, gated attention, prefix-continuation entry points and
+the fixed-algorithm GEMM handle below.
+
+cuBLASLt's heuristic picks a GEMM algorithm per M, so a row's result can change with
+the number of rows in the call: a prefix and its branch, run separately, round
+differently from the same tokens in one pass. `cs1_gemm_create_fixed` returns a handle
+that keeps one algorithm per weight shape for every M, the heuristic's first choice at a
+reference M among algorithms without split-K, so each row's result is the same whatever
+M is and wherever the row sits. cuBLASLt doesn't document this property;
+`fixed_gemm_rows_do_not_depend_on_m` checks it, so run it on a new GPU before relying
+on it (it passed on sm_89). It is slower for some shapes and faster for others: on an
+RTX 6000 Ada, the down and output projections take up to about 4 times as long at small
+M without split-K. `cs1_gemm_create` remains the default.
 
 Gated DeltaNet preparation stores converted TF32 operands in three-byte component planes, preserves the original four-term TF32 accumulation, and writes U/W fragments directly as bfloat16. Dynamic shared memory is 72 KiB per block. The [H200 comparison](../../../../benchmarks/gdn/README.md) records complete GDN call latency, numerical checks, and the small end-to-end change measured with the Open-Jev worker from PR #55.
 
 The shared Rust model can pack independent sequences for input and gate/up GEMMs.
 Output/down GEMMs retain each prompt's original shape and reduction order;
 attention, convolution and GDN calls remain sequence-local. Packing adds no CUDA
-entry points. Open-Jev uses this path within requests; Cua-S1 keeps single-prompt calls.
+entry points. Open-Jev uses this path within requests; Cua-S1 keeps single-prompt calls. Decider optionally packs complete
+question rows within one admitted request.
 
 Prefix continuation retains full-attention KV, three convolution input rows,
 and FP32 Gated DeltaNet state at 64-token chunk boundaries. It is used by the
-experimental JEV-VL worker; existing full-prefill callers keep their own paths.
-ABI 6 adds mandatory copy and prefix entry points after ABI 5 native vision.
+experimental JEV-VL worker and by the shared executor's `forward_shared`, which
+runs prompts that share prefixes once per prefix with the fixed-algorithm GEMM
+handle ([#85](https://github.com/ThinkFlowLab/system1-omni/issues/85)); existing
+full-prefill callers keep their own paths.
+ABI 6 adds mandatory copy and prefix entry points after ABI 5 native vision,
+and ABI 7 adds the fixed-algorithm GEMM handle.
 Rebuild the library and **all** Qwen worker binaries together; older libraries
 are rejected. Current-branch GPU regression is required before release.
+
+Decider request-local prefix execution uses the same public `PrefixState` and
+`run_window` continuation path as JEV-VL, with fixed-GEMM selection for its
+independent/shared controls. No separate cached-attention, convolution-history
+or GDN-state ABI is required. See the [Decider recipe](../../../../recipe/decider/README.md).
+The Rust loader checks ABI version before resolving required symbols, so older
+libraries report the rebuild requirement. Decider Graph statistics and synchronized
+stream disposal are preserved; device validation of this consolidated head remains
+unverified. Historical results retain their original implementation provenance.

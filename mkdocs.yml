@@ -69,6 +69,8 @@ nav:
       - Open-Jev native text worker: recipe/open_jev/native.md
       - Open-Jev-27B H200 validation: recipe/open_jev/validation.md
       - Open-Jev-9B validation: recipe/open_jev/validation-9b.md
+      - Decider native text worker: recipe/decider/README.md
+      - Decider validation: recipe/decider/validation.md
       - JEV-27B-VL experimental worker: recipe/jev_vl/README.md
       - JEV-27B-VL validation status: recipe/jev_vl/validation.md
       - OmniJev preparation: recipe/omnijev/README.md
