@@ -36,7 +36,9 @@ struct Shared {
     admitted: Arc<AtomicUsize>,
 }
 
-/// One admitted request, released on drop.
+/// One admitted request, released on drop. It moves into the preparation and then
+/// into the scheduled work, so a request whose client went away still counts until its
+/// work ends.
 struct Admission(Arc<AtomicUsize>);
 
 impl Drop for Admission {
@@ -68,18 +70,23 @@ async fn decide(State(shared): State<Shared>, body: Result<Bytes, BytesRejection
         )
             .into_response();
     }
-    let _admission = Admission(shared.admitted.clone());
+    let admission = Admission(shared.admitted.clone());
     // Decoding and preparation run before the scheduler and without the model lock.
-    let permit = shared.preparing.clone().acquire_owned().await;
+    let Ok(permit) = shared.preparing.clone().acquire_owned().await else {
+        return reply(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({"detail": "inference failed"}),
+        );
+    };
     let processor = shared.processor.clone();
-    let prepared = match tokio::task::spawn_blocking(move || {
+    let (prepared, admission) = match tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        processor.prepare(&raw)
+        (processor.prepare(&raw), admission)
     })
     .await
     {
-        Ok(Ok(prepared)) => prepared,
-        Ok(Err(e)) => {
+        Ok((Ok(prepared), admission)) => (prepared, admission),
+        Ok((Err(e), _)) => {
             return reply(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 json!({"detail": format!("{e:#}")}),
@@ -97,6 +104,7 @@ async fn decide(State(shared): State<Shared>, body: Result<Bytes, BytesRejection
     let result = shared
         .scheduler
         .run(move || {
+            let _admission = admission;
             let answers = executor
                 .lock()
                 .map_err(|_| anyhow::anyhow!("poisoned executor"))?
