@@ -1,6 +1,11 @@
 # Qwen3.5/3.8 prefill operations
 
-CUDA kernels for a prefill-only Qwen3.5/3.8 forward pass, built into `libqwen3_5_cuda.so` with a C interface ([`ops.h`](ops.h)), so that a Rust model engine loads it at run time and builds without a CUDA toolkit. The Cua-S1 and Open-Jev native workers share the layer loop and buffers in [`src/models/qwen3_5/native/`](../../../models/qwen3_5/native/).
+CUDA kernels for a prefill-only Qwen3.5/3.8 forward pass, built into `libqwen3_5_cuda.so` with a C interface ([`ops.h`](ops.h)), so that a Rust model engine loads it at run time and builds without a CUDA toolkit. The Cua-S1, Open-Jev and experimental JEV-VL native workers share the layer loop and buffers in [`src/models/qwen3_5/native/`](../../../models/qwen3_5/native/).
+
+The backend manifest remains `experimental`. Maintained CI checks source/build
+metadata and CPU tests; it does not compile this backend with NVCC or establish
+GPU numerical parity. Current-head CUDA compilation and GPU regressions remain
+separate release checks.
 
 ```sh
 src/backends/cuda/qwen3_5/build.sh <output dir> [compute capability, default 89]

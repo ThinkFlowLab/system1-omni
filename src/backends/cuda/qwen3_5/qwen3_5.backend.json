@@ -1,0 +1,31 @@
+{
+  "name": "qwen3_5",
+  "abi_version": 6,
+  "status": "experimental",
+  "sources": [
+    "ops.h",
+    "common.cuh",
+    "mma.cuh",
+    "norm.cu",
+    "elementwise.cu",
+    "attention.cu",
+    "gdn_prefill.cu",
+    "gemm.cu",
+    "runtime.cu",
+    "vision.cu"
+  ],
+  "models": [
+    "src/models/cua_s1/native/",
+    "src/models/open_jev/native/",
+    "src/models/jev_vl/native/"
+  ],
+  "build": {
+    "script": "build.sh",
+    "output": "libqwen3_5_cuda.so",
+    "default_arch": 89,
+    "architectures": [
+      89
+    ],
+    "min_capability": 80
+  }
+}
