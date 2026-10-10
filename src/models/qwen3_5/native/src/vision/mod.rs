@@ -61,7 +61,8 @@ impl VisionConfig {
                 || sizes == [27, 1152, 4304, 16, 2304, 5120, 3, 16, 2, 2])
                 && self.hidden_act == "gelu_pytorch_tanh"
                 && self.deepstack_visual_indexes.is_empty()
-                && self.model_type == "qwen3_5",
+                // the Hub configs say qwen3_5; Transformers writes its class's qwen3_5_vision
+                && ["qwen3_5", "qwen3_5_vision"].contains(&self.model_type.as_str()),
             "unsupported Qwen vision layout"
         );
         Ok(())

@@ -160,7 +160,7 @@ worker, or a native Rust/CUDA worker on Hopper. The Cua-S1 4B 0.2 `text` adapter
 runs as a Python worker or as a native worker on CUDA. Open-Jev-27B-v1.1
 and Open-Jev-9B run on the same native Rust/CUDA worker. Cua-S1 also has a
 Python screenshot worker, CLM has a stub-encoder contract recipe, and OmniJev-4B
-v1.1 has its checkpoint export and CPU contract, with no worker yet:
+v1.1 runs on a native Rust/CUDA worker:
 
 | Model | Status |
 | --- | --- |
@@ -171,7 +171,7 @@ v1.1 has its checkpoint export and CPU contract, with no worker yet:
 | Open-Jev-9B | The same [native Rust/CUDA worker](recipe/open_jev/native.md); eager independent text candidates; [reference comparison on sm_89](recipe/open_jev/validation-9b.md) |
 | autotrust/JEV-27B-VL | [Experimental Rust/CUDA worker](recipe/jev_vl/README.md); single-question text and offline-preencoded image inputs; [bounded H800 validation and limits](recipe/jev_vl/validation.md) |
 | CLM-v0.1-8B | [External worker with a CPU stub encoder](recipe/clm/README.md); contract checks only, real Qwen3-8B decisions unverified by this recipe |
-| OmniJev-4B v1.1 | [Checkpoint export and CPU contract](recipe/omnijev/README.md) only; the native worker is in progress ([#114](https://github.com/ThinkFlowLab/system1-omni/issues/114)) |
+| OmniJev-4B v1.1 | [Native Rust/CUDA worker](recipe/omnijev/native.md), eager: one image, Choice, Noul and Score; [reference comparison on sm_89](recipe/omnijev/native.md#comparison-with-the-reference) |
 
 [Supported models and hardware](docs/supported-models.md) lists the devices
 and where each worker has been run.

@@ -3,6 +3,7 @@ mod common;
 
 use omni_omnijev_native::contract;
 use omni_omnijev_native::processing::{self, Processor};
+use omni_qwen3_5_native::inputs::image_positions;
 use sha2::{Digest, Sha256};
 
 fn positions_sha256(positions: &[Vec<i64>; 3]) -> String {
@@ -21,7 +22,7 @@ fn questions_prompts_and_layout_match_reference() {
     for case in fixture["cases"].as_array().unwrap() {
         let name = case["name"].as_str().unwrap();
         let request = contract::compile(&common::request(case)).unwrap();
-        let grid = processing::image_grid(request.image.width, request.image.height);
+        let grid = processing::pixels(&request.image).unwrap().image_grid_thw;
         assert_eq!(serde_json::json!(grid), case["image_grid_thw"], "{name}");
         let expected = case["questions"].as_array().unwrap();
         assert_eq!(request.questions.len(), expected.len(), "{name}");
@@ -45,7 +46,7 @@ fn questions_prompts_and_layout_match_reference() {
             let (opens, closes) = processing::spans(&ids);
             assert_eq!(serde_json::json!(opens), e["opens"], "{name} {}", q.id);
             assert_eq!(serde_json::json!(closes), e["closes"], "{name} {}", q.id);
-            let positions = processing::image_positions(&ids, grid).unwrap();
+            let positions = image_positions(&ids, processing::IMAGE_TOKEN, grid).unwrap();
             assert_eq!(
                 positions_sha256(&positions),
                 e["positions_sha256"].as_str().unwrap(),
@@ -82,7 +83,7 @@ fn questions_prompts_and_layout_match_reference() {
             }
         }
         // Rows continue the prefix: the first row position is the prefix's largest plus one.
-        let positions = processing::image_positions(&sequences[0], grid).unwrap();
+        let positions = image_positions(&sequences[0], processing::IMAGE_TOKEN, grid).unwrap();
         assert_eq!(layout.next_position, positions[0][layout.prefix], "{name}");
     }
 }

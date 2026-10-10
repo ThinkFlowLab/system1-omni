@@ -595,6 +595,28 @@ impl PrefixState {
     }
 }
 
+/// Rows of logits computed at once by `forward_multimodal_readout`; with the fixed GEMM
+/// algorithms, a row's logits do not depend on how many share the call.
+const VOCAB_ROWS: usize = 64;
+
+/// What `Model::forward_multimodal_readout` reads from one prefill.
+#[derive(Debug, Clone)]
+pub struct Readout {
+    /// Final-norm hidden states at the requested rows, in order.
+    pub hidden: Vec<Vec<f32>>,
+    /// For each requested `(row, token)`, the log-probability of `token` after `row`.
+    pub logprobs: Vec<f32>,
+}
+
+/// log-softmax of one row of bfloat16 logits over its first `vocab` entries, at `token`:
+/// the logits as float32, their maximum, and a float64 sum of the exponentials.
+pub(crate) fn token_logprob(logits: &[u8], vocab: usize, token: u32) -> f32 {
+    let value = |i: usize| half::bf16::from_le_bytes([logits[2 * i], logits[2 * i + 1]]).to_f32();
+    let max = (0..vocab).map(value).fold(f32::NEG_INFINITY, f32::max) as f64;
+    let sum: f64 = (0..vocab).map(|i| (value(i) as f64 - max).exp()).sum();
+    (value(token as usize) as f64 - max - sum.ln()) as f32
+}
+
 /// Gated DeltaNet chunk length. `forward_shared` ends prefixes at its multiples, where
 /// a continuation repeats the one-shot arithmetic (see cs1_gdn_prefill_x).
 const GDN_CHUNK: usize = 64;
@@ -666,6 +688,9 @@ pub struct Model {
     scratch: Option<Scratch>,
     /// The request and group prefix states of `forward_shared`; grow as needed.
     shared: [Option<PrefixState>; 2],
+    /// Hidden rows and logits for `forward_multimodal_readout`'s vocabulary pass, and
+    /// the host copy of the logits; allocated on first use.
+    vocab_buffers: Option<(DeviceBuffer, DeviceBuffer, Vec<u8>)>,
     /// Opt-in replay with at most 64 captures keyed by ordered sequence lengths.
     graph_enabled: bool,
     graphs: VecDeque<(Vec<usize>, cuda::Graph)>,
@@ -765,6 +790,7 @@ impl Model {
             fixed_gemm: std::ptr::null_mut(),
             scratch: None,
             shared: [None, None],
+            vocab_buffers: None,
             graph_enabled: std::env::var("CUA_S1_GRAPH").as_deref() == Ok("1"),
             graphs: VecDeque::new(),
         };
@@ -935,6 +961,116 @@ impl Model {
         self.overwrite_image_rows(s, input, 0)?;
         self.run(s, &[t], true)?;
         self.last_hidden(s, t)
+    }
+
+    /// `forward_multimodal` with the fixed-algorithm GEMMs of `forward_fixed`, reading the
+    /// final-norm hidden state at each of `rows` and, for each `(row, token)` in `targets`,
+    /// the log-probability of `token` after `row` under the tied output embedding:
+    /// bfloat16 logits over the vocabulary, then a float32 log-softmax. Each result is
+    /// the same however many rows or targets the call reads.
+    pub fn forward_multimodal_readout(
+        &mut self,
+        input: &MultimodalInput<'_>,
+        rows: &[usize],
+        targets: &[(usize, u32)],
+    ) -> Result<Readout> {
+        let result = self.run_readout(input, rows, targets);
+        if result.is_err() {
+            // Work already queued may still use the buffers.
+            let _ = cuda::synchronize(self.stream);
+        }
+        result
+    }
+
+    fn run_readout(
+        &mut self,
+        input: &MultimodalInput<'_>,
+        rows: &[usize],
+        targets: &[(usize, u32)],
+    ) -> Result<Readout> {
+        let image_token = self
+            .cfg
+            .image_token_id
+            .context("checkpoint has no image_token_id")?;
+        let vocab = self.embed.shape[0];
+        input.validate(self.cfg.hidden, vocab, image_token, self.cfg.max_positions)?;
+        let t = input.token_ids.len();
+        ensure!(
+            rows.iter().all(|&r| r < t)
+                && targets
+                    .iter()
+                    .all(|&(r, token)| r < t && (token as usize) < vocab),
+            "readout row or token out of range"
+        );
+        self.prepare_scratch(t)?;
+        let gemm = self.fixed_gemm()?;
+        let s = self.scratch.as_ref().unwrap();
+        self.upload_positions(s, input.position_ids)?;
+        self.embed_tokens(s, input.token_ids)?;
+        self.overwrite_image_rows(s, input, 0)?;
+        self.run_window(s, 0, t, true, None, None, gemm)?;
+        let hidden = rows
+            .iter()
+            .map(|&r| self.hidden_row(s, r))
+            .collect::<Result<Vec<_>>>()?;
+        let mut logprobs = Vec::with_capacity(targets.len());
+        if !targets.is_empty() {
+            let hb = self.cfg.hidden * BF16;
+            // padded so that each logits row starts on a 16-byte boundary
+            let ld = vocab.next_multiple_of(8);
+            let row = ld * BF16;
+            if self.vocab_buffers.is_none() {
+                self.vocab_buffers = Some((
+                    DeviceBuffer::new(VOCAB_ROWS * hb)?,
+                    DeviceBuffer::new(VOCAB_ROWS * row)?,
+                    vec![0u8; VOCAB_ROWS * row],
+                ));
+            }
+            let s = self.scratch.as_ref().unwrap();
+            let (picked, logits, host) = self.vocab_buffers.as_mut().unwrap();
+            for chunk in targets.chunks(VOCAB_ROWS) {
+                let m = chunk.len();
+                // SAFETY: rows are below t, inside the scratch's final hidden states; picked
+                // holds VOCAB_ROWS >= m rows, logits VOCAB_ROWS rows of ld, and the tied
+                // embedding is [vocab, hidden].
+                unsafe {
+                    // one copy per run of consecutive rows
+                    let mut i = 0;
+                    while i < m {
+                        let mut j = i + 1;
+                        while j < m && chunk[j].0 == chunk[j - 1].0 + 1 {
+                            j += 1;
+                        }
+                        cuda::copy_dd(
+                            picked.at(i * hb),
+                            s.at(s.x + chunk[i].0 * hb),
+                            (j - i) * hb,
+                            self.stream,
+                        )?;
+                        i = j;
+                    }
+                    check(
+                        (cuda::api().cs1_gemm)(
+                            gemm,
+                            picked.at(0),
+                            self.embed.ptr,
+                            logits.at(0),
+                            m as i32,
+                            vocab as i32,
+                            self.cfg.hidden as i32,
+                            ld as i32,
+                            self.stream,
+                        ),
+                        "vocabulary gemm",
+                    )?;
+                    cuda::download(&mut host[..m * row], logits.at(0), self.stream)?;
+                }
+                logprobs.extend(chunk.iter().enumerate().map(|(i, &(_, token))| {
+                    token_logprob(&host[i * row..(i + 1) * row], vocab, token)
+                }));
+            }
+        }
+        Ok(Readout { hidden, logprobs })
     }
 
     fn upload_positions(&self, s: &Scratch, positions: [&[i64]; 3]) -> Result<()> {
@@ -1304,12 +1440,17 @@ impl Model {
     }
 
     fn last_hidden(&self, s: &Scratch, t: usize) -> Result<Vec<f32>> {
+        self.hidden_row(s, t - 1)
+    }
+
+    /// The final-norm hidden state at `row`.
+    fn hidden_row(&self, s: &Scratch, row: usize) -> Result<Vec<f32>> {
         let mut last = vec![0u8; self.cfg.hidden * BF16];
-        // SAFETY: x holds at least t rows of the hidden size.
+        // SAFETY: x holds more than `row` rows of the hidden size.
         unsafe {
             cuda::download(
                 &mut last,
-                s.at(s.x + (t - 1) * self.cfg.hidden * BF16),
+                s.at(s.x + row * self.cfg.hidden * BF16),
                 self.stream,
             )?;
         }

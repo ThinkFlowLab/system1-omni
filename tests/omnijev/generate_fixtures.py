@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Generate the OmniJev CPU fixtures from the pinned reference.
 
-Runs the reference's own preparation, branch split, rotary positions, heads and
-response finishing without loading the backbone, so it needs no GPU:
+Runs the reference's own image loading and processor, preparation, branch split,
+rotary positions, heads and response finishing without loading the backbone, so it
+needs no GPU:
 
     CUDA_VISIBLE_DEVICES= python tests/omnijev/generate_fixtures.py \
         --reference <OmniJev checkout @ 14dbec4> \
@@ -301,6 +302,59 @@ def finish_cases(reference, checkpoint):
     return {"temperatures": stub.temps, "biases": stub.biases, "cases": cases}
 
 
+def pattern(width, height):
+    """The test pattern tests/omnijev/pixels.rs draws too: channel values from x and y."""
+    import numpy as np
+    x = np.arange(width, dtype=np.int64)[None, :]
+    y = np.arange(height, dtype=np.int64)[:, None]
+    return np.stack([(x * 7 + y * 3) % 256, (x * y + 13) % 256, ((x ^ y) * 5) % 256], -1).astype(np.uint8)
+
+
+def pixel_cases(obj):
+    """Images as the reference reads them, `Image.open(path).convert("RGB")`, and the
+    processor's pixel values for them. Pattern PNGs are redrawn by the test; files whose
+    encoding matters (palette, 16-bit, JPEG) are stored."""
+    import base64
+    import numpy as np
+    from PIL import Image
+
+    def encode(image, fmt, **kw):
+        buf = io.BytesIO()
+        image.save(buf, format=fmt, **kw)
+        return buf.getvalue()
+
+    rgba = np.concatenate([pattern(300, 200), ((np.arange(300)[None, :] + np.arange(200)[:, None]) % 256)
+                           .astype(np.uint8)[..., None]], -1)
+    gray16 = ((np.arange(160)[None, :] * 400 + np.arange(100)[:, None] * 50) % 65536).astype(np.uint16)
+    files = [
+        ("rgb_upscale", "pattern", encode(Image.fromarray(pattern(64, 48)), "PNG")),
+        ("rgb_odd", "pattern", encode(Image.fromarray(pattern(333, 217)), "PNG")),
+        ("rgb_downscale", "pattern", encode(Image.fromarray(pattern(1920, 1080)), "PNG")),
+        ("rgb_wide", "pattern", encode(Image.fromarray(pattern(2000, 20)), "PNG")),
+        ("rgba", "pattern_rgba", encode(Image.fromarray(rgba, "RGBA"), "PNG")),
+        ("gray", "pattern_gray", encode(Image.fromarray(pattern(200, 150)[..., 0], "L"), "PNG")),
+        ("palette", "stored", encode(Image.fromarray(pattern(180, 120)).quantize(64), "PNG")),
+        ("gray16", "stored", encode(Image.fromarray(gray16, "I;16"), "PNG")),
+        ("jpeg", "stored", encode(Image.fromarray(pattern(96, 64)), "JPEG", quality=90)),
+    ]
+    cases = []
+    for name, kind, raw in files:
+        im = Image.open(io.BytesIO(raw)).convert("RGB")
+        rgb = np.asarray(im, dtype=np.uint8)
+        enc = obj.proc(text=["<|vision_start|><|image_pad|><|vision_end|>"], images=[im], return_tensors="pt")
+        pixels = enc["pixel_values"].to(torch.float32).contiguous()
+        case = {"name": name, "kind": kind, "format": "jpeg" if raw[:2] == b"\xff\xd8" else "png",
+                "size": [im.width, im.height], "rgb_sha256": hashlib.sha256(rgb.tobytes()).hexdigest(),
+                "image_grid_thw": enc["image_grid_thw"][0].tolist(), "pixel_values_shape": list(pixels.shape),
+                "pixel_values_sha256": hashlib.sha256(pixels.numpy().tobytes()).hexdigest()}
+        if kind == "stored":
+            case["bytes"] = base64.b64encode(raw).decode()
+        if case["format"] == "jpeg":
+            case["rgb"] = base64.b64encode(rgb.tobytes()).decode()
+        cases.append(case)
+    return cases
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--reference", required=True)
@@ -321,6 +375,7 @@ def main():
                   "command": "CUDA_VISIBLE_DEVICES= python tests/omnijev/generate_fixtures.py"}
     os.makedirs(a.out, exist_ok=True)
     for fname, payload in (("processing.json", {"provenance": provenance, "cases": cases}),
+                           ("pixels.json", {"provenance": provenance, "cases": pixel_cases(obj)}),
                            ("heads.json", {"provenance": provenance, "cases": head_cases(a.checkpoint)}),
                            ("features.json", {"provenance": provenance, **feature_cases()}),
                            ("finish.json", {"provenance": provenance, **finish_cases(a.reference, a.checkpoint)})):
