@@ -1174,6 +1174,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "omni-decider-native"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokenizers 0.22.2",
+]
+
+[[package]]
 name = "omni-jev"
 version = "0.1.0"
 dependencies = [

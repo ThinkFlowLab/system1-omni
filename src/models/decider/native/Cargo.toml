@@ -1,0 +1,20 @@
+[package]
+name = "omni-decider-native"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Weight-free native CPU request and response contract for Decider-2B v11"
+[dependencies]
+anyhow = "1.0.100"
+serde = "1.0.229"
+serde_json = { version = "1.0.149", features = ["float_roundtrip", "preserve_order", "raw_value"] }
+tokenizers = { version = "=0.22.2", default-features = false, features = ["onig"] }
+sha2 = "0.10"
+
+[[test]]
+name = "config"
+path = "../../../../tests/decider/config.rs"
+
+[[test]]
+name = "contract"
+path = "../../../../tests/decider/contract.rs"
