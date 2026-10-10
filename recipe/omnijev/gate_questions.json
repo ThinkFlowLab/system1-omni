@@ -1,0 +1,242 @@
+{
+ "one_token": {
+  "type": "choice",
+  "instructions": "Which button should be clicked next?",
+  "options": [
+   {
+    "key": "click OK",
+    "text": "click OK"
+   },
+   {
+    "key": "click Cancel",
+    "text": "click Cancel"
+   },
+   {
+    "key": "click Close",
+    "text": "click Close"
+   },
+   {
+    "key": "click Help",
+    "text": "click Help"
+   },
+   {
+    "abstain": true
+   }
+  ]
+ },
+ "long_start": {
+  "type": "choice",
+  "instructions": "What should the user do next?",
+  "options": [
+   {
+    "key": "first",
+    "text": "open the settings menu at the top of the screen and then select the first item"
+   },
+   {
+    "key": "second",
+    "text": "open the settings menu at the top of the screen and then select the second item"
+   },
+   {
+    "key": "third",
+    "text": "open the settings menu at the top of the screen and then select the third item"
+   },
+   {
+    "abstain": true
+   }
+  ]
+ },
+ "no_fit": {
+  "type": "choice",
+  "instructions": "Which animal is shown in the picture?",
+  "options": [
+   {
+    "key": "a giraffe",
+    "text": "a giraffe"
+   },
+   {
+    "key": "a whale",
+    "text": "a whale"
+   },
+   {
+    "key": "a penguin",
+    "text": "a penguin"
+   },
+   {
+    "abstain": true
+   }
+  ]
+ },
+ "score10": {
+  "type": "score",
+  "instructions": "How bright is the image overall?",
+  "levels": [
+   "pitch black",
+   "very dark",
+   "dark",
+   "dim",
+   "slightly dim",
+   "neutral",
+   "slightly bright",
+   "bright",
+   "very bright",
+   "blinding"
+  ]
+ },
+ "choice32": {
+  "type": "choice",
+  "instructions": "Which word best describes the image?",
+  "options": [
+   {
+    "key": "game",
+    "text": "game"
+   },
+   {
+    "key": "chart",
+    "text": "chart"
+   },
+   {
+    "key": "map",
+    "text": "map"
+   },
+   {
+    "key": "menu",
+    "text": "menu"
+   },
+   {
+    "key": "photo",
+    "text": "photo"
+   },
+   {
+    "key": "diagram",
+    "text": "diagram"
+   },
+   {
+    "key": "table",
+    "text": "table"
+   },
+   {
+    "key": "form",
+    "text": "form"
+   },
+   {
+    "key": "chat",
+    "text": "chat"
+   },
+   {
+    "key": "email",
+    "text": "email"
+   },
+   {
+    "key": "video",
+    "text": "video"
+   },
+   {
+    "key": "code",
+    "text": "code"
+   },
+   {
+    "key": "terminal",
+    "text": "terminal"
+   },
+   {
+    "key": "calendar",
+    "text": "calendar"
+   },
+   {
+    "key": "document",
+    "text": "document"
+   },
+   {
+    "key": "spreadsheet",
+    "text": "spreadsheet"
+   },
+   {
+    "key": "slide",
+    "text": "slide"
+   },
+   {
+    "key": "browser",
+    "text": "browser"
+   },
+   {
+    "key": "robot",
+    "text": "robot"
+   },
+   {
+    "key": "board",
+    "text": "board"
+   },
+   {
+    "key": "phone",
+    "text": "phone"
+   },
+   {
+    "key": "street",
+    "text": "street"
+   },
+   {
+    "key": "kitchen",
+    "text": "kitchen"
+   },
+   {
+    "key": "office",
+    "text": "office"
+   },
+   {
+    "key": "forest",
+    "text": "forest"
+   },
+   {
+    "key": "beach",
+    "text": "beach"
+   },
+   {
+    "key": "city",
+    "text": "city"
+   },
+   {
+    "key": "animal",
+    "text": "animal"
+   },
+   {
+    "key": "person",
+    "text": "person"
+   },
+   {
+    "key": "car",
+    "text": "car"
+   },
+   {
+    "key": "screen",
+    "text": "screen"
+   },
+   {
+    "key": "error",
+    "text": "error"
+   },
+   {
+    "abstain": true
+   }
+  ]
+ },
+ "noul_day": {
+  "type": "noul",
+  "instructions": "The image was taken during the day."
+ },
+ "noul_people": {
+  "type": "noul",
+  "instructions": "There are more than three people in the image."
+ },
+ "noul_region": {
+  "type": "noul",
+  "instructions": "There is text in this region.",
+  "region": {
+   "box": [
+    100,
+    100,
+    700,
+    400
+   ]
+  }
+ }
+}

@@ -62,8 +62,8 @@ pub struct Question {
     pub options: Vec<String>,
 }
 
-/// The request's image: its encoded bytes and dimensions. Pixel decoding comes
-/// with the vision path.
+/// The request's image: its encoded bytes and the dimensions from its header.
+/// `processing::pixels` decodes it.
 pub struct Image {
     pub format: image::ImageFormat,
     pub width: usize,

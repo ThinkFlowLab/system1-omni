@@ -31,47 +31,6 @@ pub fn chat_image(question: &Question, image_tokens: usize) -> Result<String> {
     ))
 }
 
-pub fn image_positions(ids: &[u32], image_token: u32, grid: [usize; 3]) -> Result<[Vec<i64>; 3]> {
-    let [t, h, w] = grid;
-    ensure!(
-        t == 1 && h > 0 && w > 0 && h.is_multiple_of(2) && w.is_multiple_of(2),
-        "expected one image with even, nonzero spatial grid"
-    );
-    ensure!(
-        !ids.is_empty() && ids.len() <= MAX_TOKENS,
-        "processed prompt exceeds {MAX_TOKENS} tokens or is empty"
-    );
-    let count = (h / 2)
-        .checked_mul(w / 2)
-        .ok_or_else(|| anyhow::anyhow!("grid overflow"))?;
-    let start = ids
-        .iter()
-        .position(|&id| id == image_token)
-        .ok_or_else(|| anyhow::anyhow!("missing image placeholders"))?;
-    let end = start
-        .checked_add(count)
-        .ok_or_else(|| anyhow::anyhow!("grid overflow"))?;
-    ensure!(
-        end <= ids.len()
-            && ids[start..end].iter().all(|&id| id == image_token)
-            && ids[end..].iter().all(|&id| id != image_token),
-        "image placeholders must be one contiguous span matching the grid"
-    );
-    let mut positions: [Vec<i64>; 3] = std::array::from_fn(|_| (0..start as i64).collect());
-    for y in 0..h / 2 {
-        for x in 0..w / 2 {
-            positions[0].push(start as i64);
-            positions[1].push((start + y) as i64);
-            positions[2].push((start + x) as i64);
-        }
-    }
-    let next = start + h.max(w) / 2;
-    for axis in &mut positions {
-        axis.extend((next..next + ids.len() - end).map(|p| p as i64));
-    }
-    Ok(positions)
-}
-
 /// A prepared single-image prompt. Every prompt in a request is prepared before
 /// running the shared image encoder.
 pub struct ImagePrompt {
@@ -94,7 +53,11 @@ pub fn prepare_prompt(
         .encode(chat_image(question, count)?, false)
         .map_err(anyhow::Error::msg)?;
     let token_ids = encoded.get_ids().to_vec();
-    let position_ids = image_positions(&token_ids, image_token, grid)?;
+    ensure!(
+        !token_ids.is_empty() && token_ids.len() <= MAX_TOKENS,
+        "processed prompt exceeds {MAX_TOKENS} tokens or is empty"
+    );
+    let position_ids = crate::inputs::image_positions(&token_ids, image_token, grid)?;
     let image_token_indices = token_ids
         .iter()
         .enumerate()

@@ -1,10 +1,4 @@
-//! Structurally validated vision checkpoints and native CUDA vision execution.
-//! `VisionCheckpoint` loads on CPU; `VisionModel` uploads separate base/LoRA tensors.
-//!
-//! Callers must keep checkpoint files immutable (including no truncation) for the
-//! lifetime of the checkpoint and its borrowed views. Structural checks do not
-//! verify upstream hashes or tensor values.
-
+//! Configurable shared Qwen vision execution. Checkpoint validation is CPU-only.
 use anyhow::{Context, Result, ensure};
 use memmap2::Mmap;
 use safetensors::{
@@ -12,7 +6,7 @@ use safetensors::{
     tensor::{TensorInfo, TensorView},
 };
 use serde::{
-    Deserialize,
+    Deserialize, Serialize,
     de::{self, MapAccess, Visitor},
 };
 use serde_json::Value;
@@ -24,11 +18,10 @@ use std::{
 };
 
 const BASE: &str = "model.visual.";
-const ADAPTER: &str = "base_model.model.model.visual.";
 type Inventory = BTreeMap<String, Vec<usize>>;
 
-/// The supported Qwen3.5-4B vision architecture; all fields are validated at load.
-#[derive(Debug, Deserialize)]
+/// Exact supported Qwen3.5-4B and Qwen3.8-27B vision configurations.
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct VisionConfig {
     pub depth: usize,
     pub hidden_size: usize,
@@ -45,35 +38,39 @@ pub struct VisionConfig {
     pub model_type: String,
 }
 impl VisionConfig {
-    fn load(dir: &Path) -> Result<Self> {
-        let config: Value = serde_json::from_slice(&fs::read(inside(dir, "config.json")?)?)?;
-        let vision: Self =
-            serde_json::from_value(config["vision_config"].clone()).context("vision config")?;
-        let sizes = [
-            vision.depth,
-            vision.hidden_size,
-            vision.intermediate_size,
-            vision.num_heads,
-            vision.num_position_embeddings,
-            vision.out_hidden_size,
-            vision.in_channels,
-            vision.patch_size,
-            vision.temporal_patch_size,
-            vision.spatial_merge_size,
-        ];
-        ensure!(
-            sizes == [24, 1024, 4096, 16, 2304, 2560, 3, 16, 2, 2]
-                && vision.hidden_act == "gelu_pytorch_tanh"
-                && vision.deepstack_visual_indexes.is_empty()
-                && vision.model_type == "qwen3_5"
-                && config["model_type"] == "qwen3_5"
-                && config["text_config"]["hidden_size"].as_u64()
-                    == Some(vision.out_hidden_size as u64),
-            "unsupported vision/text config: expected pinned Qwen3.5-4B layout"
-        );
+    pub fn from_value(value: Value) -> Result<Self> {
+        let vision: Self = serde_json::from_value(value).context("vision config")?;
+        vision.validate()?;
         Ok(vision)
     }
-    fn inventory(&self) -> Inventory {
+    pub fn validate(&self) -> Result<()> {
+        let sizes = [
+            self.depth,
+            self.hidden_size,
+            self.intermediate_size,
+            self.num_heads,
+            self.num_position_embeddings,
+            self.out_hidden_size,
+            self.in_channels,
+            self.patch_size,
+            self.temporal_patch_size,
+            self.spatial_merge_size,
+        ];
+        ensure!(
+            (sizes == [24, 1024, 4096, 16, 2304, 2560, 3, 16, 2, 2]
+                || sizes == [27, 1152, 4304, 16, 2304, 5120, 3, 16, 2, 2])
+                && self.hidden_act == "gelu_pytorch_tanh"
+                && self.deepstack_visual_indexes.is_empty()
+                // the Hub configs say qwen3_5; Transformers writes its class's qwen3_5_vision
+                && ["qwen3_5", "qwen3_5_vision"].contains(&self.model_type.as_str()),
+            "unsupported Qwen vision layout"
+        );
+        Ok(())
+    }
+    pub fn head_dim(&self) -> usize {
+        self.hidden_size / self.num_heads
+    }
+    pub fn inventory(&self) -> Inventory {
         let mut tensors = Inventory::new();
         let h = self.hidden_size;
         let i = self.intermediate_size;
@@ -124,202 +121,44 @@ impl VisionConfig {
     }
 }
 
-/// Inference LoRA parameters; base and adapter bytes remain separate.
-#[derive(Debug)]
-pub struct AdapterConfig {
-    pub rank: usize,
-    pub alpha: usize,
-}
-impl AdapterConfig {
-    pub fn scale(&self) -> f64 {
-        self.alpha as f64 / self.rank as f64
-    }
-    fn load(dir: &Path) -> Result<Self> {
-        let config: Value =
-            serde_json::from_slice(&fs::read(inside(dir, "adapter_config.json")?)?)?;
-        let c = config
-            .as_object()
-            .context("adapter config must be an object")?;
-        for (key, value) in c {
-            let supported = match key.as_str() {
-                "r" => value == 16,
-                "lora_alpha" => value == 32,
-                "peft_type" => value == "LORA",
-                "bias" => value == "none",
-                "base_model_name_or_path" => value == "Qwen/Qwen3.5-4B",
-                "task_type" => value == "CAUSAL_LM",
-                "lora_bias"
-                | "use_dora"
-                | "use_rslora"
-                | "use_qalora"
-                | "fan_in_fan_out"
-                | "ensure_weight_tying" => value == false,
-                "rank_pattern" | "alpha_pattern" | "loftq_config" => {
-                    value.as_object().is_some_and(|v| v.is_empty())
-                }
-                "exclude_modules"
-                | "modules_to_save"
-                | "layers_to_transform"
-                | "layers_pattern"
-                | "layer_replication"
-                | "target_parameters"
-                | "trainable_token_indices"
-                | "alora_invocation_tokens"
-                | "arrow_config"
-                | "corda_config"
-                | "eva_config"
-                | "megatron_config" => value.is_null(),
-                // Training/serialization metadata does not change ordinary inference LoRA.
-                "auto_mapping" | "inference_mode" | "init_lora_weights" | "lora_dropout"
-                | "megatron_core" | "peft_version" | "qalora_group_size" | "revision"
-                | "target_modules" => true,
-                _ => false,
-            };
-            ensure!(
-                supported,
-                "unsupported adapter config option {key}: {value}"
-            );
-        }
-        for (key, value) in [
-            ("r", Value::from(16)),
-            ("lora_alpha", Value::from(32)),
-            ("peft_type", Value::from("LORA")),
-            ("bias", Value::from("none")),
-        ] {
-            ensure!(config[key] == value, "unsupported adapter config {key}");
-        }
-        let targets = config["target_modules"]
-            .as_array()
-            .context("adapter config target_modules must be an array")?;
-        let expected = BTreeSet::from([
-            "up_proj",
-            "k_proj",
-            "linear_fc1",
-            "q_proj",
-            "linear_fc2",
-            "down_proj",
-            "gate_proj",
-            "o_proj",
-            "v_proj",
-        ]);
-        let actual: BTreeSet<_> = targets.iter().filter_map(Value::as_str).collect();
-        ensure!(
-            actual == expected && targets.len() == expected.len(),
-            "adapter config requires the full multimodal target_modules"
-        );
-        Ok(Self {
-            rank: 16,
-            alpha: 32,
-        })
-    }
-    fn inventory(&self, base: &Inventory) -> Inventory {
-        let mut tensors = Inventory::new();
-        for (name, shape) in base {
-            if name.ends_with(".weight")
-                && (name.contains(".linear_fc1.") || name.contains(".linear_fc2."))
-            {
-                let module = name
-                    .strip_prefix(BASE)
-                    .unwrap()
-                    .strip_suffix(".weight")
-                    .unwrap();
-                tensors.insert(
-                    format!("{ADAPTER}{module}.lora_A.weight"),
-                    vec![self.rank, shape[1]],
-                );
-                tensors.insert(
-                    format!("{ADAPTER}{module}.lora_B.weight"),
-                    vec![shape[0], self.rank],
-                );
-            }
-        }
-        tensors
-    }
-}
-
-/// Immutable mmap storage for one base checkpoint and its multimodal adapter.
+/// Structurally checked normalized base vision export. Files must stay immutable while mapped.
 pub struct VisionCheckpoint {
     config: VisionConfig,
-    adapter: AdapterConfig,
     base: TensorStore,
-    lora: TensorStore,
 }
 impl VisionCheckpoint {
-    /// Loads and validates headers on CPU. Keep the files immutable while mapped.
-    pub fn load(base_dir: impl AsRef<Path>, adapter_dir: impl AsRef<Path>) -> Result<Self> {
-        let base_dir = fs::canonicalize(base_dir).context("base checkpoint directory")?;
-        let adapter_dir = fs::canonicalize(adapter_dir).context("adapter checkpoint directory")?;
-        let config = VisionConfig::load(&base_dir).context("base config")?;
-        let adapter = AdapterConfig::load(&adapter_dir).context("adapter config")?;
-        let expected = config.inventory();
-        let lora_expected = adapter.inventory(&expected);
-        let index_path = base_dir.join("model.safetensors.index.json");
-        let index = if index_path.try_exists()? {
-            #[derive(Deserialize)]
-            struct Index {
-                weight_map: UniqueMap<String>,
-            }
-            let index: Index = serde_json::from_slice(&fs::read(inside(
-                &base_dir,
-                "model.safetensors.index.json",
-            )?)?)
-            .context("safetensors index")?;
-            let map = index.weight_map.0;
-            for name in map.keys().filter(|n| is_visual(n)) {
-                ensure!(
-                    expected.contains_key(name),
-                    "unexpected visual tensor in index: {name}"
-                );
-            }
-            for name in expected.keys() {
-                ensure!(
-                    map.contains_key(name),
-                    "missing visual tensor in index: {name}"
-                );
-            }
-            Some(map)
-        } else {
-            None
-        };
-        let files: BTreeSet<String> = match &index {
-            Some(index) => expected.keys().map(|n| index[n].clone()).collect(),
-            None => BTreeSet::from(["model.safetensors".into()]),
-        };
-        let base = TensorStore::load(&base_dir, files, &expected, Dtype::BF16, index.as_ref())?;
-        let lora = TensorStore::load(
-            &adapter_dir,
-            BTreeSet::from(["adapter_model.safetensors".into()]),
-            &lora_expected,
-            Dtype::F32,
+    pub fn load(dir: impl AsRef<Path>) -> Result<Self> {
+        let dir = fs::canonicalize(dir).context("vision export directory")?;
+        let config: Value = serde_json::from_slice(&fs::read(inside(&dir, "config.json")?)?)?;
+        let vision = VisionConfig::from_value(config["vision_config"].clone())?;
+        ensure!(
+            config["model_type"] == "qwen3_5"
+                && config["text_config"]["hidden_size"].as_u64()
+                    == Some(vision.out_hidden_size as u64),
+            "vision/text config mismatch"
+        );
+        let base = TensorStore::load(
+            &dir,
+            BTreeSet::from(["vision.safetensors".into()]),
+            &vision.inventory(),
+            Dtype::BF16,
             None,
         )?;
         Ok(Self {
-            config,
-            adapter,
+            config: vision,
             base,
-            lora,
         })
     }
     pub fn config(&self) -> &VisionConfig {
         &self.config
     }
-    pub fn adapter(&self) -> &AdapterConfig {
-        &self.adapter
-    }
     pub fn base_names(&self) -> impl Iterator<Item = &str> {
         self.base.tensors.keys().map(String::as_str)
-    }
-    pub fn adapter_names(&self) -> impl Iterator<Item = &str> {
-        self.lora.tensors.keys().map(String::as_str)
     }
     pub fn base_tensor(&self, name: &str) -> Result<TensorView<'_>> {
         self.base.tensor(name)
     }
-    pub fn adapter_tensor(&self, name: &str) -> Result<TensorView<'_>> {
-        self.lora.tensor(name)
-    }
 }
-
 struct TensorStore {
     maps: Vec<Mmap>,
     tensors: BTreeMap<String, (usize, TensorInfo)>,
@@ -477,5 +316,7 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for UniqueMap<T> {
     }
 }
 
+mod geometry;
 mod model;
+pub use geometry::VisionGeometry;
 pub use model::VisionModel;
