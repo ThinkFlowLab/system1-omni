@@ -23,9 +23,6 @@ pub const MIN_PIXELS: usize = 65_536;
 pub const MAX_SEQUENCE: usize = 8192;
 /// Tokens the reference processes for a request: its prefix once, then every row.
 pub const MAX_PROCESSED: usize = 65_536;
-/// Tokens the eager worker runs for a request, the prefix again with every row, until
-/// the rows reuse the prefix: about 20 s on an RTX 6000 Ada.
-pub const MAX_PASS_TOKENS: usize = 262_144;
 /// Option-text tokens whose log-probabilities a request reads; each takes a log-softmax
 /// over the vocabulary on the CPU.
 pub const MAX_TARGETS: usize = 16_384;
@@ -273,15 +270,6 @@ impl Processor {
             layout.processed_tokens <= MAX_PROCESSED,
             "request needs {} tokens, above {MAX_PROCESSED}",
             layout.processed_tokens
-        );
-        let pass_tokens: usize = rows
-            .iter()
-            .flatten()
-            .map(|r| layout.prefix + r.tokens.len())
-            .sum();
-        ensure!(
-            pass_tokens <= MAX_PASS_TOKENS,
-            "request needs {pass_tokens} tokens in row passes, above {MAX_PASS_TOKENS}"
         );
         // Score's ordinal head reads no log-probabilities.
         let targets: usize = questions

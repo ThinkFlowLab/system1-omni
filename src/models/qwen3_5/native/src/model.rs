@@ -593,6 +593,11 @@ impl PrefixState {
     pub fn bytes(&self) -> usize {
         self.bytes
     }
+
+    /// Tokens the buffers hold; a capture by `Model::readout_window` may cover fewer.
+    pub fn capacity(&self) -> usize {
+        self.cap
+    }
 }
 
 /// Rows of logits computed at once by `forward_multimodal_readout`; with the fixed GEMM
@@ -966,15 +971,39 @@ impl Model {
     /// `forward_multimodal` with the fixed-algorithm GEMMs of `forward_fixed`, reading the
     /// final-norm hidden state at each of `rows` and, for each `(row, token)` in `targets`,
     /// the log-probability of `token` after `row` under the tied output embedding:
-    /// bfloat16 logits over the vocabulary, then a float32 log-softmax. Each result is
-    /// the same however many rows or targets the call reads.
+    /// bfloat16 logits over the vocabulary, converted to float32, with a float64 sum in
+    /// the log-softmax. Each result is the same however many rows or targets the call
+    /// reads. `readout_window` with neither a prefix nor a capture.
     pub fn forward_multimodal_readout(
         &mut self,
         input: &MultimodalInput<'_>,
         rows: &[usize],
         targets: &[(usize, u32)],
     ) -> Result<Readout> {
-        let result = self.run_readout(input, rows, targets);
+        self.readout_window(input, None, None, rows, targets)
+    }
+
+    /// One window of a prompt with the fixed-algorithm GEMMs, continuing `prefix` (the
+    /// prompt's rows `[0, prefix.len)`, or nothing) and optionally capturing the state
+    /// after it into `capture`, which must hold the prompt so far. `window` holds the
+    /// window's own rows: their token ids, the indices of their image placeholders
+    /// within the window, those rows' image embeddings and the rows' rotary positions.
+    /// `rows` and `targets` index the whole prompt and must lie in the window; they are
+    /// read as by `forward_multimodal_readout`. When the prefix was itself captured here,
+    /// and every boundary is a multiple of 64 tokens, every result equals that of one
+    /// `forward_multimodal_readout` pass over the whole prompt.
+    ///
+    /// Work is queued on the model's stream; `capture` is ready for continuations queued
+    /// after this call on the same model.
+    pub fn readout_window(
+        &mut self,
+        window: &MultimodalInput<'_>,
+        prefix: Option<&PrefixState>,
+        capture: Option<&mut PrefixState>,
+        rows: &[usize],
+        targets: &[(usize, u32)],
+    ) -> Result<Readout> {
+        let result = self.run_readout_window(window, prefix, capture, rows, targets);
         if result.is_err() {
             // Work already queued may still use the buffers.
             let _ = cuda::synchronize(self.stream);
@@ -982,9 +1011,11 @@ impl Model {
         result
     }
 
-    fn run_readout(
+    fn run_readout_window(
         &mut self,
-        input: &MultimodalInput<'_>,
+        window: &MultimodalInput<'_>,
+        prefix: Option<&PrefixState>,
+        mut capture: Option<&mut PrefixState>,
         rows: &[usize],
         targets: &[(usize, u32)],
     ) -> Result<Readout> {
@@ -993,84 +1024,126 @@ impl Model {
             .image_token_id
             .context("checkpoint has no image_token_id")?;
         let vocab = self.embed.shape[0];
-        input.validate(self.cfg.hidden, vocab, image_token, self.cfg.max_positions)?;
-        let t = input.token_ids.len();
+        window.validate(self.cfg.hidden, vocab, image_token, self.cfg.max_positions)?;
+        if let Some(pre) = prefix {
+            ensure!(
+                Arc::ptr_eq(&self.prefix_owner, &pre.owner),
+                "prefix state belongs to a different model instance"
+            );
+            ensure!(pre.initialized, "prefix state has not completed capture");
+        }
+        let qb = prefix.map_or(0, |pre| pre.len);
+        let tend = qb + window.token_ids.len();
         ensure!(
-            rows.iter().all(|&r| r < t)
+            tend <= self.cfg.max_positions,
+            "prompt exceeds the configured maximum length"
+        );
+        if let Some(cap) = capture.as_deref_mut() {
+            ensure!(
+                Arc::ptr_eq(&self.prefix_owner, &cap.owner),
+                "prefix state belongs to a different model instance"
+            );
+            ensure!(
+                tend.is_multiple_of(64) && tend <= cap.cap,
+                "a capture must end on a multiple of 64 within its state"
+            );
+        }
+        ensure!(
+            rows.iter().all(|&r| (qb..tend).contains(&r))
                 && targets
                     .iter()
-                    .all(|&(r, token)| r < t && (token as usize) < vocab),
-            "readout row or token out of range"
+                    .all(|&(r, token)| (qb..tend).contains(&r) && (token as usize) < vocab),
+            "readout row or token outside the window"
         );
-        self.prepare_scratch(t)?;
+        self.prepare_scratch(tend)?;
         let gemm = self.fixed_gemm()?;
         let s = self.scratch.as_ref().unwrap();
-        self.upload_positions(s, input.position_ids)?;
-        self.embed_tokens(s, input.token_ids)?;
-        self.overwrite_image_rows(s, input, 0)?;
-        self.run_window(s, 0, t, true, None, None, gemm)?;
+        self.upload_positions(s, window.position_ids)?;
+        self.embed_tokens_at(s, window.token_ids, qb)?;
+        self.overwrite_image_rows(s, window, qb)?;
+        if let Some(cap) = capture.as_deref_mut() {
+            cap.initialized = false;
+            cap.len = tend;
+        }
+        self.run_window(s, qb, tend, true, capture.as_deref_mut(), prefix, gemm)?;
+        if let Some(cap) = capture {
+            cap.initialized = true;
+        }
         let hidden = rows
             .iter()
             .map(|&r| self.hidden_row(s, r))
             .collect::<Result<Vec<_>>>()?;
-        let mut logprobs = Vec::with_capacity(targets.len());
-        if !targets.is_empty() {
-            let hb = self.cfg.hidden * BF16;
-            // padded so that each logits row starts on a 16-byte boundary
-            let ld = vocab.next_multiple_of(8);
-            let row = ld * BF16;
-            if self.vocab_buffers.is_none() {
-                self.vocab_buffers = Some((
-                    DeviceBuffer::new(VOCAB_ROWS * hb)?,
-                    DeviceBuffer::new(VOCAB_ROWS * row)?,
-                    vec![0u8; VOCAB_ROWS * row],
-                ));
-            }
-            let s = self.scratch.as_ref().unwrap();
-            let (picked, logits, host) = self.vocab_buffers.as_mut().unwrap();
-            for chunk in targets.chunks(VOCAB_ROWS) {
-                let m = chunk.len();
-                // SAFETY: rows are below t, inside the scratch's final hidden states; picked
-                // holds VOCAB_ROWS >= m rows, logits VOCAB_ROWS rows of ld, and the tied
-                // embedding is [vocab, hidden].
-                unsafe {
-                    // one copy per run of consecutive rows
-                    let mut i = 0;
-                    while i < m {
-                        let mut j = i + 1;
-                        while j < m && chunk[j].0 == chunk[j - 1].0 + 1 {
-                            j += 1;
-                        }
-                        cuda::copy_dd(
-                            picked.at(i * hb),
-                            s.at(s.x + chunk[i].0 * hb),
-                            (j - i) * hb,
-                            self.stream,
-                        )?;
-                        i = j;
-                    }
-                    check(
-                        (cuda::api().cs1_gemm)(
-                            gemm,
-                            picked.at(0),
-                            self.embed.ptr,
-                            logits.at(0),
-                            m as i32,
-                            vocab as i32,
-                            self.cfg.hidden as i32,
-                            ld as i32,
-                            self.stream,
-                        ),
-                        "vocabulary gemm",
-                    )?;
-                    cuda::download(&mut host[..m * row], logits.at(0), self.stream)?;
-                }
-                logprobs.extend(chunk.iter().enumerate().map(|(i, &(_, token))| {
-                    token_logprob(&host[i * row..(i + 1) * row], vocab, token)
-                }));
-            }
-        }
+        let logprobs = self.vocabulary_logprobs(targets, gemm)?;
         Ok(Readout { hidden, logprobs })
+    }
+
+    /// The log-probabilities of `targets` from the final-norm hidden states in the
+    /// scratch, in chunks of `VOCAB_ROWS` rows.
+    fn vocabulary_logprobs(
+        &mut self,
+        targets: &[(usize, u32)],
+        gemm: *mut c_void,
+    ) -> Result<Vec<f32>> {
+        let mut logprobs = Vec::with_capacity(targets.len());
+        if targets.is_empty() {
+            return Ok(logprobs);
+        }
+        let vocab = self.embed.shape[0];
+        let hb = self.cfg.hidden * BF16;
+        // padded so that each logits row starts on a 16-byte boundary
+        let ld = vocab.next_multiple_of(8);
+        let row = ld * BF16;
+        if self.vocab_buffers.is_none() {
+            self.vocab_buffers = Some((
+                DeviceBuffer::new(VOCAB_ROWS * hb)?,
+                DeviceBuffer::new(VOCAB_ROWS * row)?,
+                vec![0u8; VOCAB_ROWS * row],
+            ));
+        }
+        let s = self.scratch.as_ref().unwrap();
+        let (picked, logits, host) = self.vocab_buffers.as_mut().unwrap();
+        for chunk in targets.chunks(VOCAB_ROWS) {
+            let m = chunk.len();
+            // SAFETY: rows lie inside the scratch's final hidden states; picked holds
+            // VOCAB_ROWS >= m rows, logits VOCAB_ROWS rows of ld, and the tied embedding
+            // is [vocab, hidden].
+            unsafe {
+                // one copy per run of consecutive rows
+                let mut i = 0;
+                while i < m {
+                    let mut j = i + 1;
+                    while j < m && chunk[j].0 == chunk[j - 1].0 + 1 {
+                        j += 1;
+                    }
+                    cuda::copy_dd(
+                        picked.at(i * hb),
+                        s.at(s.x + chunk[i].0 * hb),
+                        (j - i) * hb,
+                        self.stream,
+                    )?;
+                    i = j;
+                }
+                check(
+                    (cuda::api().cs1_gemm)(
+                        gemm,
+                        picked.at(0),
+                        self.embed.ptr,
+                        logits.at(0),
+                        m as i32,
+                        vocab as i32,
+                        self.cfg.hidden as i32,
+                        ld as i32,
+                        self.stream,
+                    ),
+                    "vocabulary gemm",
+                )?;
+                cuda::download(&mut host[..m * row], logits.at(0), self.stream)?;
+            }
+            logprobs.extend(chunk.iter().enumerate().map(|(i, &(_, token))| {
+                token_logprob(&host[i * row..(i + 1) * row], vocab, token)
+            }));
+        }
+        Ok(logprobs)
     }
 
     fn upload_positions(&self, s: &Scratch, positions: [&[i64]; 3]) -> Result<()> {

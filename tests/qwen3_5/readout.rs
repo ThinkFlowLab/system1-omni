@@ -185,3 +185,76 @@ fn readouts_do_not_depend_on_what_else_is_read() {
         all.logprobs[129]
     );
 }
+
+/// Rows `range` of `prompt` as a window: their ids, image placeholders and image rows,
+/// and positions.
+fn window<'a>(
+    prompt: &'a Prompt,
+    range: std::ops::Range<usize>,
+    hidden: usize,
+) -> (Vec<usize>, MultimodalInput<'a>) {
+    let images: Vec<usize> = prompt
+        .images
+        .iter()
+        .filter(|&&i| range.contains(&i))
+        .map(|&i| i - range.start)
+        .collect();
+    let first = prompt
+        .images
+        .iter()
+        .position(|&i| range.contains(&i))
+        .unwrap_or(0);
+    let features = &prompt.features[first * hidden..(first + images.len()) * hidden];
+    let positions = [0, 1, 2].map(|a| &prompt.positions[a][range.clone()]);
+    let input = MultimodalInput {
+        token_ids: &prompt.ids[range.clone()],
+        image_token_indices: &[],
+        image_embeddings: features,
+        position_ids: positions,
+    };
+    (images, input)
+}
+
+#[test]
+#[ignore = "needs a GPU, CUA_S1_CUDA_LIB and a multimodal QWEN3_5_CHECKPOINT"]
+fn windows_with_captures_equal_one_pass() {
+    let mut model = model();
+    let hidden = model.cfg.hidden;
+    // the image placeholders cross the first 64-token boundary
+    let prompt = Prompt::new(&model, 50, 260);
+    let t = prompt.ids.len();
+    let targets: Vec<(usize, u32)> = (t - 40..t).map(|r| (r, prompt.ids[r] % 1000 + 1)).collect();
+    let mid = [100usize, 127];
+    let whole = model
+        .forward_multimodal_readout(&prompt.input(), &[mid[0], mid[1], t - 1], &targets)
+        .unwrap();
+    let mut first = model.alloc_prefix(64).unwrap();
+    let mut second = model.alloc_prefix(128).unwrap();
+    let (images, mut input) = window(&prompt, 0..64, hidden);
+    input.image_token_indices = &images;
+    model
+        .readout_window(&input, None, Some(&mut first), &[], &[])
+        .unwrap();
+    let (images, mut input) = window(&prompt, 64..128, hidden);
+    input.image_token_indices = &images;
+    let captured = model
+        .readout_window(&input, Some(&first), Some(&mut second), &mid, &[])
+        .unwrap();
+    let (images, mut input) = window(&prompt, 128..t, hidden);
+    input.image_token_indices = &images;
+    let rest = model
+        .readout_window(&input, Some(&second), None, &[t - 1], &targets)
+        .unwrap();
+    assert_eq!(bits(&captured.hidden), bits(&whole.hidden[..2]));
+    assert_eq!(bits(&rest.hidden), bits(&whole.hidden[2..]));
+    assert_eq!(rest.logprobs, whole.logprobs);
+    // a capture that does not end on a multiple of 64 is refused before any work
+    let (images, mut input) = window(&prompt, 128..130, hidden);
+    input.image_token_indices = &images;
+    let mut third = model.alloc_prefix(192).unwrap();
+    assert!(
+        model
+            .readout_window(&input, Some(&second), Some(&mut third), &[], &[])
+            .is_err()
+    );
+}

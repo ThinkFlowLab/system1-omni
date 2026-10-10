@@ -48,8 +48,7 @@ and `input_tokens` is counted as the reference counts it.
 Malformed JSON gets 400, a body over 12 MiB 413, and a request the contract refuses
 422, each with a `detail` message. The worker prepares two requests at a time and holds
 at most 16, preparing, waiting or running; beyond that it answers 503 with
-`Retry-After: 1`. Until the rows reuse the prefix, each row reruns it, so a request may
-use at most 262,144 tokens in its rows' passes.
+`Retry-After: 1`.
 
 ## Tests
 
@@ -106,18 +105,19 @@ float32 margin under 0.03, except `video`'s speed_bench question 9 in the PNG ru
 which also changes between the worker's PNG and JPEG runs.
 
 Latency on the same GPU, with a 1600×900 still: the worker with one client, and the
-reference with one stream, which reuses the prefix across rows (`bench/speed_bench.py`'s
-first 1, 3, 6 and 12 questions, and Choices of 32 and 255 options):
+reference with one stream (`bench/speed_bench.py`'s first 1, 3, 6 and 12 questions, and
+Choices of 32 and 255 options). Both run the prefix once; the reference also batches a
+question's options, which the worker runs one after another:
 
 | Workload | Worker, median | Worker, requests per second | Reference, median |
 | --- | ---: | ---: | ---: |
-| 1 question | 0.24 s | 4.1 | 0.17 s |
-| 3 questions | 0.45 s | 2.2 | 0.18 s |
-| 6 questions | 1.02 s | 0.98 | 0.22 s |
-| 12 questions | 2.01 s | 0.50 | 0.36 s |
-| 32 options | 1.90 s | 0.53 | 0.25 s |
-| 255 options | 14.9 s | 0.067 | 1.10 s |
+| 1 question | 0.16 s | 6.4 | 0.17 s |
+| 3 questions | 0.21 s | 4.9 | 0.18 s |
+| 6 questions | 0.35 s | 2.9 | 0.22 s |
+| 12 questions | 0.66 s | 1.5 | 0.36 s |
+| 32 options | 0.70 s | 1.4 | 0.25 s |
+| 255 options | 5.1 s | 0.20 | 1.10 s |
 
-With 8 or 16 clients the worker's throughput stays the same and the median latency grows
-with the queue: 16.0 s and 32.1 s for 12 questions, and 119 s for 255 options with 8
-clients, past the frontend's 60-second default.
+With 8 or 16 clients the worker's throughput stays about the same and the median latency
+grows with the queue: 5.0 s and 10.1 s for 12 questions, and 40.6 s for 255 options with
+8 clients.

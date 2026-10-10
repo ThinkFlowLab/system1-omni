@@ -50,7 +50,7 @@ Option text is cut to 200 characters, and region coordinates are rounded half to
 both as the reference does. Answers keep the reference's fields: `noul`; `choice`,
 `probabilities`, `abstain`, `valid` and `confidence`; or `score`, `probabilities` and
 `confidence`; each with `latency_s` and `latency_total_s`, which time the request's
-preparation and its vision and language passes, as the reference times `ask_branch`
+preparation, its vision and language passes and its heads, as the reference times `ask_branch`
 from encoding to the heads. Probabilities are
 rounded to four decimals. The response is
 `{"model": "tinnel123/OmniJev", "answers": {id: answer}, "usage": {"input_tokens": n,
@@ -72,8 +72,7 @@ Deliberate differences from the reference:
   an aspect ratio of at most 200, which the processor also requires; 64 questions with
   ids of at most 256 characters; 1 to 255 options per question and 1,024 in all;
   8,192 characters per text field; 8,192 tokens per question; 65,536 processed
-  tokens per request; and, while every row reruns the prefix, 262,144 tokens in the
-  rows' passes and 16,384 option-text tokens whose log-probabilities are read.
+  tokens per request; and 16,384 option-text tokens whose log-probabilities are read.
 - Fields the reference ignores (Noul `criteria`, `criteria` next to Choice `options` or
   Score `levels`, unknown fields), and values it would turn into text (numbers as
   levels, for example), are refused.
@@ -109,16 +108,19 @@ plus row up to rounding, execution may choose its own split points.
 
 ## Execution
 
-[`executor.rs`](native/src/executor.rs) runs the vision tower once per request, then one
-pass per (question, option) row over the prefix and that row, unpadded, with
-`Model::forward_multimodal_readout`. That pass uses the fixed-algorithm GEMMs, so a row's
-result does not depend on what else runs, and reads the final-norm hidden states at
+[`executor.rs`](native/src/executor.rs) runs the vision tower once per request, then the
+request's prefix up to its last multiple of 64 tokens once, each question's text up to the
+last multiple of 64 before its first option once, and each option's block with the
+tokens that remain before it, each as a continuation of the state before it
+(`Model::readout_window`). The passes use the fixed-algorithm GEMMs and split at
+multiples of 64, so every answer equals that of one plain pass per (question, option)
+row over the prefix and that row, which `Executor::execute_rows` keeps for the checks.
+The passes read the final-norm hidden states at
 `zq` and `u`, which is what the reference's `hidden_states[-1]` holds, and the
 option-text tokens' log-probabilities: BF16 logits from the tied embedding over the
 248,079-entry vocabulary, converted to float32, with a float64 sum in the log-softmax. Score rows skip the
 log-probabilities, which its ordinal head does not use. The heads run on the CPU; the
-question state `zq` is the first row's, as in the reference. Reusing the prefix across
-rows is the next step.
+question state `zq` is the first row's, as in the reference.
 
 ## Heads and finishing
 
@@ -155,9 +157,12 @@ heads and finishing on the CPU without loading the backbone. The tests in
 Opt-in checks need the checkpoint or an export: token ids against the checkpoint's
 tokenizer, exactly; the heads against an export, within 1e-5 (relative for values above
 one); and on a GPU, the readout pass (`tests/qwen3_5/readout.rs`: equal to
-`forward_fixed` for text, independent of the other rows and targets read, and
-log-probabilities against the CPU) and the worker (repeatable answers, independent of
-question order). [`validate.py`](../../../recipe/omnijev/validate.py) compares the
+`forward_fixed` for text, independent of the other rows and targets read,
+log-probabilities against the CPU, and windows continuing captured prefixes equal to one
+pass) and the worker (repeatable answers, independent of question order, and the reused
+prefix equal to the per-row passes bit for bit for questions that split three ways
+against the 64-token chunks). The two prefix states the executor keeps take about
+50 MiB each plus 32 KiB per token of their longest prefix. [`validate.py`](../../../recipe/omnijev/validate.py) compares the
 worker's answers with the reference's.
 
 The Rust code adapts OmniJev's Apache-2.0 code; its copyright and license are retained
