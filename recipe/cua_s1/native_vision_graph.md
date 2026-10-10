@@ -4,8 +4,8 @@ The `omni-cua-s1-vision` screenshot worker can capture the complete vision
 encoder, including all 24 blocks, unmerged FP32 LoRA branches and the merger.
 Set `CUA_S1_VISION_GRAPH=1` before loading the worker to enable it. Leave it
 unset or set it to `0` for eager execution. This switch is independent of
-`CUA_S1_GRAPH`, which controls language execution; this change does not enable
-multimodal language Graph replay.
+`CUA_S1_GRAPH`, which controls text and multimodal language execution. Enable
+each switch separately; keep both unset for eager execution.
 
 Both modes retain one scratch allocation for the latest exact `[T,H,W]` patch
 grid. Equal patch counts with different heights or widths replace the scratch
@@ -57,9 +57,9 @@ Export the same `CUA_S1_BASE`, `CUA_S1_VISION_ADAPTER`, `CUA_S1_MODEL`, and
 ```sh
 cargo test --release --locked -p omni-cua-s1-native --lib vision_graph_ \
   -- --ignored --test-threads=1 --nocapture
-CUA_S1_VISION_GRAPH=0 cargo run --release --locked -p omni-cua-s1-native \
+CUA_S1_GRAPH=0 CUA_S1_VISION_GRAPH=0 cargo run --release --locked -p omni-cua-s1-native \
   --example vision_graph_bench -- /tmp/vision-eager.json
-CUA_S1_VISION_GRAPH=1 cargo run --release --locked -p omni-cua-s1-native \
+CUA_S1_GRAPH=0 CUA_S1_VISION_GRAPH=1 cargo run --release --locked -p omni-cua-s1-native \
   --example vision_graph_bench -- /tmp/vision-graph.json
 ```
 
