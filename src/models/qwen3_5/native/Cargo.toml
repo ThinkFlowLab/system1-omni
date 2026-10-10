@@ -21,3 +21,7 @@ path = "../../../../tests/qwen3_5/config.rs"
 [[test]]
 name = "kernels"
 path = "../../../../tests/qwen3_5/kernels.rs"
+
+[[test]]
+name = "graph"
+path = "../../../../tests/qwen3_5/graph.rs"

@@ -554,6 +554,18 @@ impl Scratch {
     }
 }
 
+/// Cumulative backbone capture/replay evidence, distinct from the decision response.
+#[derive(Clone, Copy, Debug, Default, serde::Serialize)]
+pub struct GraphStats {
+    pub requested: bool,
+    pub enabled: bool,
+    pub captures: u64,
+    pub replays: u64,
+    pub fallbacks: u64,
+    pub invalidations: u64,
+    pub cached_shapes: usize,
+}
+
 /// The cached device-side state of one token prefix (rows `[0, len)`) for the R2d
 /// hybrid path: per full-attention layer the post-prep K rows plus the pre-GEMM V
 /// rows, per Gated DeltaNet layer the float32 recurrent state and the three
@@ -600,6 +612,7 @@ pub struct Model {
     scratch: Option<Scratch>,
     /// Opt-in replay with at most 64 captures keyed by ordered sequence lengths.
     graph_enabled: bool,
+    graph_stats: GraphStats,
     graphs: VecDeque<(Vec<usize>, cuda::Graph)>,
 }
 
@@ -609,15 +622,29 @@ unsafe impl Send for Model {}
 
 impl Drop for Model {
     fn drop(&mut self) {
+        let _ = cuda::set_device(0);
+        let _ = cuda::synchronize(self.stream);
         self.graphs.clear();
         // SAFETY: created by cs1_gemm_create and not destroyed before.
-        unsafe { (cuda::api().cs1_gemm_destroy)(self.gemm) };
+        unsafe {
+            (cuda::api().cs1_gemm_destroy)(self.gemm);
+            (cuda::api().cs1_stream_destroy)(self.stream);
+        };
     }
 }
 
 impl Model {
     /// Load the CUDA library and the weights.
     pub fn load(dir: &Path, library: &Path) -> Result<Self> {
+        Self::load_with_graph(
+            dir,
+            library,
+            std::env::var("CUA_S1_GRAPH").as_deref() == Ok("1"),
+        )
+    }
+
+    /// Explicit mode for model adapters; does not read another worker's switch.
+    pub fn load_with_graph(dir: &Path, library: &Path, graph: bool) -> Result<Self> {
         let cfg = Config::load(dir)?;
         cuda::load(library)?;
         cuda::set_device(0)?;
@@ -690,10 +717,22 @@ impl Model {
             stream,
             gemm,
             scratch: None,
-            graph_enabled: std::env::var("CUA_S1_GRAPH").as_deref() == Ok("1"),
+            graph_enabled: graph,
+            graph_stats: GraphStats {
+                requested: graph,
+                ..GraphStats::default()
+            },
             graphs: VecDeque::new(),
         };
         Ok(model)
+    }
+
+    pub fn graph_stats(&self) -> GraphStats {
+        GraphStats {
+            enabled: self.graph_enabled,
+            cached_shapes: self.graphs.len(),
+            ..self.graph_stats
+        }
     }
 
     fn gemm(&self, s: &Scratch, x: usize, w: &Tensor, y: usize, m: usize) -> Result<()> {
@@ -744,6 +783,10 @@ impl Model {
     fn prepare_scratch(&mut self, t: usize) -> Result<()> {
         cuda::set_device(0)?;
         if self.scratch.as_ref().is_none_or(|s| t > s.cap) {
+            cuda::synchronize(self.stream)?;
+            if !self.graphs.is_empty() {
+                self.graph_stats.invalidations += 1;
+            }
             self.graphs.clear();
             self.scratch = None;
             self.scratch = Some(Scratch::new(
@@ -793,6 +836,7 @@ impl Model {
         if self.graph_enabled {
             if let Some((_, graph)) = self.graphs.iter().find(|(shape, _)| *shape == lengths) {
                 graph.launch(self.stream)?;
+                self.graph_stats.replays += 1;
             } else {
                 // Warm plans and keep the eager result: run() advances the residual
                 // in place, so replaying on this cache miss would advance it twice.
@@ -800,13 +844,16 @@ impl Model {
                 cuda::synchronize(self.stream)?;
                 match cuda::Graph::capture(self.stream, || self.run(s, &lengths, false)) {
                     Ok(graph) => {
+                        self.graph_stats.captures += 1;
                         if self.graphs.len() == 64 {
+                            cuda::synchronize(self.stream)?;
                             self.graphs.pop_front();
                         }
                         self.graphs.push_back((lengths.clone(), graph));
                     }
                     Err(error) => {
                         eprintln!("CUDA Graph capture failed; using eager execution: {error:#}");
+                        self.graph_stats.fallbacks += 1;
                         self.graph_enabled = false;
                         self.graphs.clear();
                     }
