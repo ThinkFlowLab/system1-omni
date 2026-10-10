@@ -135,7 +135,11 @@ skill files that the site build excludes.
 
 Summarize the implemented scope, contract differences, changed shared components,
 checks and results, and remaining coverage gaps. Follow `CONTRIBUTING.md` and the
-PR template; use [precheck-pr](../precheck-pr/SKILL.md) for agent-assisted
+PR template. Prepare the PR demo/evidence section per
+[self-review](../self-review/SKILL.md): measured comparisons need pinned
+provenance; an optional System1-Agents shared demo and illustrative video
+supplement but never substitute for benchmark and parity evidence. Use
+[precheck-pr](../precheck-pr/SKILL.md) for agent-assisted
 self-review before requesting maintainer review. Follow the user's authorization
 for commits, pushes, and PR creation.
 
