@@ -1,0 +1,33 @@
+{
+ "id": "img-choice-04",
+ "status": 200,
+ "body": {
+  "kind": "choice",
+  "effective_kind": "choice",
+  "options": [
+   "Approve for publish",
+   "Request higher contrast",
+   "Blur the background",
+   "Remove the image"
+  ],
+  "probabilities": [
+   0.007611069820598085,
+   0.286759218508341,
+   0.06757218854136932,
+   0.6380575231296916
+  ],
+  "choice_index": 3,
+  "choice": "Remove the image",
+  "adaptation": "native",
+  "protocol": "jev27-bare-v1",
+  "model": "autotrust/JEV-27B-VL",
+  "usage": {
+   "prompt_tokens": 965,
+   "completion_tokens": 1,
+   "total_tokens": 966
+  },
+  "elapsed_seconds": 0.10248708724975586,
+  "num_model_requests": 1
+ },
+ "client_s": 0.10736084263771772
+}

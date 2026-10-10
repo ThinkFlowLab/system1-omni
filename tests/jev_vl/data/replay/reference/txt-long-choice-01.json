@@ -1,0 +1,33 @@
+{
+ "id": "txt-long-choice-01",
+ "status": 200,
+ "body": {
+  "kind": "choice",
+  "effective_kind": "choice",
+  "options": [
+   "Tokyo (2020)",
+   "London (2012)",
+   "Rio de Janeiro (2016)",
+   "Beijing (2008)"
+  ],
+  "probabilities": [
+   2.0478263517559068e-05,
+   0.0011159380922868708,
+   0.9985661441508282,
+   0.00029743949336736024
+  ],
+  "choice_index": 2,
+  "choice": "Rio de Janeiro (2016)",
+  "adaptation": "native",
+  "protocol": "jev27-bare-v1",
+  "model": "autotrust/JEV-27B-VL",
+  "usage": {
+   "prompt_tokens": 616,
+   "completion_tokens": 1,
+   "total_tokens": 617
+  },
+  "elapsed_seconds": 0.09469962120056152,
+  "num_model_requests": 1
+ },
+ "client_s": 0.09556684736162424
+}

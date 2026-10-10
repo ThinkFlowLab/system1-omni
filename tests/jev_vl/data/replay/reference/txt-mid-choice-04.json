@@ -1,0 +1,41 @@
+{
+ "id": "txt-mid-choice-04",
+ "status": 200,
+ "body": {
+  "kind": "choice",
+  "effective_kind": "choice",
+  "options": [
+   "Praise the agent",
+   "Update address",
+   "Cancel subscription",
+   "Request refund",
+   "Ask about shipping",
+   "Report a bug",
+   "Change plan",
+   "Redeem a coupon"
+  ],
+  "probabilities": [
+   1.3661033197784005e-05,
+   7.735239619554836e-05,
+   9.302674228680651e-05,
+   0.10013094604007282,
+   0.0005049162142062376,
+   0.09415160228530642,
+   1.6585759070291836e-05,
+   0.8050119095296642
+  ],
+  "choice_index": 7,
+  "choice": "Redeem a coupon",
+  "adaptation": "native",
+  "protocol": "jev27-bare-v1",
+  "model": "autotrust/JEV-27B-VL",
+  "usage": {
+   "prompt_tokens": 252,
+   "completion_tokens": 1,
+   "total_tokens": 253
+  },
+  "elapsed_seconds": 0.09302520751953125,
+  "num_model_requests": 1
+ },
+ "client_s": 0.0938773825764656
+}

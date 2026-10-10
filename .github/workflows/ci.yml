@@ -23,13 +23,13 @@ jobs:
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy
-        run: cargo clippy --workspace --locked --all-targets -- -D warnings
+        run: cargo clippy --workspace --locked --all-targets --features omni-laya/serve -- -D warnings
       - name: Frontend API tests
         run: cargo test -p omni-jev --test frontend --locked
       - name: Test
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --locked --features omni-laya/serve
       - name: Build
-        run: cargo build --workspace --release --locked
+        run: cargo build --workspace --release --locked --features omni-laya/serve
 
   benchmarks:
     runs-on: ubuntu-latest

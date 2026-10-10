@@ -7,9 +7,10 @@ use anyhow::{Result, ensure};
 use serde_json::{Map, Value, json};
 use tokenizers::Tokenizer;
 
-use crate::contract::{self, BASE_REVISION, Kind, Question};
+use crate::contract::{self, Checkpoint, Kind, Question};
 
 pub struct Processor {
+    checkpoint: &'static Checkpoint,
     tokenizer: Tokenizer,
     prefix: String,
     suffix: String,
@@ -24,6 +25,7 @@ pub struct PreparedRequest {
 
 /// The original question/candidate mapping, calibration, usage, and timing.
 pub struct ResponseContext {
+    checkpoint: &'static Checkpoint,
     questions: Vec<Question>,
     input_tokens: usize,
     candidates: usize,
@@ -35,6 +37,7 @@ pub struct ResponseContext {
 impl Processor {
     pub(crate) fn load(
         dir: &Path,
+        checkpoint: &'static Checkpoint,
         prefix: String,
         suffix: String,
         temperature: f64,
@@ -43,6 +46,7 @@ impl Processor {
         let tokenizer =
             Tokenizer::from_file(dir.join("tokenizer.json")).map_err(anyhow::Error::msg)?;
         Ok(Self {
+            checkpoint,
             tokenizer,
             prefix,
             suffix,
@@ -53,7 +57,7 @@ impl Processor {
 
     /// Validate every candidate length before inference; never truncate.
     pub fn prepare(&self, raw: &[u8]) -> Result<PreparedRequest> {
-        let questions = contract::compile(raw)?;
+        let questions = contract::compile(raw, self.checkpoint)?;
         let start = Instant::now();
         let inputs = encode_questions(
             &self.tokenizer,
@@ -67,6 +71,7 @@ impl Processor {
         Ok(PreparedRequest {
             inputs,
             context: ResponseContext {
+                checkpoint: self.checkpoint,
                 questions,
                 input_tokens,
                 candidates,
@@ -93,12 +98,14 @@ impl ResponseContext {
                 contract::answer(q, &logits, self.temperature)?,
             );
         }
-        Ok(json!({"model": contract::MODEL_ID, "answers": answers,
+        Ok(
+            json!({"model": self.checkpoint.model_id, "answers": answers,
             "usage": {"input_tokens": self.input_tokens, "output_tokens": 0},
             "metadata": {"method": "native_merged_lora_decision_head", "temperature": self.temperature,
                 "candidate_sequences": self.candidates, "inference_seconds": self.start.elapsed().as_secs_f64(),
-                "base_revision": BASE_REVISION, "max_length": self.max_length,
-                "prefix_cache": {"enabled": false, "mode": "independent_candidates"}}}))
+                "base_revision": self.checkpoint.base_revision, "max_length": self.max_length,
+                "prefix_cache": {"enabled": false, "mode": "independent_candidates"}}}),
+        )
     }
 }
 

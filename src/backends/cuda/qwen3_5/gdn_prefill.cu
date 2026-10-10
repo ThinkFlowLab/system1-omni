@@ -337,7 +337,8 @@ constexpr int SS_LD = BVS + 8;      // bfloat16 row stride of the S copy and v_n
 constexpr int STAGE = C * WS_LD;    // elements of one staged w or kd
 constexpr size_t SMEM2_BYTES = (4 * STAGE + K * SS_LD + C * SS_LD) * 2;
 
-__global__ void __launch_bounds__(ST_THREADS) gdn_chunk_state(Work ws, int NC) {
+__global__ void __launch_bounds__(ST_THREADS) gdn_chunk_state(Work ws, int NC, const float* __restrict__ S_IN,
+                                                              float* __restrict__ S_OUT) {
     extern __shared__ __align__(128) unsigned char sm[];
     bf16* wbuf = reinterpret_cast<bf16*>(sm);  // [2][C][WS_LD]
     bf16* kbuf = wbuf + 2 * STAGE;              // [2][C][WS_LD]
@@ -362,6 +363,21 @@ __global__ void __launch_bounds__(ST_THREADS) gdn_chunk_state(Work ws, int NC) {
     for (int mt = 0; mt < 2; mt++)
 #pragma unroll
         for (int nt = 0; nt < 4; nt++) st[mt][nt][0] = st[mt][nt][1] = st[mt][nt][2] = st[mt][nt][3] = 0.f;
+    if (S_IN != nullptr) {
+        // float32 state seeded for a continuation: identical to the registers a
+        // full pass would carry into this chunk, so the scan repeats one pass.
+        const float* si = S_IN + (size_t)h * K * V;
+#pragma unroll
+        for (int mt = 0; mt < 2; mt++)
+#pragma unroll
+            for (int nt = 0; nt < 4; nt++)
+#pragma unroll
+                for (int e = 0; e < 4; e++) {
+                    const int row = warp * 32 + mt * 16 + g + (e >> 1) * 8;
+                    const int col = vb0 + nt * 8 + 2 * t + (e & 1);
+                    st[mt][nt][e] = si[(size_t)row * V + col];
+                }
+    }
 
     load(0, 0);
     for (int c = 0; c < NC; c++) {
@@ -437,6 +453,20 @@ __global__ void __launch_bounds__(ST_THREADS) gdn_chunk_state(Work ws, int NC) {
                 }
             }
         }
+    }
+    if (S_OUT != nullptr) {
+        float* so = S_OUT + (size_t)h * K * V;
+#pragma unroll
+        for (int mt = 0; mt < 2; mt++)
+#pragma unroll
+            for (int nt = 0; nt < 4; nt++)
+#pragma unroll
+                for (int r = 0; r < 2; r++) {
+                    const int row = warp * 32 + mt * 16 + g + r * 8;
+                    const int col = vb0 + nt * 8 + 2 * t;
+                    *reinterpret_cast<float2*>(so + (size_t)row * V + col) =
+                        make_float2(st[mt][nt][2 * r], st[mt][nt][2 * r + 1]);
+                }
     }
 }
 
@@ -535,10 +565,20 @@ extern "C" {
 
 size_t cs1_gdn_workspace_floats(int T, int H) { return (Layout(T, H).total + 3) / 4; }
 
-int cs1_gdn_prefill(const void* q, const void* k, const void* v, const float* g, const void* beta,
-                    void* o, float* workspace, int T, int H, int HK, float scale, void* stream) {
+static int gdn_prefill_run(const void* q, const void* k, const void* v, const float* g,
+                           const void* beta, void* o, float* workspace, int T, int H, int HK,
+                           float scale, const void* s_in, void* s_out, void* stream) {
     if (T < 0 || HK <= 0 || H % HK != 0) return cudaErrorInvalidValue;
-    if (T == 0) return cudaSuccess;
+    const float* si = static_cast<const float*>(s_in);
+    float* so = static_cast<float*>(s_out);
+    if (T == 0) {
+        // No tokens: the state passes through unchanged, for symmetric capture.
+        if (so == nullptr) return cudaSuccess;
+        const size_t bytes = (size_t)H * K * V * sizeof(float);
+        cudaStream_t st = static_cast<cudaStream_t>(stream);
+        return si != nullptr ? cudaMemcpyAsync(so, si, bytes, cudaMemcpyDeviceToDevice, st)
+                             : cudaMemsetAsync(so, 0, bytes, st);
+    }
     // once per process (for the device current at the first call)
     static const cudaError_t configured = [] {
         cudaError_t e = cudaFuncSetAttribute(gdn_chunk_prep, cudaFuncAttributeMaxDynamicSharedMemorySize,
@@ -558,9 +598,20 @@ int cs1_gdn_prefill(const void* q, const void* k, const void* v, const float* g,
     gdn_chunk_prep<<<dim3(NC, H), THREADS, SMEM1_BYTES, st>>>(
         static_cast<const __nv_bfloat16*>(q), static_cast<const __nv_bfloat16*>(k),
         static_cast<const __nv_bfloat16*>(v), g, static_cast<const __nv_bfloat16*>(beta), ws, T, H, HK, scale);
-    gdn_chunk_state<<<dim3(H, V / BVS), ST_THREADS, SMEM2_BYTES, st>>>(ws, NC);
+    gdn_chunk_state<<<dim3(H, V / BVS), ST_THREADS, SMEM2_BYTES, st>>>(ws, NC, si, so);
     gdn_chunk_out<<<dim3(NC, H), OUT_THREADS, SMEM3_BYTES, st>>>(ws, static_cast<bf16*>(o), T, H);
     return cudaGetLastError();
+}
+
+int cs1_gdn_prefill(const void* q, const void* k, const void* v, const float* g, const void* beta,
+                    void* o, float* workspace, int T, int H, int HK, float scale, void* stream) {
+    return gdn_prefill_run(q, k, v, g, beta, o, workspace, T, H, HK, scale, nullptr, nullptr, stream);
+}
+
+int cs1_gdn_prefill_x(const void* q, const void* k, const void* v, const float* g, const void* beta,
+                      void* o, float* workspace, int T, int H, int HK, float scale,
+                      const void* s_in, void* s_out, void* stream) {
+    return gdn_prefill_run(q, k, v, g, beta, o, workspace, T, H, HK, scale, s_in, s_out, stream);
 }
 
 }  // extern "C"

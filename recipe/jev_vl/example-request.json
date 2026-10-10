@@ -1,0 +1,7 @@
+{
+  "model": "autotrust/JEV-27B-VL",
+  "kind": "choice",
+  "state": "The customer received a package with a broken screen and asks for help.",
+  "question": "What should support do next?",
+  "options": ["Offer a replacement", "Close the ticket without a reply"]
+}

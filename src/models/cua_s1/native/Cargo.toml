@@ -11,14 +11,26 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0.100"
+sha2 = "0.10"
 axum = "0.8.8"
+base64 = "0.22.1"
 half = "2.7.1"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 # the CUDA kernels live in libqwen3_5_cuda.so, loaded at run time
 omni-qwen3-5-native = { path = "../../qwen3_5/native" }
 omni-runtime = { path = "../../../runtime" }
 memmap2 = "0.9.9"
 safetensors = "0.8.0"
+serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1.0.149", features = ["float_roundtrip", "preserve_order"] }
 # the onig regex backend, as in the Python tokenizers wheel
 tokenizers = { version = "=0.22.2", default-features = false, features = ["onig"] }
 tokio = { version = "1.49.0", features = ["macros", "net", "rt-multi-thread", "sync"] }
+
+[[bin]]
+name = "omni-cua-s1-vision"
+path = "src/vision_main.rs"
+
+[[example]]
+name = "vision_graph_bench"
+path = "../../../../tests/cua_s1/vision_graph_bench.rs"

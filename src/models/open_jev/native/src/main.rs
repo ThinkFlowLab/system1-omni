@@ -11,7 +11,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
-use omni_open_jev_native::{contract::MODEL_ID, engine::Engine};
+use omni_open_jev_native::engine::Engine;
 use omni_qwen3_5_native::cuda;
 use serde_json::json;
 
@@ -83,10 +83,11 @@ async fn main() -> Result<()> {
     let port: u16 = std::env::var("OPEN_JEV_PORT")
         .map_or(Ok(8000), |v| v.parse())
         .context("OPEN_JEV_PORT")?;
+    let model = engine.checkpoint.model_id;
     let app = Router::new()
         .route(
             "/health",
-            get(|| async { Json(json!({"status": "ready", "model": MODEL_ID})) }),
+            get(move || async move { Json(json!({"status": "ready", "model": model})) }),
         )
         .route("/v1/systemone", post(systemone))
         .layer(DefaultBodyLimit::max(4 << 20))
