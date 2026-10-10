@@ -79,6 +79,22 @@ covers the entire request. Both streams synchronize before resource release;
 caught execution errors/panics clear atomic readiness and retire loaded state.
 There is no cross-request batching or prefix cache.
 
+## Optional CUDA Graph replay
+
+`CUA_S1_GRAPH=1` enables language replay, with separate 64-entry FIFO caches
+for text ordered lengths and multimodal `[tokens]`. `CUA_S1_VISION_GRAPH=1`
+independently enables vision replay; its four-slot FIFO uses exact `[T,H,W]`
+grids. Both switches default off. Current IDs/features/positions/pixels are
+uploaded before replay. An eager miss completes before recording, preserving its
+answer. Capture failure logs unconditionally, disables that graph path and keeps
+the eager result. Eviction synchronizes before graph/buffer destruction.
+
+Vision scratch persists for up to four grids even with graphs disabled, changing
+resident activation memory from per-call allocation. This bounds grid slots,
+not weights or GEMM plan memory. Startup's image warmup can now capture its own
+shape when enabled; it does not prewarm every user grid. These mechanisms do not
+establish lower latency on every workload or fix the multi-image numerical gap.
+
 ## Validation and known multi-image limitation
 
 The historical A800 BF16 corpus (13 requests / 16 questions, text and single-image
