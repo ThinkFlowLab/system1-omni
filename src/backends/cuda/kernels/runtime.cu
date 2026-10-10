@@ -62,14 +62,26 @@ int laya_capture_begin(void* stream) {
                                 cudaStreamCaptureModeThreadLocal);
 }
 
+// End capture and release temporary/partial graph ownership on every outcome.
 int laya_capture_end(void* stream, void** executable) {
+  if (!executable) return -1;
+  *executable = nullptr;
+  if (!stream) return -1;
   cudaGraph_t graph = nullptr;
-  auto e = cudaStreamEndCapture(static_cast<cudaStream_t>(stream), &graph);
-  if (e != cudaSuccess)
-    return e;
-  e = cudaGraphInstantiate(reinterpret_cast<cudaGraphExec_t*>(executable), graph, 0);
-  cudaGraphDestroy(graph);
-  return e;
+  cudaGraphExec_t created = nullptr;
+  auto status = cudaStreamEndCapture(static_cast<cudaStream_t>(stream), &graph);
+  if (status == cudaSuccess && graph)
+    status = cudaGraphInstantiate(&created, graph, 0);
+  if (graph) {
+    auto destroyed = cudaGraphDestroy(graph);
+    if (status == cudaSuccess) status = destroyed;
+  }
+  if (status != cudaSuccess || !created) {
+    if (created) cudaGraphExecDestroy(created);
+    return status != cudaSuccess ? status : -1;
+  }
+  *executable = created;
+  return 0;
 }
 
 int laya_graph_run(void* executable, void* stream) {
