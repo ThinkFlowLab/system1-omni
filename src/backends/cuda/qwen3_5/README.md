@@ -27,3 +27,20 @@ experimental JEV-VL worker; existing full-prefill callers keep their own paths.
 ABI 6 adds mandatory copy and prefix entry points after ABI 5 native vision.
 Rebuild the library and **all** Qwen worker binaries together; older libraries
 are rejected. Current-branch GPU regression is required before release.
+
+## Optional JEMM reference arithmetic
+
+JEMM enables the additive `cs1_reference_*` API group after model load and before
+any forward. It requires cuDNN 9; build with `CUDNN_INCLUDE_DIR` and
+`CUDNN_LIB_DIR`. Builds without those variables retain the legacy ABI-6 functions;
+JEMM reports a missing-capability error rather than silently selecting older numerics.
+
+The reference path uses a per-handle GEMM reduction policy, separate normalization,
+attention and GDN functions, and shape-owned cuDNN Conv3D plans. Attention and
+convolution workspaces allocate before capture and retire with their model/shape.
+The rotary entry point consumes FP32 angles and computes trigonometry on device;
+legacy rotary functions still consume cos/sin tables. Prefix caching is unsupported
+on this opt-in path. The shared workers' default arithmetic remains unchanged.
+
+The [JEMM numerical record](../../../../docs/benchmarks/jemm-reference-20261011/README.md)
+contains a frozen 1–4-image corpus and reproducible operator/HTTP checks.

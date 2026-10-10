@@ -166,6 +166,7 @@ Python screenshot worker, and CLM has a stub-encoder contract recipe:
 | LAYA | [External worker](recipe/laya/README.md); [Python worker on Apple Silicon (MPS) and CPU](recipe/laya/apple-silicon.md); [CPU checkpoint reader](src/models/laya/README.md); [native Rust/CUDA worker on Hopper](recipe/laya/native/README.md) |
 | Cua-S1 4B 0.2 (`text` adapter) | [Python worker](recipe/cua_s1/text.md); [native worker](recipe/cua_s1/native.md), CUDA, run on sm_89 |
 | Cua-S1 4B 0.2 (`multimodal` adapter) | [Python CUDA worker](src/frontend/cua_s1.py); one PNG/JPEG screenshot, `choice`; native screenshot execution remains in progress |
+| JEMM (Qwen3.8-27B) | [Native Rust/CUDA worker](recipe/jemm/README.md); text/single-image parity on A800; [known multi-image limitation](src/models/jemm/README.md#validation-and-known-multi-image-limitation) |
 | Open-Jev-27B-v1.1 | [Native Rust/CUDA worker](recipe/open_jev/native.md); eager independent text candidates; [H200 validation](recipe/open_jev/validation.md) |
 | Open-Jev-9B | The same [native Rust/CUDA worker](recipe/open_jev/native.md); eager independent text candidates; [reference comparison on sm_89](recipe/open_jev/validation-9b.md) |
 | autotrust/JEV-27B-VL | [Experimental Rust/CUDA worker](recipe/jev_vl/README.md); single-question text and offline-preencoded image inputs; [bounded H800 validation and limits](recipe/jev_vl/validation.md) |

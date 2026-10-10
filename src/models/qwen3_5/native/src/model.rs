@@ -19,6 +19,7 @@ use serde_json::Value as Json;
 
 use crate::cuda::{self, DeviceBuffer, Stream, check};
 use crate::inputs::{MultimodalInput, rotary_tables};
+use crate::lora::{self, Group};
 
 const ALIGN: usize = 256;
 const BF16: usize = 2;
@@ -439,10 +440,17 @@ struct Scratch {
     sin: usize,
     custom_cos: usize,
     custom_sin: usize,
+    lora: Option<lora::Work>,
 }
 
 impl Scratch {
-    fn new(cfg: &Config, cap: usize, stream: Stream) -> Result<Self> {
+    fn new(
+        cfg: &Config,
+        cap: usize,
+        stream: Stream,
+        lora: Option<&lora::Lora>,
+        reference: Option<&cuda::Reference>,
+    ) -> Result<Self> {
         let (h, kd, vd, hv) = (cfg.hidden, cfg.key_dim(), cfg.value_dim(), cfg.lin_v_heads);
         let (hq, hk, hd) = (cfg.heads, cfg.kv_heads, cfg.head_dim);
         let w = Widths::of(cfg);
@@ -453,7 +461,18 @@ impl Scratch {
             off
         };
         // SAFETY: pure function of its arguments.
-        let ws_floats = unsafe { (cuda::api().cs1_gdn_workspace_floats)(cap as i32, hv as i32) };
+        let ws_floats = if let Some(reference) = reference {
+            // SAFETY: capacity and heads derive from validated architecture/request limits.
+            unsafe {
+                let gdn = (reference.gdn_workspace_floats)(cap as i32, hv as i32);
+                let attention =
+                    (reference.language_attention_workspace_floats)(cap as i32, hq as i32);
+                ensure!(attention > 0, "cannot size reference attention workspace");
+                gdn.max(attention)
+            }
+        } else {
+            unsafe { (cuda::api().cs1_gdn_workspace_floats)(cap as i32, hv as i32) }
+        };
         let offsets = [
             take(cap * 4),
             take(cap * h * BF16),
@@ -546,6 +565,9 @@ impl Scratch {
             sin,
             custom_cos,
             custom_sin,
+            lora: lora
+                .map(|adapter| adapter.work(cap.min(cfg.max_positions)))
+                .transpose()?,
         })
     }
 
@@ -594,22 +616,41 @@ pub struct Model {
     embed: Tensor,
     final_norm: Tensor,
     layers: Vec<Layer>,
+    lora: Option<lora::Lora>,
     stream: Stream,
     gemm: *mut c_void,
+    reference: Option<&'static cuda::Reference>,
     /// Buffers for the largest packed token count so far; grows as needed.
     scratch: Option<Scratch>,
     /// Opt-in replay with at most 64 captures keyed by ordered sequence lengths.
     graph_enabled: bool,
     graphs: VecDeque<(Vec<usize>, cuda::Graph)>,
+    // The opt-in adapter path owns its stream; it retires after every device allocation.
+    _lora_stream: Option<LoraStream>,
 }
 
 // SAFETY: the raw pointers are device addresses and a cuBLASLt handle owned by the
 // model; the engine runs one forward pass at a time behind a mutex.
 unsafe impl Send for Model {}
 
+struct LoraStream(Stream);
+impl Drop for LoraStream {
+    fn drop(&mut self) {
+        // SAFETY: the adapter Model owns this stream, and has retired all allocations.
+        unsafe { (cuda::api().cs1_stream_destroy)(self.0) };
+    }
+}
+
 impl Drop for Model {
     fn drop(&mut self) {
+        if self.lora.is_some() {
+            let _ = cuda::set_device(0);
+            let _ = cuda::synchronize(self.stream);
+        }
         self.graphs.clear();
+        if self.lora.is_some() {
+            self.scratch = None;
+        }
         // SAFETY: created by cs1_gemm_create and not destroyed before.
         unsafe { (cuda::api().cs1_gemm_destroy)(self.gemm) };
     }
@@ -619,10 +660,37 @@ impl Model {
     /// Load the CUDA library and the weights.
     pub fn load(dir: &Path, library: &Path) -> Result<Self> {
         let cfg = Config::load(dir)?;
+        Self::load_checkpoint(dir, library, cfg, None)
+    }
+
+    /// Load an immutable FP32 PEFT language adapter without merging it into BF16 weights.
+    /// `adapter_path` names one safetensors file; partial paired targets and ranks 1..=128
+    /// are supported. Validate the pinned full inventory separately when required.
+    pub fn load_with_lora(
+        dir: &Path,
+        library: &Path,
+        adapter_path: &Path,
+        scale: f32,
+    ) -> Result<Self> {
+        let cfg = Config::load(dir)?;
+        let adapter = lora::Checkpoint::load(&cfg, adapter_path, scale)?;
+        Self::load_checkpoint(dir, library, cfg, Some(adapter))
+    }
+
+    fn load_checkpoint(
+        dir: &Path,
+        library: &Path,
+        cfg: Config,
+        adapter: Option<lora::Checkpoint>,
+    ) -> Result<Self> {
         cuda::load(library)?;
         cuda::set_device(0)?;
         let stream = cuda::new_stream()?;
+        let stream_owner = adapter.as_ref().map(|_| LoraStream(stream));
         let weights = Weights::load(dir, stream)?;
+        let lora = adapter
+            .map(|source| source.upload(cfg.full_attention.len(), stream))
+            .transpose()?;
         let (h, kd, vd) = (cfg.hidden, cfg.key_dim(), cfg.value_dim());
         let embed = weights
             .tensors
@@ -687,13 +755,43 @@ impl Model {
             embed,
             final_norm,
             layers,
+            lora,
             stream,
             gemm,
+            reference: None,
             scratch: None,
             graph_enabled: std::env::var("CUA_S1_GRAPH").as_deref() == Ok("1"),
             graphs: VecDeque::new(),
+            _lora_stream: stream_owner,
         };
         Ok(model)
+    }
+
+    /// Select JEMM's pinned framework arithmetic before the first forward.
+    /// Prefix caching is outside this execution contract.
+    pub fn enable_reference_numerics(&mut self) -> Result<()> {
+        ensure!(
+            self.cfg.hidden == 5120 && self.cfg.head_dim == 256 && self.lora.is_some(),
+            "reference numerics require the unmerged JEMM 27B model"
+        );
+        ensure!(
+            self.scratch.is_none() && self.graphs.is_empty(),
+            "select reference numerics before the first forward"
+        );
+        if self.reference.is_some() {
+            return Ok(());
+        }
+        cuda::set_device(0)?;
+        let reference = cuda::api().reference()?;
+        cuda::synchronize(self.stream)?;
+        // SAFETY: the model owns both handles, with no queued work or captured graphs.
+        let gemm = unsafe { (reference.gemm_create)(GEMM_WORKSPACE) };
+        ensure!(!gemm.is_null(), "reference cuBLASLt setup failed");
+        unsafe { (cuda::api().cs1_gemm_destroy)(self.gemm) };
+        self.gemm = gemm;
+        self.reference = Some(reference);
+        self.prefix_owner = Arc::new(());
+        Ok(())
     }
 
     fn gemm(&self, s: &Scratch, x: usize, w: &Tensor, y: usize, m: usize) -> Result<()> {
@@ -715,6 +813,73 @@ impl Model {
             },
             "gemm",
         )
+    }
+
+    #[allow(clippy::too_many_arguments)] // Base projection coordinates and sequence shape.
+    fn gemm_group(
+        &self,
+        s: &Scratch,
+        x: usize,
+        w: &Tensor,
+        y: usize,
+        m: usize,
+        lengths: &[usize],
+        group: Group,
+    ) -> Result<()> {
+        if self.lora.is_none() {
+            return self.gemm(s, x, w, y, m);
+        }
+        let components = lora::component_rows(&self.cfg, group)?;
+        ensure!(
+            components.iter().sum::<usize>() == w.shape[0],
+            "base component weight shape"
+        );
+        let work = s.lora.as_ref().context("missing base component work")?;
+        // SAFETY: stacked() validated contiguous component weights; scratch holds the
+        // complete packed input/output rows, and work belongs to this serialized Model.
+        unsafe {
+            lora::project_components(
+                s.at(x),
+                w.ptr,
+                s.at(y),
+                lengths,
+                w.shape[1],
+                &components,
+                work,
+                self.gemm,
+                self.stream,
+            )
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)] // Layer projection coordinates in shared scratch.
+    fn apply_lora(
+        &self,
+        layer: usize,
+        group: Group,
+        s: &Scratch,
+        input: usize,
+        output: usize,
+        lengths: &[usize],
+    ) -> Result<()> {
+        let Some(adapter) = &self.lora else {
+            return Ok(());
+        };
+        let work = s.lora.as_ref().context("missing language LoRA work")?;
+        // SAFETY: caller passes the validated projection's input/output ranges in scratch;
+        // per-sequence row counts are bounded by config, and work/weights belong to this Model.
+        unsafe {
+            adapter.apply(
+                layer,
+                group,
+                s.at(input),
+                s.at(output),
+                lengths,
+                work,
+                self.gemm,
+                self.stream,
+            )
+        }
     }
 
     /// Preserve each prompt's output/down GEMM shape and split-K reduction order.
@@ -744,12 +909,17 @@ impl Model {
     fn prepare_scratch(&mut self, t: usize) -> Result<()> {
         cuda::set_device(0)?;
         if self.scratch.as_ref().is_none_or(|s| t > s.cap) {
+            if self.lora.is_some() {
+                cuda::synchronize(self.stream)?;
+            }
             self.graphs.clear();
             self.scratch = None;
             self.scratch = Some(Scratch::new(
                 &self.cfg,
                 t.next_multiple_of(1024),
                 self.stream,
+                self.lora.as_ref(),
+                self.reference,
             )?);
         }
         Ok(())
@@ -905,6 +1075,10 @@ impl Model {
     /// Allocate an uninitialized prefix of `len` tokens (a multiple of 64).
     /// Capture must finish successfully on this model before continuation.
     pub fn alloc_prefix(&self, len: usize) -> Result<PrefixState> {
+        ensure!(
+            self.reference.is_none(),
+            "JEMM reference numerics do not support prefix caching"
+        );
         ensure!(
             len >= 64 && len.is_multiple_of(64),
             "cached prefix length must be a positive multiple of 64"
@@ -1096,7 +1270,9 @@ impl Model {
         // scratch buffers laid out for at least t tokens with the widths used here.
         unsafe {
             check(
-                (cuda::api().cs1_rms_norm)(
+                (self
+                    .reference
+                    .map_or(cuda::api().cs1_rms_norm, |r| r.rms_norm))(
                     p(s.res),
                     self.layers[0].input_norm.ptr,
                     p(s.x),
@@ -1111,7 +1287,16 @@ impl Model {
         for (i, layer) in self.layers.iter().enumerate() {
             match &layer.mixer {
                 Mixer::Linear(la) => {
-                    self.gemm(s, s.x, &la.in_proj, s.gdn_in, t)?;
+                    self.gemm_group(
+                        s,
+                        s.x,
+                        &la.in_proj,
+                        s.gdn_in,
+                        t,
+                        lengths,
+                        Group::LinearInput,
+                    )?;
+                    self.apply_lora(i, Group::LinearInput, s, s.x, s.gdn_in, lengths)?;
                     let ld = w.gdn_in as i32;
                     let z = s.gdn_in + w.conv * BF16;
                     let b = z + vd * BF16;
@@ -1151,7 +1336,9 @@ impl Model {
                         )?;
                         for &(offset, length) in &sequences {
                             check(
-                                (cuda::api().cs1_gdn_prefill)(
+                                (self
+                                    .reference
+                                    .map_or(cuda::api().cs1_gdn_prefill, |r| r.gdn_prefill))(
                                     p(s.lq + offset * kd * BF16),
                                     p(s.lk + offset * kd * BF16),
                                     p(s.lv + offset * vd * BF16),
@@ -1185,16 +1372,28 @@ impl Model {
                         )?;
                     }
                     self.gemm_sequences(s, s.ln, &la.out, s.delta, lengths)?;
+                    self.apply_lora(i, Group::LinearOutput, s, s.ln, s.delta, lengths)?;
                 }
                 Mixer::Full(fa) => {
-                    self.gemm(s, s.x, &fa.qkv, s.attn_in, t)?;
+                    self.gemm_group(
+                        s,
+                        s.x,
+                        &fa.qkv,
+                        s.attn_in,
+                        t,
+                        lengths,
+                        Group::AttentionInput,
+                    )?;
+                    self.apply_lora(i, Group::AttentionInput, s, s.x, s.attn_in, lengths)?;
                     let ld = w.attn_in as i32;
                     let k = s.attn_in + w.attn_q * BF16;
                     let v = k + cfg.kv_heads * cfg.head_dim * BF16;
                     unsafe {
                         for &(offset, length) in &sequences {
                             check(
-                                (cuda::api().cs1_attn_prep)(
+                                (self
+                                    .reference
+                                    .map_or(cuda::api().cs1_attn_prep, |r| r.attn_prep))(
                                     p(s.attn_in + offset * w.attn_in * BF16),
                                     p(k + offset * w.attn_in * BF16),
                                     ld,
@@ -1216,30 +1415,50 @@ impl Model {
                                 "attention prep",
                             )?;
                             check(
-                                (cuda::api().cs1_attention_gated)(
-                                    p(s.aq + offset * cfg.heads * cfg.head_dim * BF16),
-                                    p(s.ak + offset * cfg.kv_heads * cfg.head_dim * BF16),
-                                    p(v + offset * w.attn_in * BF16),
-                                    ld,
-                                    p(s.agate + offset * cfg.heads * cfg.head_dim * BF16),
-                                    p(s.ao + offset * cfg.heads * cfg.head_dim * BF16),
-                                    length,
-                                    hq,
-                                    hk,
-                                    hd,
-                                    (cfg.head_dim as f32).powf(-0.5),
-                                    st,
-                                ),
+                                if let Some(reference) = self.reference {
+                                    (reference.attention)(
+                                        p(s.aq + offset * cfg.heads * cfg.head_dim * BF16),
+                                        p(s.ak + offset * cfg.kv_heads * cfg.head_dim * BF16),
+                                        p(v + offset * w.attn_in * BF16),
+                                        ld,
+                                        p(s.agate + offset * cfg.heads * cfg.head_dim * BF16),
+                                        p(s.ao + offset * cfg.heads * cfg.head_dim * BF16),
+                                        length,
+                                        hq,
+                                        hk,
+                                        (cfg.head_dim as f32).powf(-0.5),
+                                        p(s.workspace),
+                                        st,
+                                    )
+                                } else {
+                                    (cuda::api().cs1_attention_gated)(
+                                        p(s.aq + offset * cfg.heads * cfg.head_dim * BF16),
+                                        p(s.ak + offset * cfg.kv_heads * cfg.head_dim * BF16),
+                                        p(v + offset * w.attn_in * BF16),
+                                        ld,
+                                        p(s.agate + offset * cfg.heads * cfg.head_dim * BF16),
+                                        p(s.ao + offset * cfg.heads * cfg.head_dim * BF16),
+                                        length,
+                                        hq,
+                                        hk,
+                                        hd,
+                                        (cfg.head_dim as f32).powf(-0.5),
+                                        st,
+                                    )
+                                },
                                 "gated attention",
                             )?;
                         }
                     }
                     self.gemm_sequences(s, s.ao, &fa.o, s.delta, lengths)?;
+                    self.apply_lora(i, Group::AttentionOutput, s, s.ao, s.delta, lengths)?;
                 }
             }
             unsafe {
                 check(
-                    (cuda::api().cs1_add_rms_norm)(
+                    (self
+                        .reference
+                        .map_or(cuda::api().cs1_add_rms_norm, |r| r.add_rms_norm))(
                         p(s.res),
                         p(s.delta),
                         layer.post_norm.ptr,
@@ -1252,7 +1471,8 @@ impl Model {
                     "post-attention norm",
                 )?;
             }
-            self.gemm(s, s.x, &layer.gate_up, s.gate_up, t)?;
+            self.gemm_group(s, s.x, &layer.gate_up, s.gate_up, t, lengths, Group::GateUp)?;
+            self.apply_lora(i, Group::GateUp, s, s.x, s.gate_up, lengths)?;
             unsafe {
                 check(
                     (cuda::api().cs1_silu_mul)(
@@ -1267,13 +1487,16 @@ impl Model {
                 )?;
             }
             self.gemm_sequences(s, s.act, &layer.down, s.delta, lengths)?;
+            self.apply_lora(i, Group::Down, s, s.act, s.delta, lengths)?;
             let next = self
                 .layers
                 .get(i + 1)
                 .map_or(&self.final_norm, |l| &l.input_norm);
             unsafe {
                 check(
-                    (cuda::api().cs1_add_rms_norm)(
+                    (self
+                        .reference
+                        .map_or(cuda::api().cs1_add_rms_norm, |r| r.add_rms_norm))(
                         p(s.res),
                         p(s.delta),
                         next.ptr,
@@ -1344,7 +1567,9 @@ impl Model {
         // buffers hold exactly the shapes allocated by alloc_prefix(qb).
         unsafe {
             check(
-                (cuda::api().cs1_rms_norm)(
+                (self
+                    .reference
+                    .map_or(cuda::api().cs1_rms_norm, |r| r.rms_norm))(
                     p(s.res + qb * hb),
                     self.layers[0].input_norm.ptr,
                     p(s.x + qb * hb),
@@ -1359,7 +1584,23 @@ impl Model {
         for (i, layer) in self.layers.iter().enumerate() {
             match &layer.mixer {
                 Mixer::Linear(la) => {
-                    self.gemm(s, s.x + qb * hb, &la.in_proj, s.gdn_in + qb * ldbb, rows)?;
+                    self.gemm_group(
+                        s,
+                        s.x + qb * hb,
+                        &la.in_proj,
+                        s.gdn_in + qb * ldbb,
+                        rows,
+                        &[rows],
+                        Group::LinearInput,
+                    )?;
+                    self.apply_lora(
+                        i,
+                        Group::LinearInput,
+                        s,
+                        s.x + qb * hb,
+                        s.gdn_in + qb * ldbb,
+                        &[rows],
+                    )?;
                     let ld = ldb as i32;
                     let z = s.gdn_in + w.conv * BF16;
                     let b = z + vd * BF16;
@@ -1460,10 +1701,34 @@ impl Model {
                         )?;
                     }
                     self.gemm(s, s.ln + qb * vb, &la.out, s.delta + qb * hb, rows)?;
+                    self.apply_lora(
+                        i,
+                        Group::LinearOutput,
+                        s,
+                        s.ln + qb * vb,
+                        s.delta + qb * hb,
+                        &[rows],
+                    )?;
                     la_i += 1;
                 }
                 Mixer::Full(fa) => {
-                    self.gemm(s, s.x + qb * hb, &fa.qkv, s.attn_in + qb * ab, rows)?;
+                    self.gemm_group(
+                        s,
+                        s.x + qb * hb,
+                        &fa.qkv,
+                        s.attn_in + qb * ab,
+                        rows,
+                        &[rows],
+                        Group::AttentionInput,
+                    )?;
+                    self.apply_lora(
+                        i,
+                        Group::AttentionInput,
+                        s,
+                        s.x + qb * hb,
+                        s.attn_in + qb * ab,
+                        &[rows],
+                    )?;
                     let k = s.attn_in + w.attn_q * BF16;
                     let v = k + kvb;
                     let (q_base, t_flash) = (qb as i32, tend as i32);
@@ -1476,7 +1741,9 @@ impl Model {
                             cuda::copy_dd(p(s.ak), pre.attn_kv[fa_i].0.at(0), qb * kvb, st)?;
                         }
                         check(
-                            (cuda::api().cs1_attn_prep)(
+                            (self
+                                .reference
+                                .map_or(cuda::api().cs1_attn_prep, |r| r.attn_prep))(
                                 p(s.attn_in + qb * ab),
                                 p(k + qb * ab),
                                 w.attn_in as i32,
@@ -1522,12 +1789,22 @@ impl Model {
                         )?;
                     }
                     self.gemm(s, s.ao + qb * ob, &fa.o, s.delta + qb * hb, rows)?;
+                    self.apply_lora(
+                        i,
+                        Group::AttentionOutput,
+                        s,
+                        s.ao + qb * ob,
+                        s.delta + qb * hb,
+                        &[rows],
+                    )?;
                     fa_i += 1;
                 }
             }
             unsafe {
                 check(
-                    (cuda::api().cs1_add_rms_norm)(
+                    (self
+                        .reference
+                        .map_or(cuda::api().cs1_add_rms_norm, |r| r.add_rms_norm))(
                         p(s.res + qb * hb),
                         p(s.delta + qb * hb),
                         layer.post_norm.ptr,
@@ -1540,12 +1817,22 @@ impl Model {
                     "post-attention norm",
                 )?;
             }
-            self.gemm(
+            self.gemm_group(
                 s,
                 s.x + qb * hb,
                 &layer.gate_up,
                 s.gate_up + qb * 2 * cfg.intermediate * BF16,
                 rows,
+                &[rows],
+                Group::GateUp,
+            )?;
+            self.apply_lora(
+                i,
+                Group::GateUp,
+                s,
+                s.x + qb * hb,
+                s.gate_up + qb * 2 * cfg.intermediate * BF16,
+                &[rows],
             )?;
             unsafe {
                 check(
@@ -1567,13 +1854,23 @@ impl Model {
                 s.delta + qb * hb,
                 rows,
             )?;
+            self.apply_lora(
+                i,
+                Group::Down,
+                s,
+                s.act + qb * cfg.intermediate * BF16,
+                s.delta + qb * hb,
+                &[rows],
+            )?;
             let next = self
                 .layers
                 .get(i + 1)
                 .map_or(&self.final_norm, |l| &l.input_norm);
             unsafe {
                 check(
-                    (cuda::api().cs1_add_rms_norm)(
+                    (self
+                        .reference
+                        .map_or(cuda::api().cs1_add_rms_norm, |r| r.add_rms_norm))(
                         p(s.res + qb * hb),
                         p(s.delta + qb * hb),
                         next.ptr,

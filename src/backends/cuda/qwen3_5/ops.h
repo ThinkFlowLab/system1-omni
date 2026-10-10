@@ -142,6 +142,34 @@ int cs1_vision_add(void* x, const void* delta, size_t n, void* stream);
 int cs1_vision_to_float(const void* x, float* out, size_t n, void* stream);
 int cs1_vision_lora_add(void* x, const float* delta, size_t n, float scale, void* stream);
 
+
+// ---- Optional JEMM framework numerics (ABI 6 additive) ----
+void* cs1_reference_gemm_create(size_t workspace_bytes);
+int cs1_reference_rms_norm(const void* x, const void* w, void* out, int rows, int D, float eps, void* stream);
+int cs1_reference_add_rms_norm(void* residual, const void* delta, const void* w, void* out, int rows, int D,
+                     float eps, void* stream);
+size_t cs1_reference_gdn_workspace_floats(int T, int H);
+int cs1_reference_gdn_prefill(const void* q, const void* k, const void* v, const float* g, const void* beta,
+                    void* o, float* workspace, int T, int H, int HK, float scale, void* stream);
+int cs1_reference_attn_prep(const void* qg, const void* kr, int ld, const void* qw, const void* kw,
+                  const void* cos, const void* sin, void* q, void* gate, void* k, int T, int Hq, int Hk,
+                  int Dh, int half, float eps, void* stream);
+int cs1_reference_vision_norm(const void* x, const void* w, const void* b, void* y, int rows, int d, void* stream);
+int cs1_reference_vision_rope(const void* qkv, const float* co, const float* si, void* q, void* k, int n, int hidden, int head_dim, void* stream);
+int cs1_reference_vision_attention(const void* q, const void* k, const void* v, void* out, int n, int heads, int head_dim, void* workspace, void* stream);
+// Rotary's co parameter is FP32 angles, si is unused; unlike the legacy cos/sin API.
+// Language workspace is measured in FP32 elements and covers every length <= capacity.
+// Vision workspace adds 4*capacity*16*80 BF16 padding elements before that FP32 region.
+int cs1_reference_available(void);
+size_t cs1_reference_language_attention_workspace_floats(int capacity,int heads);
+size_t cs1_reference_vision_attention_workspace_floats(int capacity,int heads);
+int cs1_reference_attention(const void* q,const void* k,const void* v,int ldv,const void* gate,void* out,int tokens,int heads,int kv_heads,float scale,void* workspace,void* stream);
+int cs1_reference_vision_attention_padded(const void* q,const void* k,const void* v,void* out,int tokens,int heads,void* workspace,void* stream);
+// Create/destroy outside capture, on the owning device. The caller synchronizes before destroy.
+void* cs1_reference_patch_create(int rows,void* stream);
+int cs1_reference_patch(void* plan,const void* x,const void* weight,void* out);
+void cs1_reference_patch_destroy(void* plan);
+
 #ifdef __cplusplus
 }
 #endif

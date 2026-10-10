@@ -8,7 +8,7 @@ pub struct VisionGeometry {
     pub sin: Vec<f32>,
 }
 impl VisionGeometry {
-    pub fn new([t, h, w]: [usize; 3], config: &VisionConfig) -> Result<Self> {
+    fn patch_count([t, h, w]: [usize; 3], config: &VisionConfig) -> Result<usize> {
         config.validate()?;
         ensure!(
             t == 1 && h > 0 && w > 0 && h % 2 == 0 && w % 2 == 0,
@@ -17,7 +17,6 @@ impl VisionGeometry {
         let n = h
             .checked_mul(w)
             .ok_or_else(|| anyhow::anyhow!("vision grid overflow"))?;
-        // Processor bounds allow rounding up a 1,048,576-pixel source and narrow upscaled images.
         ensure!(
             if config.hidden_size == 1024 {
                 n <= 4608 && h <= 512 && w <= 512
@@ -26,6 +25,30 @@ impl VisionGeometry {
             },
             "vision grid exceeds processor bounds"
         );
+        Ok(n)
+    }
+    pub(crate) fn use_reference_angles(&mut self, grids: &[[usize; 3]], config: &VisionConfig) {
+        self.cos.clear();
+        let quarter = config.head_dim() / 4;
+        for &[_, h, w] in grids {
+            for br in 0..h / 2 {
+                for bc in 0..w / 2 {
+                    for ir in 0..2 {
+                        for ic in 0..2 {
+                            for pos in [br * 2 + ir, bc * 2 + ic] {
+                                for i in 0..quarter {
+                                    let inv = 1.0f32 / 10000f32.powf(i as f32 / quarter as f32);
+                                    self.cos.push(pos as f32 * inv);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    pub fn new([t, h, w]: [usize; 3], config: &VisionConfig) -> Result<Self> {
+        let n = Self::patch_count([t, h, w], config)?;
         let mut g = Self {
             indices: Vec::with_capacity(n * 4),
             weights: Vec::with_capacity(n * 4),
@@ -63,5 +86,47 @@ impl VisionGeometry {
             }
         }
         Ok(g)
+    }
+}
+
+/// Ordered image-local geometry concatenated for all-image projection row counts.
+pub(crate) struct BatchGeometry {
+    pub geometry: VisionGeometry,
+}
+impl BatchGeometry {
+    pub fn lengths(grids: &[[usize; 3]], config: &VisionConfig) -> Result<Vec<usize>> {
+        ensure!(
+            config.hidden_size == 1152 && (2..=4).contains(&grids.len()),
+            "batched vision requires 2..=4 unadapted 27B images"
+        );
+        let lengths = grids
+            .iter()
+            .map(|&grid| VisionGeometry::patch_count(grid, config))
+            .collect::<Result<Vec<_>>>()?;
+        let total = lengths.iter().try_fold(0usize, |n, &rows| {
+            n.checked_add(rows)
+                .ok_or_else(|| anyhow::anyhow!("vision batch row overflow"))
+        })?;
+        // Keep the aggregate allocation within the existing shared geometry bound.
+        ensure!(total <= 65536, "vision batch exceeds 65536 patches");
+        Ok(lengths)
+    }
+    pub fn new(grids: &[[usize; 3]], config: &VisionConfig) -> Result<Self> {
+        let lengths = Self::lengths(grids, config)?;
+        let total: usize = lengths.iter().sum();
+        let mut geometry = VisionGeometry {
+            indices: Vec::with_capacity(total * 4),
+            weights: Vec::with_capacity(total * 4),
+            cos: Vec::with_capacity(total * (config.head_dim() / 2)),
+            sin: Vec::with_capacity(total * (config.head_dim() / 2)),
+        };
+        for &grid in grids {
+            let image = VisionGeometry::new(grid, config)?;
+            geometry.indices.extend(image.indices);
+            geometry.weights.extend(image.weights);
+            geometry.cos.extend(image.cos);
+            geometry.sin.extend(image.sin);
+        }
+        Ok(Self { geometry })
     }
 }

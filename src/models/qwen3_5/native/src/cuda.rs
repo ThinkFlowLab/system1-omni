@@ -8,6 +8,9 @@ use std::sync::OnceLock;
 
 use anyhow::{Context, Result, bail, ensure};
 
+mod reference;
+pub use reference::Reference;
+
 /// `CS1_ABI_VERSION` in ops.h.
 const ABI_VERSION: u32 = 6;
 pub const LIBRARY: &str = "libqwen3_5_cuda.so";
@@ -73,10 +76,17 @@ macro_rules! api {
         pub struct Api {
             _lib: libloading::Library,
             vision_v2: Option<VisionV2>,
+            reference: Option<Reference>,
             $(pub $name: unsafe extern "C" fn($($ty),*) $(-> $ret)?,)*
         }
 
         impl Api {
+            pub fn reference(&self) -> Result<&Reference> {
+                let reference=self.reference.as_ref().context("JEMM requires the optional reference CUDA symbols; rebuild libqwen3_5_cuda.so")?;
+                // SAFETY: this capability query takes no arguments.
+                ensure!(unsafe { (reference.available)() } == 1, "JEMM reference numerics require a cuDNN 9 build; set CUDNN_INCLUDE_DIR and CUDNN_LIB_DIR");
+                Ok(reference)
+            }
             pub fn vision_v2(&self) -> Result<&VisionV2> {
                 self.vision_v2.as_ref().context("27B vision needs additive v2 CUDA symbols; rebuild libqwen3_5_cuda.so")
             }
@@ -92,7 +102,8 @@ macro_rules! api {
                     .with_context(|| format!("{} has no {}", LIBRARY, stringify!($name)))?;
                 )*
                 let vision_v2=VisionV2::resolve(&lib);
-                Ok(Self { _lib: lib, vision_v2, $($name,)* })
+                let reference=Reference::resolve(&lib);
+                Ok(Self { _lib: lib, vision_v2, reference, $($name,)* })
             }
         }
     };
