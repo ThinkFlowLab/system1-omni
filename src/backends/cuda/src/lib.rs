@@ -7,7 +7,7 @@ use std::{
     rc::Rc,
 };
 pub type Ptr = *mut c_void;
-type Kernel = unsafe extern "C" fn(*mut Ptr, i32, i32, i32, Ptr) -> i32;
+type Launch = unsafe extern "C" fn(*mut Ptr, i32, i32, i32, Ptr) -> i32;
 struct Context {
     lib: Library,
     stream: Ptr,
@@ -86,6 +86,15 @@ impl Cuda {
     pub fn sync(&self) -> Result<()> {
         self.ctx.sync()
     }
+    /// Resolve a kernel once while retaining the owning runtime and native code.
+    pub fn resolve(&self, name: &str) -> Result<Kernel> {
+        Ok(Kernel {
+            ctx: self.ctx.clone(),
+            launch: self
+                .ctx
+                .symbol::<Launch>(format!("laya_{name}\0").as_bytes())?,
+        })
+    }
     /// # Safety
     /// Tensor shape, dtype, layout, aliasing and allocation sizes must match the generated kernel.
     /// Buffers must belong to this context and stay alive until synchronization or graph destruction.
@@ -96,7 +105,7 @@ impl Cuda {
         );
         let k = self
             .ctx
-            .symbol::<Kernel>(format!("laya_{name}\0").as_bytes())?;
+            .symbol::<Launch>(format!("laya_{name}\0").as_bytes())?;
         self.ctx.check(unsafe {
             k(
                 args.as_ptr() as *mut Ptr,
@@ -151,7 +160,7 @@ impl Cuda {
     ) -> Result<()> {
         let k = self
             .ctx
-            .symbol::<Kernel>(format!("laya_{name}\0").as_bytes())?;
+            .symbol::<Launch>(format!("laya_{name}\0").as_bytes())?;
         self.ctx.check(unsafe {
             k(
                 args.as_ptr() as *mut Ptr,
@@ -243,5 +252,33 @@ impl Drop for Graph {
                 f(self.p);
             }
         }
+    }
+}
+
+/// A resolved entry point retaining its stream and native library.
+#[derive(Clone)]
+pub struct Kernel {
+    ctx: Rc<Context>,
+    launch: Launch,
+}
+impl Kernel {
+    /// # Safety
+    /// Shapes, dtype, layout, aliasing and pointer lifetimes must match this kernel.
+    /// Every pointer belongs to this context and stays alive through synchronization
+    /// or destruction of any graph that captures the launch.
+    pub unsafe fn launch(&self, args: &[Ptr], b: usize, l: usize) -> Result<()> {
+        ensure!(
+            b > 0 && b <= 16 && l > 0 && l <= 512 && l.is_multiple_of(16),
+            "invalid CUDA shape"
+        );
+        self.ctx.check(unsafe {
+            (self.launch)(
+                args.as_ptr() as *mut Ptr,
+                b as i32,
+                l as i32,
+                (b * l) as i32,
+                self.ctx.stream,
+            )
+        })
     }
 }
