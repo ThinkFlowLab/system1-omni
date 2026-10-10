@@ -16,8 +16,8 @@ System1-Omni 可以为 agent 提供结构化决策，例如把工单分给账单
 
 ## 开始前
 
-- Linux x86_64 CPU，worker 使用 4 个 PyTorch 线程。Apple 用户见
-  [MPS 指南](../recipe/laya/apple-silicon.md)。
+- Linux x86_64 CPU，worker 使用 4 个 PyTorch 线程。Apple Silicon Mac 按文末说明
+  修改两条安装命令；使用 Apple GPU 见 [MPS 指南](../recipe/laya/apple-silicon.md)。
 - 为短文本示例预留 8 GB 主机内存、6 GB 空闲磁盘，用于环境、模型和 Rust 构建，
   不含工具链安装。这是规划余量，不是实测最低配置；长输入和额外模型需要更多资源。
 - 安装 Git、curl、带 `venv`/pip 的 **Python 3.12**、Rust stable/Cargo、
@@ -101,7 +101,7 @@ frontend 的健康响应应与 worker 一致。决策应返回 HTTP 200，
 ## 5. 核对三类问题并记录环境（终端 3）
 
 ```sh
-python3.12 recipe/compare_with_backend.py --model english \
+.venv/bin/python recipe/compare_with_backend.py --model english \
   --backend http://127.0.0.1:8000 --frontend http://127.0.0.1:8080
 git rev-parse HEAD
 .venv/bin/python -m pip freeze
@@ -128,9 +128,21 @@ PY
 
 端口占用时另选空闲端口，并同步修改环境变量、URL 和比较命令。
 连接失败或 502 时先查 worker 日志和直连健康检查；504 表示 frontend 等待超时，
-见[frontend 配置](../src/frontend/README.md)。下载失败时检查网络和缓存空间；
+见[frontend 配置](../src/frontend/README.md)。下载失败或 `Fetching 5 files` 进度长时间不动时，
+检查网络和缓存空间，按 Ctrl-C 后重新启动 worker；
 只有完整模型已缓存时才能使用 `HF_HUB_OFFLINE=1`。启动时可能出现 `choice:11+`
 温度被限制的警告，本示例及二选一检查仍可运行，受影响条目的置信度应视为未校准。
+
+Apple Silicon Mac 没有 `torch==2.8.0+cpu` wheel，第 1 步的两条安装命令会报
+`No matching distribution found for torch==2.8.0+cpu`。改用下面两条命令安装普通 macOS wheel
+和其余固定依赖，其他步骤不变；编译器和链接器来自 Xcode Command Line Tools
+（`xcode-select --install`）。在 M5 Pro、macOS 26.6 上，其他步骤均原样跑通，
+输出的答案与[实际运行记录](../recipe/laya/validation.md)一致。
+
+```sh
+.venv/bin/python -m pip install 'torch==2.8.0' --index-url https://download.pytorch.org/whl/cpu
+sed 's/+cpu$//' recipe/laya/requirements-cpu.txt | .venv/bin/python -m pip install -r /dev/stdin
+```
 
 下一步：[Apple MPS](../recipe/laya/apple-silicon.md)、
 [原生 Open-Jev CUDA](../recipe/open_jev/native.md)、[支持矩阵](supported-models.md)。

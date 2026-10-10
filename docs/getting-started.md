@@ -14,7 +14,7 @@ It does not exercise native Rust model execution or image, audio or video infere
 
 | Requirement | This walkthrough |
 | --- | --- |
-| Host | Linux x86_64 CPU; four PyTorch threads, no accelerator required. Apple users should use the [MPS recipe](../recipe/laya/apple-silicon.md). |
+| Host | Linux x86_64 CPU; four PyTorch threads, no accelerator required. On an Apple Silicon Mac, change the two install commands as in [Troubleshooting](#troubleshooting-and-next-steps); for the Apple GPU, use the [MPS recipe](../recipe/laya/apple-silicon.md). |
 | RAM and disk | Budget 8 GB host RAM and 6 GB free disk for the environment, English checkpoint and Rust build, excluding installation of the toolchains themselves. These are planning allowances for short text, not measured minimums; the [reproduction host](../recipe/laya/validation.md) had more memory. Longer inputs and extra checkpoints need more. |
 | Tools | Git, curl, Python **3.12** with `venv`/pip, Rust stable with Cargo, and a C compiler/linker. On Debian/Ubuntu the compiler tools are in `build-essential`. The reproduction used Python 3.12.13 and Rust/Cargo 1.98.1. |
 | Dependencies | `laya[serve]==0.3.20`, CPU-only `torch==2.8.0+cpu`, `transformers==4.55.0`; other tested direct dependencies are pinned in [requirements-cpu.txt](../recipe/laya/requirements-cpu.txt). This is separate from the MPS environment. |
@@ -103,7 +103,7 @@ when following the Chinese entry page.
 ## 5. Check all question types and record your setup — terminal 3
 
 ```sh
-python3.12 recipe/compare_with_backend.py --model english \
+.venv/bin/python recipe/compare_with_backend.py --model english \
   --backend http://127.0.0.1:8000 --frontend http://127.0.0.1:8080
 git rev-parse HEAD
 .venv/bin/python -m pip freeze
@@ -137,6 +137,18 @@ Separate any download/build/startup durations from first-request and warm latenc
 - **`cargo` or `python3.12` missing:** install the prerequisite toolchain before
   step 1. If Python lacks `venv`/pip, install those for that interpreter, or use
   `uv venv --python 3.12 --seed .venv` in place of `python3.12 -m venv .venv`.
+- **Apple Silicon Mac:** PyTorch has no `torch==2.8.0+cpu` wheel for macOS, so both
+  install commands in step 1 fail with `No matching distribution found for torch==2.8.0+cpu`.
+  The compiler and linker come from the Xcode Command Line Tools (`xcode-select --install`).
+  Install the plain macOS wheel and the other pins instead; on an M5 Pro with macOS 26.6
+  the other steps then ran unchanged and printed the same answers as the
+  [recorded run](../recipe/laya/validation.md).
+
+    ```sh
+    .venv/bin/python -m pip install 'torch==2.8.0' --index-url https://download.pytorch.org/whl/cpu
+    sed 's/+cpu$//' recipe/laya/requirements-cpu.txt | .venv/bin/python -m pip install -r /dev/stdin
+    ```
+
 - **Connection refused / frontend 502:** check the worker's terminal and its
   direct health URL first. The frontend can listen even while its worker is absent.
   A 504 means the worker exceeded the frontend timeout; see the
@@ -145,8 +157,10 @@ Separate any download/build/startup durations from first-request and warm latenc
   matching bind variables, backend URL and every curl/comparison URL. Do not
   stop another service to free its port.
 - **Download failure:** check Hugging Face connectivity and free cache storage;
-  retry the worker. `HF_HUB_OFFLINE=1` is suitable only after the complete
-  checkpoint is cached; it cannot prepare an empty cache.
+  retry the worker. A `Fetching 5 files` progress bar that stops advancing for
+  minutes is a failure too: stop the worker with Ctrl-C and start it again.
+  `HF_HUB_OFFLINE=1` is suitable only after the complete checkpoint is cached;
+  it cannot prepare an empty cache.
 - **Temperature warning:** this checkpoint/runtime combination warns that a
   `choice:11+` calibration temperature is clamped. That warning did not prevent
   this demo or the two-option comparison; confidence for affected entries should
