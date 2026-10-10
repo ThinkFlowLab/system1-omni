@@ -1,6 +1,7 @@
 # Supported models and hardware
 
-This page covers what runs from `main`. Start with the
+This page distinguishes validated serving paths from experimental integrations.
+Start with the
 [CPU decision walkthrough](getting-started.md). The
 [rolling model tracker (#83)](https://github.com/ThinkFlowLab/system1-omni/issues/83)
 records available paths separately from proposed integrations and hardware evidence.
@@ -15,6 +16,8 @@ Models that are being added are also tracked in issues labeled [new model](https
 | Cua-S1 4B 0.2, `text` adapter | [Native Rust worker](../recipe/cua_s1/native.md) on the [Qwen3.5 CUDA kernels](../src/backends/cuda/qwen3_5/README.md) | Not supported | Validated on compute capability 8.9 ([#19](https://github.com/ThinkFlowLab/system1-omni/pull/19), [#52](https://github.com/ThinkFlowLab/system1-omni/pull/52)) | Not supported | Compute capability 8.0 or newer, the CUDA toolkit to build, weights merged with `export_text_merged.py` |
 | Cua-S1 4B 0.2, `multimodal` adapter | Reference worker on Transformers and PEFT, [`src/frontend/cua_s1.py`](../src/frontend/cua_s1.py); no recipe yet | Not supported | Validated ([#17](https://github.com/ThinkFlowLab/system1-omni/pull/17), [#18](https://github.com/ThinkFlowLab/system1-omni/pull/18)) | Not supported | The state is one PNG or JPEG image; upstream's `weights.lock.json` next to the base weights |
 | Open-Jev-27B-v1.1 | [Native Rust/CUDA worker](../recipe/open_jev/native.md) on the shared Qwen3.5/3.8 executor | Not supported | Validated on H200 (sm_90) for the [74 single-candidate workload](../recipe/open_jev/validation.md) | Not supported | Compute capability 8.0 or newer, CUDA toolkit to build, exported merged weights and trained head |
+| Open-Jev-9B | The same [native Rust/CUDA worker](../recipe/open_jev/native.md) | Not supported | Validated on compute capability 8.9 against the reference for [253 requests](../recipe/open_jev/validation-9b.md) | Not supported | Compute capability 8.0 or newer, CUDA toolkit to build, exported merged weights and trained head |
+| autotrust/JEV-27B-VL | [Experimental native worker](../recipe/jev_vl/README.md), single-question API | Contract tests only; no CPU inference | H800 frozen-corpus check; [experimental scope and limits](../recipe/jev_vl/validation.md) | Not supported | Pinned merged checkpoint, rebuilt ABI 6 CUDA library; image inputs require offline Transformers preencoding |
 | CLM-v0.1-8B | [External `clm-serve` recipe](../recipe/clm/README.md) with a CPU stub embeddings server | **Stub-encoder contract checks only** ([#23](https://github.com/ThinkFlowLab/system1-omni/pull/23)); not real Qwen3-8B decisions | Real encoder unverified by the merged recipe | Unverified | Python, upstream CLM and head checkpoint; a real encoder requires a separate embeddings server |
 
 - **Validated:** covered by the recipe on `main` or by the checks in the linked merged pull request.

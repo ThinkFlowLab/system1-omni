@@ -1,0 +1,41 @@
+{
+ "id": "txt-short-choice-03",
+ "status": 200,
+ "body": {
+  "kind": "choice",
+  "effective_kind": "choice",
+  "options": [
+   "Coupon offer",
+   "Policy explanation",
+   "Closing summary",
+   "Follow-up question",
+   "Apology plus replacement",
+   "How-to guide link",
+   "Apology plus refund",
+   "Escalation notice"
+  ],
+  "probabilities": [
+   0.0027445763076187255,
+   0.9180019118751543,
+   0.0025028338840893728,
+   0.010144387922913733,
+   0.0017845491029472131,
+   0.0017042485222995866,
+   0.06308445833850033,
+   3.303404647664537e-05
+  ],
+  "choice_index": 1,
+  "choice": "Policy explanation",
+  "adaptation": "native",
+  "protocol": "jev27-bare-v1",
+  "model": "autotrust/JEV-27B-VL",
+  "usage": {
+   "prompt_tokens": 132,
+   "completion_tokens": 1,
+   "total_tokens": 133
+  },
+  "elapsed_seconds": 0.09248805046081543,
+  "num_model_requests": 1
+ },
+ "client_s": 0.09334967378526926
+}

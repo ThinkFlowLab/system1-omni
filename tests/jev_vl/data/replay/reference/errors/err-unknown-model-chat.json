@@ -1,0 +1,13 @@
+{
+ "id": "err-unknown-model-chat",
+ "status": 404,
+ "body": {
+  "error": {
+   "message": "The model `no-such-model` does not exist.",
+   "type": "NotFoundError",
+   "param": "model",
+   "code": 404
+  }
+ },
+ "client_s": 0.0011448357254266739
+}

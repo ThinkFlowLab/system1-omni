@@ -1,0 +1,37 @@
+{
+ "id": "img-score-02",
+ "status": 200,
+ "body": {
+  "kind": "score",
+  "effective_kind": "score",
+  "options": [
+   "0",
+   "1",
+   "2",
+   "3",
+   "4",
+   "5"
+  ],
+  "probabilities": [
+   0.5858585263583825,
+   0.025854732829442485,
+   0.031560380920589284,
+   0.08014389211566829,
+   0.12775511336990117,
+   0.1488273544060162
+  ],
+  "choice_index": 0,
+  "choice": "0",
+  "adaptation": "native",
+  "protocol": "jev27-bare-v1",
+  "model": "autotrust/JEV-27B-VL",
+  "usage": {
+   "prompt_tokens": 959,
+   "completion_tokens": 1,
+   "total_tokens": 960
+  },
+  "elapsed_seconds": 0.1022341251373291,
+  "num_model_requests": 1
+ },
+ "client_s": 0.10699818003922701
+}

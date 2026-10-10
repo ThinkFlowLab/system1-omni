@@ -24,11 +24,10 @@ CUA_S1_MODEL=weights/cua-s1-4b-0.2-text-merged target/release/omni-cua-s1-native
 ```
 
 For the local CUDA Graph experiment, also set `CUA_S1_GRAPH=1`. The first use of
-each exact prompt length warms the GEMM plans and captures the forward pass;
-later requests replay it with freshly uploaded token ids. At most eight lengths
-are cached. Growing the scratch allocation clears the captures before freeing
+each exact ordered prompt-length vector warms the GEMM plans and captures the forward pass;
+later requests replay it with freshly uploaded token ids. The text worker keeps a 64-entry FIFO cache. Growing the scratch allocation clears the captures before freeing
 their buffers. Capture adds first-use latency; leave the variable unset to use
-the eager control. Rebuild both the worker and CUDA library together (ABI 4).
+the eager control. Rebuild both the worker and CUDA library together (ABI 6).
 If capture fails, the worker returns the completed eager result and disables
 Graph capture/replay for its remaining lifetime, logging the failure to stderr.
 
@@ -41,3 +40,7 @@ cargo test -p omni-cua-s1-native
 CUA_S1_CUDA_LIB=$PWD/target/release/libqwen3_5_cuda.so \
   cargo test --release -p omni-qwen3-5-native --test kernels -- --ignored
 ```
+
+For the screenshot worker, [the vision Graph recipe](native_vision_graph.md)
+documents `CUA_S1_VISION_GRAPH`, retained single-grid scratch, memory/lifetime
+limits and the real CUDA capture-failure wrapper build and test commands.

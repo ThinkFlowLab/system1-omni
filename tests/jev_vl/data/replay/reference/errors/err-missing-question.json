@@ -1,0 +1,13 @@
+{
+ "id": "err-missing-question",
+ "status": 400,
+ "body": {
+  "error": {
+   "message": "1 validation error:\n  {'type': 'missing', 'loc': 'body.question', 'msg': 'Field required', 'input': '<dict of 2 items>'}",
+   "type": "Bad Request",
+   "param": "body.question",
+   "code": 400
+  }
+ },
+ "client_s": 0.0007784180343151093
+}

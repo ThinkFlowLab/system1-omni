@@ -43,8 +43,8 @@ scheduling from model execution; a native Metal backend is planned, while LAYA
 already has a Python worker for Apple GPUs through PyTorch MPS.
 
 The Rust frontend forwards requests to a separately running model worker. The
-Cua-S1 4B 0.2 `text` adapter and Open-Jev-27B-v1.1 have native workers using
-shared CUDA kernels in this repository.
+Cua-S1 4B 0.2 `text` adapter, Open-Jev-27B-v1.1 and Open-Jev-9B have native
+workers using shared CUDA kernels in this repository.
 
 ## News
 
@@ -64,9 +64,9 @@ shared CUDA kernels in this repository.
   learned heads, device state, and kernel selection. Native workers have separate
   processing and executor modules, with shared FIFO admission and blocking
   dispatch in the [native runtime](src/runtime/README.md).
-- **Native CUDA workers.** The Cua-S1 4B 0.2 `text` adapter and
-  Open-Jev-27B-v1.1 run as native workers with shared CUDA kernels. Cua-S1
-  also has a Python worker that serves as the correctness reference.
+- **Native CUDA workers.** The Cua-S1 4B 0.2 `text` adapter,
+  Open-Jev-27B-v1.1 and Open-Jev-9B run as native workers with shared CUDA
+  kernels. Cua-S1 also has a Python worker that serves as the correctness reference.
 - **LAYA text serving.** LAYA runs as an external CPU Python worker, the
   in-repository Python MPS/CPU worker, or a native Rust/CUDA worker on Hopper.
 - **CUDA backend and planned Metal backend.** High-performance GPU operations
@@ -85,6 +85,11 @@ requests to separately running workers, whose handlers coordinate independent
 processors and executors. Native workers use shared FIFO admission and
 blocking dispatch per loaded executor. Processing orchestration, batch budgets,
 compatibility grouping and dynamic batching remain planned.
+
+Open-Jev already packs candidates within one request for selected prefill GEMMs,
+with bounded groups and independent sequence state. See the
+[native recipe](recipe/open_jev/native.md) and
+[matched H200 measurements](benchmarks/prefill_batching/README.md).
 
 | Layer | Responsibility | Native target implementation |
 | --- | --- | --- |
@@ -153,8 +158,8 @@ The [frontend documentation](src/frontend/README.md) describes transport and con
 LAYA text serving uses the upstream CPU worker, the in-repository Python MPS/CPU
 worker, or a native Rust/CUDA worker on Hopper. The Cua-S1 4B 0.2 `text` adapter
 runs as a Python worker or as a native worker on CUDA. Open-Jev-27B-v1.1
-runs as a native Rust/CUDA worker. Cua-S1 also has a Python screenshot worker,
-and CLM has a stub-encoder contract recipe:
+and Open-Jev-9B run on the same native Rust/CUDA worker. Cua-S1 also has a
+Python screenshot worker, and CLM has a stub-encoder contract recipe:
 
 | Model | Status |
 | --- | --- |
@@ -162,6 +167,8 @@ and CLM has a stub-encoder contract recipe:
 | Cua-S1 4B 0.2 (`text` adapter) | [Python worker](recipe/cua_s1/text.md); [native worker](recipe/cua_s1/native.md), CUDA, run on sm_89 |
 | Cua-S1 4B 0.2 (`multimodal` adapter) | [Python CUDA worker](src/frontend/cua_s1.py); one PNG/JPEG screenshot, `choice`; native screenshot execution remains in progress |
 | Open-Jev-27B-v1.1 | [Native Rust/CUDA worker](recipe/open_jev/native.md); eager independent text candidates; [H200 validation](recipe/open_jev/validation.md) |
+| Open-Jev-9B | The same [native Rust/CUDA worker](recipe/open_jev/native.md); eager independent text candidates; [reference comparison on sm_89](recipe/open_jev/validation-9b.md) |
+| autotrust/JEV-27B-VL | [Experimental Rust/CUDA worker](recipe/jev_vl/README.md); single-question text and offline-preencoded image inputs; [bounded H800 validation and limits](recipe/jev_vl/validation.md) |
 | CLM-v0.1-8B | [External worker with a CPU stub encoder](recipe/clm/README.md); contract checks only, real Qwen3-8B decisions unverified by this recipe |
 
 [Supported models and hardware](docs/supported-models.md) lists the devices

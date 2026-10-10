@@ -1,0 +1,12 @@
+{
+ "id": "err-choice-1opt",
+ "status": 400,
+ "body": {
+  "error": {
+   "message": "choice needs 2-256 options, got 1",
+   "type": "BadRequestError",
+   "code": 400
+  }
+ },
+ "client_s": 0.000725841149687767
+}

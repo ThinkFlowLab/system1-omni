@@ -1,0 +1,37 @@
+{
+ "id": "txt-short-choice-01",
+ "status": 200,
+ "body": {
+  "kind": "choice",
+  "effective_kind": "choice",
+  "options": [
+   "Close ticket as resolved",
+   "Escalate to billing team",
+   "Issue a partial refund",
+   "Offer store credit",
+   "Send a replacement",
+   "Ask for more photos"
+  ],
+  "probabilities": [
+   0.011092263983719692,
+   0.4726254685648107,
+   0.28019248649417827,
+   0.19981120727094837,
+   0.007494950231061757,
+   0.02878362345528132
+  ],
+  "choice_index": 1,
+  "choice": "Escalate to billing team",
+  "adaptation": "native",
+  "protocol": "jev27-bare-v1",
+  "model": "autotrust/JEV-27B-VL",
+  "usage": {
+   "prompt_tokens": 119,
+   "completion_tokens": 1,
+   "total_tokens": 120
+  },
+  "elapsed_seconds": 0.09194016456604004,
+  "num_model_requests": 1
+ },
+ "client_s": 0.0927958907559514
+}

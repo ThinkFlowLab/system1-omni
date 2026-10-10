@@ -3,7 +3,7 @@ name = "omni-open-jev-native"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "Native Rust/CUDA worker for Open-Jev-27B-v1.1"
+description = "Native Rust/CUDA worker for Open-Jev-27B-v1.1 and Open-Jev-9B"
 
 [dependencies]
 anyhow = "1.0.100"
@@ -17,3 +17,7 @@ tokio = { version = "1.49.0", features = ["macros", "net", "rt-multi-thread", "s
 [[test]]
 name = "contract"
 path = "../../../../tests/open_jev/contract.rs"
+
+[[test]]
+name = "prefill_batch"
+path = "../../../../tests/open_jev/prefill_batch.rs"

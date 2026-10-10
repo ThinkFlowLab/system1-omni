@@ -1,0 +1,29 @@
+{
+ "id": "txt-short-noul-01",
+ "status": 200,
+ "body": {
+  "kind": "noul",
+  "effective_kind": "noul",
+  "options": [
+   "false",
+   "true"
+  ],
+  "probabilities": [
+   0.7432914931241411,
+   0.2567085068758589
+  ],
+  "choice_index": 0,
+  "choice": "false",
+  "adaptation": "native",
+  "protocol": "jev27-bare-v1",
+  "model": "autotrust/JEV-27B-VL",
+  "usage": {
+   "prompt_tokens": 78,
+   "completion_tokens": 1,
+   "total_tokens": 79
+  },
+  "elapsed_seconds": 0.09781861305236816,
+  "num_model_requests": 1
+ },
+ "client_s": 0.09990660101175308
+}

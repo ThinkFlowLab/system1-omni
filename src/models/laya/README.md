@@ -37,6 +37,10 @@ and [measured scope](../../../recipe/laya/native/VALIDATION.md).
 ## CPU checks
 
 The normal workspace tests cover configuration errors, malformed tensors, inventory mismatches and conversion boundaries without downloading weights.
+Feature-enabled CI also runs [CPU host/ABI regressions](../../../tests/cuda/laya/README.md)
+for resolved dispatch, grouped uploads and Graph capture cleanup. They compile a small
+native fixture with `cc` on Linux/macOS and require no CUDA toolkit or weights;
+they do not establish GPU numerical parity.
 
 To check the complete checkpoint, use `convaiinnovations/laya` revision `55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851` and a Python environment with PyTorch, safetensors and NumPy:
 
