@@ -11,6 +11,7 @@ import gc
 import hashlib
 import importlib.metadata
 import json
+import math
 import os
 import platform
 import shutil
@@ -30,8 +31,6 @@ PINS = {
 LABELS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"
 SYSTEM = ("Choose the best available candidate for the question using only the supplied state. "
           "Return exactly one candidate label.")
-CALIBRATION = {"temperature": 1.3480874159655591, "mm_temperature": 1.3954832341582943,
-               "threshold": 0.9872681877423998}
 INVENTORY_PATH = Path(__file__).with_name("pinned_inventory.json")
 
 
@@ -191,9 +190,14 @@ def export_checkpoint(base, adapter, out, provenance, *, tokenizer=None, invento
         raise ValueError("untied head shape disagrees with text configuration")
     adapter_config = json.loads((adapter / "adapter_config.json").read_text())
     pairs, scale = adapter_pairs(inventory["base"]["tensors"], inventory["adapter"]["tensors"], adapter_config)
-    calibration = json.loads((adapter / "decision_config.json").read_text())
-    if any(calibration.get(key) != value for key, value in CALIBRATION.items()):
-        raise ValueError("decision calibration differs from pinned JEMM")
+    decision = json.loads((adapter / "decision_config.json").read_text())
+    calibration = {}
+    for key in ("temperature", "mm_temperature", "threshold"):
+        value = decision.get(key) if isinstance(decision, dict) else None
+        if type(value) not in (int, float) or not math.isfinite(value) or (
+                value <= 0 if key != "threshold" else not 0 <= value <= 1):
+            raise ValueError(f"invalid decision calibration: {key}")
+        calibration[key] = value
     if tokenizer is None:
         from transformers import AutoTokenizer
         tokenizer = AutoTokenizer.from_pretrained(str(base), local_files_only=True)
@@ -305,7 +309,7 @@ def export_checkpoint(base, adapter, out, provenance, *, tokenizer=None, invento
     exports = {p.name: sha256(p) for p in sorted(out.iterdir()) if p.is_file() and not p.name.endswith(".tmp") and p.name != "export_progress.json"}
     if "jemm_lm_head.safetensors" not in exports or "vision.safetensors" not in exports:
         raise ValueError("export lacks selected head or vision tensors")
-    manifest = {"format": "jemm-native/1", "model_id": "JEMM", **PINS, **CALIBRATION,
+    manifest = {"format": "jemm-native/1", "model_id": "JEMM", **PINS, **calibration,
                 "max_tokens": 8192, "max_mm_tokens": 3072, "chat_prefix": chat_prefix, "chat_suffix": chat_suffix,
                 "enable_thinking": False, "preserve_thinking": False, "labels": list(LABELS), "label_token_ids": label_ids,
                 "label_head_file": "jemm_lm_head.safetensors", "label_head_tensor": "weight", "label_head_dtype": "BF16",

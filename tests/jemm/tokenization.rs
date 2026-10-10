@@ -43,6 +43,13 @@ fn fixture() -> (Fixture, Value) {
     )
     .unwrap();
     let manifest = json!({"format":"jemm-native/1","model_id":"JEMM","base_model_id":"Qwen/Qwen3.8-27B","base_revision":contract::BASE_REVISION,"checkpoint_revision":contract::CHECKPOINT_REVISION,"source_revision":contract::SOURCE_REVISION,"max_tokens":8192,"max_mm_tokens":3072,"label_token_ids":(1..=32).collect::<Vec<_>>(),"chat_prefix":format!("<|im_start|>system\n{}<|im_end|>\n<|im_start|>user\n",contract::SYSTEM),"chat_suffix":"<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n","temperature":1.3480874159655591,"mm_temperature":1.3954832341582943,"threshold":0.9872681877423998});
+    std::fs::write(
+        dir.join("decision_config.json"),
+        serde_json::to_vec(&json!({"temperature":manifest["temperature"],
+            "mm_temperature":manifest["mm_temperature"], "threshold":manifest["threshold"]}))
+        .unwrap(),
+    )
+    .unwrap();
     (Fixture(dir), manifest)
 }
 #[test]
@@ -86,7 +93,7 @@ fn exported_tokenizer_truncation_and_padding_cannot_change_request_tokens() {
     assert!(prepared.inputs[0].ids.len() > 3);
 }
 #[test]
-fn rejects_custom_calibration_for_pinned_adapter() {
+fn rejects_manifest_calibration_disagreement() {
     let (f, mut m) = fixture();
     m["mm_temperature"] = json!(1.);
     assert!(
@@ -94,6 +101,51 @@ fn rejects_custom_calibration_for_pinned_adapter() {
             .err()
             .unwrap()
             .to_string()
-            .contains("pinned JEMM calibration")
+            .contains("manifest disagrees with decision_config.json")
+    );
+}
+
+#[test]
+fn file_driven_calibration_must_be_finite_in_range_and_agree_with_manifest() {
+    for (field, invalid) in [
+        ("temperature", json!(0.0)),
+        ("mm_temperature", json!(-1.0)),
+        ("threshold", json!(1.1)),
+    ] {
+        let (f, mut m) = fixture();
+        m[field] = invalid;
+        std::fs::write(
+            f.0.join("decision_config.json"),
+            serde_json::to_vec(&json!({"temperature":m["temperature"],
+                "mm_temperature":m["mm_temperature"], "threshold":m["threshold"]}))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(
+            Processor::load(&f.0, &m)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("invalid calibration")
+        );
+    }
+    let (f, mut m) = fixture();
+    m["temperature"] = json!(2.0);
+    m["mm_temperature"] = json!(3.0);
+    m["threshold"] = json!(0.5);
+    std::fs::write(
+        f.0.join("decision_config.json"),
+        serde_json::to_vec(&json!({"temperature":2.0,"mm_temperature":3.0,"threshold":0.5}))
+            .unwrap(),
+    )
+    .unwrap();
+    let p = Processor::load(&f.0, &m).unwrap();
+    let prepared = p
+        .prepare(br#"{"questions":{"q":{"type":"noul"}}}"#)
+        .unwrap();
+    let response = prepared.context.finish(vec![vec![2.0, 0.0]]).unwrap();
+    assert!(
+        (response["answers"]["q"]["noul"].as_f64().unwrap() - 1.0 / (1.0 + (-1.0f64).exp())).abs()
+            < 1e-12
     );
 }

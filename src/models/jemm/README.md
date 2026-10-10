@@ -17,10 +17,11 @@ The exporter verifies pinned file SHA-256s and tensor inventory, merges language
 LoRA in FP32 into cloned BF16 weights and extracts 32 rows from the untied LM
 head. `jemm_export.json` records every exported file's SHA-256. Startup verifies
 complete file/shard coverage before CUDA initialization; keep files immutable
-while serving. This head requires the pinned temperatures 1.3480874159655591
-(text), 1.3954832341582943 (images) and threshold 0.9872681877423998. Follow-up
-#122 loads validated calibration from the checksum-covered decision config;
-its calibration policy is a separate change. The threshold is provenance and
+while serving. Calibration loads from checksum-covered `decision_config.json`; temperatures
+must be finite and positive, threshold finite and within [0,1], and all values
+must agree with the export manifest. The pinned artifact values are
+1.3480874159655591 (text), 1.3954832341582943 (images) and 0.9872681877423998
+(threshold). The threshold is provenance and
 does not gate SystemOne responses.
 
 ## Request and response contract
