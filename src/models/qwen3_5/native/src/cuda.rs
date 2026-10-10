@@ -9,7 +9,7 @@ use std::sync::OnceLock;
 use anyhow::{Context, Result, bail, ensure};
 
 /// `CS1_ABI_VERSION` in ops.h.
-const ABI_VERSION: u32 = 4;
+const ABI_VERSION: u32 = 6;
 pub const LIBRARY: &str = "libqwen3_5_cuda.so";
 
 /// A `cudaStream_t`.
@@ -48,6 +48,17 @@ macro_rules! api {
 }
 
 api! {
+    cs1_vision_linear(gemm: *mut c_void, x: *const c_void, w: *const c_void, bias: *const c_void, y: *mut c_void, m: c_int, n: c_int, k: c_int, stream: Stream) -> c_int;
+    cs1_gemm_f32(gemm: *mut c_void, x: *const f32, w: *const f32, y: *mut f32, m: c_int, n: c_int, k: c_int, stream: Stream) -> c_int;
+    cs1_vision_norm(x: *const c_void, w: *const c_void, b: *const c_void, y: *mut c_void, rows: c_int, d: c_int, stream: Stream) -> c_int;
+    cs1_vision_position(x: *mut c_void, table: *const c_void, indices: *const i32, weights: *const f32, n: c_int, stream: Stream) -> c_int;
+    cs1_vision_rope(qkv: *const c_void, co: *const f32, si: *const f32, q: *mut c_void, k: *mut c_void, n: c_int, stream: Stream) -> c_int;
+    cs1_vision_attention(q: *const c_void, k: *const c_void, v: *const c_void, out: *mut c_void, n: c_int, stream: Stream) -> c_int;
+    cs1_vision_bias(x: *mut c_void, bias: *const c_void, n: usize, d: c_int, stream: Stream) -> c_int;
+    cs1_vision_gelu(x: *mut c_void, n: usize, exact: c_int, stream: Stream) -> c_int;
+    cs1_vision_add(x: *mut c_void, delta: *const c_void, n: usize, stream: Stream) -> c_int;
+    cs1_vision_to_float(x: *const c_void, out: *mut f32, n: usize, stream: Stream) -> c_int;
+    cs1_vision_lora_add(x: *mut c_void, delta: *const f32, n: usize, scale: f32, stream: Stream) -> c_int;
     cs1_abi_version() -> u32;
     cs1_error_string(code: c_int) -> *const c_char;
     cs1_set_device(device: c_int) -> c_int;
@@ -55,12 +66,15 @@ api! {
     cs1_free(ptr: *mut c_void) -> c_int;
     cs1_stream_create(stream: *mut Stream) -> c_int;
     cs1_stream_sync(stream: Stream) -> c_int;
+    cs1_stream_destroy(stream: Stream) -> c_int;
     cs1_graph_begin(stream: Stream) -> c_int;
     cs1_graph_end(stream: Stream, exec: *mut *mut c_void) -> c_int;
     cs1_graph_launch(exec: *mut c_void, stream: Stream) -> c_int;
     cs1_graph_destroy(exec: *mut c_void) -> c_int;
     cs1_upload(dst: *mut c_void, src: *const c_void, bytes: usize, stream: Stream) -> c_int;
     cs1_download(dst: *mut c_void, src: *const c_void, bytes: usize, stream: Stream) -> c_int;
+    cs1_copy_dd(dst: *mut c_void, src: *const c_void, bytes: usize, stream: Stream) -> c_int;
+    cs1_copy2d(dst: *mut c_void, dpitch: usize, src: *const c_void, spitch: usize, width: usize, height: usize, stream: Stream) -> c_int;
     cs1_embed(ids: *const i32, table: *const c_void, out: *mut c_void, t: c_int, d: c_int, stream: Stream) -> c_int;
     cs1_rms_norm(
         x: *const c_void, w: *const c_void, out: *mut c_void, rows: c_int, d: c_int, eps: f32, stream: Stream,
@@ -86,6 +100,11 @@ api! {
         q: *const c_void, k: *const c_void, v: *const c_void, g: *const f32, beta: *const c_void, o: *mut c_void,
         workspace: *mut f32, t: c_int, h: c_int, hk: c_int, scale: f32, stream: Stream,
     ) -> c_int;
+    cs1_gdn_prefill_x(
+        q: *const c_void, k: *const c_void, v: *const c_void, g: *const f32, beta: *const c_void, o: *mut c_void,
+        workspace: *mut f32, t: c_int, h: c_int, hk: c_int, scale: f32,
+        s_in: *const c_void, s_out: *mut c_void, stream: Stream,
+    ) -> c_int;
     cs1_attn_prep(
         qg: *const c_void, kr: *const c_void, ld: c_int, qw: *const c_void, kw: *const c_void, cos: *const c_void,
         sin: *const c_void, q: *mut c_void, gate: *mut c_void, k: *mut c_void, t: c_int, hq: c_int, hk: c_int,
@@ -98,6 +117,10 @@ api! {
     cs1_attention_gated(
         q: *const c_void, k: *const c_void, v: *const c_void, ldv: c_int, gate: *const c_void,
         out: *mut c_void, t: c_int, hq: c_int, hk: c_int, dh: c_int, scale: f32, stream: Stream,
+    ) -> c_int;
+    cs1_attention_gated_prefix(
+        q: *const c_void, k: *const c_void, v: *const c_void, ldv: c_int, gate: *const c_void,
+        out: *mut c_void, t: c_int, hq: c_int, hk: c_int, dh: c_int, scale: f32, q_base: c_int, stream: Stream,
     ) -> c_int;
     cs1_sigmoid_gate(x: *mut c_void, gate: *const c_void, n: usize, stream: Stream) -> c_int;
     cs1_silu_mul(gate_up: *const c_void, ld: c_int, out: *mut c_void, t: c_int, i: c_int, stream: Stream) -> c_int;
@@ -243,6 +266,41 @@ pub unsafe fn download(dst: &mut [u8], src: *const c_void, stream: Stream) -> Re
     check(
         unsafe { (api().cs1_download)(dst.as_mut_ptr().cast(), src, dst.len(), stream) },
         "copy to host",
+    )
+}
+
+/// Queue a device-to-device copy of `bytes`; completion is only stream-ordered.
+///
+/// # Safety
+/// Both ranges of `bytes` must be valid device allocations, non-overlapping.
+pub unsafe fn copy_dd(
+    dst: *mut c_void,
+    src: *const c_void,
+    bytes: usize,
+    stream: Stream,
+) -> Result<()> {
+    check(
+        unsafe { (api().cs1_copy_dd)(dst, src, bytes, stream) },
+        "device copy",
+    )
+}
+
+/// Queue a pitched device-to-device copy: `height` rows of `width` bytes.
+///
+/// # Safety
+/// `src`/`dst` must be device allocations with the given pitches and heights.
+pub unsafe fn copy2d(
+    dst: *mut c_void,
+    dpitch: usize,
+    src: *const c_void,
+    spitch: usize,
+    width: usize,
+    height: usize,
+    stream: Stream,
+) -> Result<()> {
+    check(
+        unsafe { (api().cs1_copy2d)(dst, dpitch, src, spitch, width, height, stream) },
+        "pitched device copy",
     )
 }
 

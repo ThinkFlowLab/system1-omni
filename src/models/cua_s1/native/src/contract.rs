@@ -53,6 +53,7 @@ fn error(status: u16, message: impl Into<String>) -> RequestError {
     }
 }
 
+#[derive(Clone)]
 pub struct Question {
     pub name: String,
     pub goal: String,

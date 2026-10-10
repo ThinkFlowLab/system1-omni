@@ -1,0 +1,41 @@
+{
+ "id": "img-choice-02",
+ "status": 200,
+ "body": {
+  "kind": "choice",
+  "effective_kind": "choice",
+  "options": [
+   "A movie premiere",
+   "A flight deal",
+   "A cooking class",
+   "A tax service",
+   "A gym membership",
+   "A museum gala",
+   "A coding bootcamp",
+   "A pet shelter"
+  ],
+  "probabilities": [
+   0.06285480600977143,
+   0.3016745683551227,
+   0.062377075255255564,
+   0.2184622975874636,
+   0.08039519508157487,
+   0.06286640457273338,
+   0.20495626967269434,
+   0.006413383465384335
+  ],
+  "choice_index": 1,
+  "choice": "A flight deal",
+  "adaptation": "native",
+  "protocol": "jev27-bare-v1",
+  "model": "autotrust/JEV-27B-VL",
+  "usage": {
+   "prompt_tokens": 987,
+   "completion_tokens": 1,
+   "total_tokens": 988
+  },
+  "elapsed_seconds": 0.10202383995056152,
+  "num_model_requests": 1
+ },
+ "client_s": 0.10702667757868767
+}

@@ -1,0 +1,9 @@
+# Direct preparation dependencies observed in the historical H800 environment.
+# A fresh install of this set has not been validated; this is not a transitive lock.
+--extra-index-url https://download.pytorch.org/whl/cu130
+torch==2.13.0+cu130
+transformers==5.17.0
+safetensors==0.8.0
+tokenizers==0.23.2
+huggingface_hub==1.33.0
+pillow==12.3.0

@@ -1,0 +1,12 @@
+{
+ "id": "err-choice-300opt",
+ "status": 400,
+ "body": {
+  "error": {
+   "message": "choice needs 2-256 options, got 300",
+   "type": "BadRequestError",
+   "code": 400
+  }
+ },
+ "client_s": 0.0007126843556761742
+}

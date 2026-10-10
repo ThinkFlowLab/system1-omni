@@ -76,9 +76,9 @@ The Rust checks used by [CI](.github/workflows/ci.yml) are:
 
 ```sh
 cargo fmt --all --check
-cargo clippy --workspace --locked --all-targets -- -D warnings
-cargo test --workspace --locked
-cargo build --workspace --release --locked
+cargo clippy --workspace --locked --all-targets --features omni-laya/serve -- -D warnings
+cargo test --workspace --locked --features omni-laya/serve
+cargo build --workspace --release --locked --features omni-laya/serve
 ```
 
 For an agent-assisted self-review, use the repository's

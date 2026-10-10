@@ -1,0 +1,29 @@
+{
+ "id": "img-noul-02",
+ "status": 200,
+ "body": {
+  "kind": "noul",
+  "effective_kind": "noul",
+  "options": [
+   "false",
+   "true"
+  ],
+  "probabilities": [
+   0.9783921073002435,
+   0.021607892699756395
+  ],
+  "choice_index": 0,
+  "choice": "false",
+  "adaptation": "native",
+  "protocol": "jev27-bare-v1",
+  "model": "autotrust/JEV-27B-VL",
+  "usage": {
+   "prompt_tokens": 943,
+   "completion_tokens": 1,
+   "total_tokens": 944
+  },
+  "elapsed_seconds": 0.10215044021606445,
+  "num_model_requests": 1
+ },
+ "client_s": 0.10741784702986479
+}

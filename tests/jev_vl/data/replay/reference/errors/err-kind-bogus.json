@@ -1,0 +1,13 @@
+{
+ "id": "err-kind-bogus",
+ "status": 400,
+ "body": {
+  "error": {
+   "message": "1 validation error:\n  {'type': 'literal_error', 'loc': 'body.kind', 'msg': \"Input should be 'noul', 'score' or 'choice'\", 'input': 'bogus', 'ctx': {'expected': \"'noul', 'score' or 'choice'\"}}",
+   "type": "Bad Request",
+   "param": "body.kind",
+   "code": 400
+  }
+ },
+ "client_s": 0.0008958010002970695
+}

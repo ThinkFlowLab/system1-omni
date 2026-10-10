@@ -1,0 +1,13 @@
+{
+ "id": "err-oversize-prompt",
+ "status": 400,
+ "body": {
+  "error": {
+   "message": "This model's maximum context length is 32768 tokens. However, you requested 1 output tokens and your prompt contains at least 32768 input tokens, for a total of at least 32769 tokens. Please reduce the length of the input prompt or the number of requested output tokens. (parameter=input_tokens, value=32768)",
+   "type": "BadRequestError",
+   "param": "input_tokens",
+   "code": 400
+  }
+ },
+ "client_s": 0.14821641705930233
+}

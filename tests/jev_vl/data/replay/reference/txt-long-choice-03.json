@@ -1,0 +1,41 @@
+{
+ "id": "txt-long-choice-03",
+ "status": 200,
+ "body": {
+  "kind": "choice",
+  "effective_kind": "choice",
+  "options": [
+   "Praise the agent",
+   "Update address",
+   "Redeem a coupon",
+   "Request refund",
+   "Cancel subscription",
+   "Report a bug",
+   "Change plan",
+   "Ask about shipping"
+  ],
+  "probabilities": [
+   3.0809243426735493e-07,
+   2.0109060839111007e-07,
+   1.7713051227002315e-07,
+   0.00019361198381968384,
+   0.9998029591059546,
+   1.9131043082106356e-07,
+   9.892944089797681e-07,
+   1.5619918308607473e-06
+  ],
+  "choice_index": 4,
+  "choice": "Cancel subscription",
+  "adaptation": "native",
+  "protocol": "jev27-bare-v1",
+  "model": "autotrust/JEV-27B-VL",
+  "usage": {
+   "prompt_tokens": 615,
+   "completion_tokens": 1,
+   "total_tokens": 616
+  },
+  "elapsed_seconds": 0.09441542625427246,
+  "num_model_requests": 1
+ },
+ "client_s": 0.09529316984117031
+}

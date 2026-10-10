@@ -4,6 +4,9 @@
 //!
 //!     CUA_S1_CUDA_LIB=$PWD/target/release/libqwen3_5_cuda.so \
 //!       cargo test --release -p omni-qwen3-5-native --test kernels -- --ignored
+//!
+//! The prefix-state test additionally needs QWEN3_5_CHECKPOINT pointing to a
+//! supported multimodal checkpoint; it loads two instances sequentially.
 
 use std::path::PathBuf;
 
@@ -615,5 +618,471 @@ fn gated_delta_rule_matches_recurrent_reference() {
             "gated delta t = {t}, amplitude {qk_amp}: largest difference {worst:.2e}, largest |reference| {scale:.2e}"
         );
         assert!(worst <= 2e-2 * scale, "t = {t}: {worst} vs scale {scale}");
+    }
+}
+
+fn f32_from_device(buf: &DeviceBuffer, n: usize, st: Stream) -> Vec<f32> {
+    let mut bytes = vec![0u8; n * 4];
+    // SAFETY: the buffer holds n float32 values.
+    unsafe { cuda::download(&mut bytes, buf.at(0), st).unwrap() };
+    let (quad, _) = bytes.as_chunks::<4>();
+    quad.iter().map(|&b| f32::from_le_bytes(b)).collect()
+}
+
+#[test]
+#[ignore = "needs a GPU, CUA_S1_CUDA_LIB, and a multimodal QWEN3_5_CHECKPOINT"]
+fn prefix_state_rejects_uncaptured_foreign_and_oversized_prompts() {
+    use omni_qwen3_5_native::inputs::MultimodalInput;
+    use omni_qwen3_5_native::model::Model;
+
+    let library = PathBuf::from(std::env::var_os("CUA_S1_CUDA_LIB").expect("set CUA_S1_CUDA_LIB"));
+    let checkpoint =
+        PathBuf::from(std::env::var_os("QWEN3_5_CHECKPOINT").expect("set QWEN3_5_CHECKPOINT"));
+    let mut first = Model::load(&checkpoint, &library).unwrap();
+    for len in [(first.cfg.max_positions / 64 + 1) * 64, usize::MAX & !63] {
+        let error = first.alloc_prefix(len).err().expect("oversized prefix");
+        assert!(error.to_string().contains("exceeds the configured maximum"));
+    }
+    let mut state = first.alloc_prefix(64).unwrap();
+    let ids = vec![0u32; state.token_count()];
+    let positions: Vec<i64> = (0..state.token_count() as i64).collect();
+    let input = MultimodalInput {
+        token_ids: &ids,
+        image_token_indices: &[],
+        image_embeddings: &[],
+        position_ids: [&positions; 3],
+    };
+    let error = first
+        .forward_multimodal_continue(&input, &state)
+        .unwrap_err();
+    assert!(error.to_string().contains("has not completed capture"));
+
+    first
+        .forward_multimodal_capture(&input, &mut state)
+        .unwrap();
+    // The suffix fits by itself; the cached prefix pushes the full prompt over
+    // the limit. Reject it before allocating scratch or submitting CUDA work.
+    let suffix_ids = vec![0u32; first.cfg.max_positions];
+    let suffix_positions = vec![0i64; suffix_ids.len()];
+    let suffix = MultimodalInput {
+        token_ids: &suffix_ids,
+        image_token_indices: &[],
+        image_embeddings: &[],
+        position_ids: [&suffix_positions; 3],
+    };
+    let error = first
+        .forward_multimodal_continue(&suffix, &state)
+        .unwrap_err();
+    assert!(error.to_string().contains("cached prompt exceeds"));
+
+    // Retain only the prefix while replacing the model; never hold two sets of
+    // checkpoint weights on the GPU. The old identity must remain distinct.
+    drop(first);
+    let mut second = Model::load(&checkpoint, &library).unwrap();
+    let error = second
+        .forward_multimodal_capture(&input, &mut state)
+        .unwrap_err();
+    assert!(error.to_string().contains("different model instance"));
+    let error = second
+        .forward_multimodal_continue(&input, &state)
+        .unwrap_err();
+    assert!(error.to_string().contains("different model instance"));
+}
+
+#[test]
+#[ignore = "needs a GPU and CUA_S1_CUDA_LIB"]
+fn gdn_empty_window_captures_state_copy_and_zero_initial_state() {
+    let st = setup();
+    let h = 2usize;
+    let n = h * 128 * 128;
+    let state = f32_to_device(&vec![1.0; n], st);
+    let output = f32_to_device(&vec![2.0; n], st);
+    let empty_window = |input: *const std::ffi::c_void| {
+        // SAFETY: T=0 touches only the optional input and output state buffers,
+        // both sized [H,128,128] FP32; token and workspace pointers are unused.
+        unsafe {
+            check(
+                (api().cs1_gdn_prefill_x)(
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    0,
+                    h as i32,
+                    1,
+                    1.0,
+                    input,
+                    output.at(0),
+                    st,
+                ),
+                "empty gdn window",
+            )
+        }
+    };
+    let copy = cuda::Graph::capture(st, || empty_window(state.at(0))).unwrap();
+    let updated: Vec<u8> = vec![3.0f32; n]
+        .iter()
+        .flat_map(|x| x.to_le_bytes())
+        .collect();
+    // Change the source after capture: a default-stream copy during capture
+    // cannot substitute for the copy that must execute on every graph launch.
+    // SAFETY: state holds exactly n float32 values.
+    unsafe { cuda::upload(state.at(0), &updated, st).unwrap() };
+    copy.launch(st).unwrap();
+    assert_eq!(f32_from_device(&output, n, st), vec![3.0; n]);
+
+    let zero = cuda::Graph::capture(st, || empty_window(std::ptr::null())).unwrap();
+    // SAFETY: output holds exactly n float32 values; poison it after capture.
+    unsafe { cuda::upload(output.at(0), &updated, st).unwrap() };
+    zero.launch(st).unwrap();
+    assert_eq!(f32_from_device(&output, n, st), vec![0.0; n]);
+}
+
+#[test]
+#[ignore = "needs a GPU and CUA_S1_CUDA_LIB"]
+fn device_copy_helpers_roundtrip() {
+    let st = setup();
+    // copy_dd keeps every bit (odd size exercises plain memcpy).
+    let a = to_device(&random(4099, 1, 2.0), st);
+    let b = DeviceBuffer::new(4099 * 2).unwrap();
+    // SAFETY: same size, non-overlapping device allocations.
+    unsafe { cuda::copy_dd(b.at(0), a.at(0), 4099 * 2, st).unwrap() };
+    assert_eq!(from_device(&a, 4099, st), from_device(&b, 4099, st));
+    // copy2d copies width-sized windows out of pitched rows.
+    let (rows, ld, w) = (5usize, 300usize, 256usize);
+    let src = to_device(&random(rows * ld, 2, 1.0), st);
+    let dst = DeviceBuffer::new(rows * w * 2).unwrap();
+    // SAFETY: dst holds rows of w, src rows of ld.
+    unsafe {
+        cuda::copy2d(dst.at(0), w * 2, src.at(0), ld * 2, w * 2, rows, st).unwrap();
+    }
+    let full = from_device(&src, rows * ld, st);
+    let want: Vec<f32> = full
+        .chunks_exact(ld)
+        .flat_map(|r| &r[..w])
+        .copied()
+        .collect();
+    assert_eq!(from_device(&dst, rows * w, st), want);
+}
+
+#[test]
+#[ignore = "needs a GPU and CUA_S1_CUDA_LIB"]
+fn gdn_conv_continuation_uses_cached_history() {
+    let st = setup();
+    let prefix = 64usize;
+    let (key_dim, value_dim, heads) = (16 * 128usize, 48 * 128usize, 48usize);
+    let channels = 2 * key_dim + value_dim;
+    let ld = channels + value_dim + 2 * heads;
+    let weights = to_device(&vec![bf16::from_f32(0.25); channels * 4], st);
+    let conv = |source: &DeviceBuffer, start: usize, rows: usize| {
+        let q = DeviceBuffer::new(rows * key_dim * 2).unwrap();
+        let k = DeviceBuffer::new(rows * key_dim * 2).unwrap();
+        let v = DeviceBuffer::new(rows * value_dim * 2).unwrap();
+        // SAFETY: source contains start + rows complete pitched rows; outputs
+        // contain rows of the corresponding Q/K/V widths.
+        unsafe {
+            check(
+                (api().cs1_gdn_conv)(
+                    source.at(start * ld * 2),
+                    ld as i32,
+                    weights.at(0),
+                    q.at(0),
+                    k.at(0),
+                    v.at(0),
+                    rows as i32,
+                    key_dim as i32,
+                    value_dim as i32,
+                    st,
+                ),
+                "gdn conv continuation",
+            )
+            .unwrap();
+        }
+        [
+            from_device(&q, rows * key_dim, st),
+            from_device(&k, rows * key_dim, st),
+            from_device(&v, rows * value_dim, st),
+        ]
+    };
+    for rows in [1usize, 2, 3, 4, 65] {
+        let total = prefix + rows;
+        // Positive inputs and taps make omission of any history row observable.
+        let projection: Vec<bf16> = random(total * ld, 37, 0.5)
+            .iter()
+            .map(|x| bf16::from_f32(x.to_f32().abs() + 0.25))
+            .collect();
+        let source = to_device(&projection, st);
+        let full = conv(&source, 0, total);
+        let tail = DeviceBuffer::new(3 * ld * 2).unwrap();
+        let window = DeviceBuffer::new((rows + 3) * ld * 2).unwrap();
+        // SAFETY: capture three prefix rows, restore them ahead of the suffix,
+        // and copy the suffix into the remaining non-overlapping window rows.
+        unsafe {
+            cuda::copy_dd(tail.at(0), source.at((prefix - 3) * ld * 2), 3 * ld * 2, st).unwrap();
+            cuda::copy_dd(window.at(0), tail.at(0), 3 * ld * 2, st).unwrap();
+            cuda::copy_dd(
+                window.at(3 * ld * 2),
+                source.at(prefix * ld * 2),
+                rows * ld * 2,
+                st,
+            )
+            .unwrap();
+        }
+        let restored = conv(&window, 0, rows + 3);
+        let missing_history = conv(&window, 3, rows);
+        for (i, width) in [key_dim, key_dim, value_dim].into_iter().enumerate() {
+            let expected = &full[i][prefix * width..];
+            assert_eq!(
+                &restored[i][3 * width..],
+                expected,
+                "cached conv history diverges for output {i}, suffix rows={rows}"
+            );
+            assert_ne!(
+                &missing_history[i][..rows.min(3) * width],
+                &expected[..rows.min(3) * width],
+                "fixture must detect the old suffix-only conv call"
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "needs a GPU and CUA_S1_CUDA_LIB"]
+fn windowed_attention_matches_full_pass_bit_for_bit() {
+    let st = setup();
+    let (hq, hk, dh) = (24usize, 4usize, 256usize);
+    for (t, bases) in [
+        (139usize, vec![64usize]),
+        (712, vec![64, 128]),
+        (972, vec![64, 896]),
+        (2048, vec![64, 1024]),
+    ] {
+        // gated path with a strided V buffer, exactly the model's shape
+        let ldv = hk * dh + 16;
+        let q = to_device(&random(t * hq * dh, 1, 2.0), st);
+        let k = to_device(&random(t * hk * dh, 2, 2.0), st);
+        let v = to_device(&random(t * ldv, 3, 1.0), st);
+        let gate = to_device(&random(t * hq * dh, 4, 3.0), st);
+        let full = DeviceBuffer::new(t * hq * dh * 2).unwrap();
+        // SAFETY: every buffer has complete rows of the shapes above.
+        unsafe {
+            check(
+                (api().cs1_attention_gated)(
+                    q.at(0),
+                    k.at(0),
+                    v.at(0),
+                    ldv as i32,
+                    gate.at(0),
+                    full.at(0),
+                    t as i32,
+                    hq as i32,
+                    hk as i32,
+                    dh as i32,
+                    0.0625,
+                    st,
+                ),
+                "full pass",
+            )
+            .unwrap();
+        }
+        let full_rows = from_device(&full, t * hq * dh, st);
+        for qb in &bases {
+            let win = DeviceBuffer::new(t * hq * dh * 2).unwrap();
+            // SAFETY: the window reads the same buffers; rows < q_base stay unwritten.
+            unsafe {
+                check(
+                    (api().cs1_attention_gated_prefix)(
+                        q.at(0),
+                        k.at(0),
+                        v.at(0),
+                        ldv as i32,
+                        gate.at(0),
+                        win.at(0),
+                        t as i32,
+                        hq as i32,
+                        hk as i32,
+                        dh as i32,
+                        0.0625,
+                        *qb as i32,
+                        st,
+                    ),
+                    "windowed pass",
+                )
+                .unwrap();
+            }
+            let win_rows = from_device(&win, t * hq * dh, st);
+            let mut bad = 0usize;
+            for row in *qb..t {
+                for e in 0..hq * dh {
+                    if full_rows[row * hq * dh + e] != win_rows[row * hq * dh + e] {
+                        bad += 1;
+                    }
+                }
+            }
+            assert_eq!(bad, 0, "t = {t}, q_base = {qb}: {bad} values differ");
+            eprintln!("windowed attention t = {t}, q_base = {qb}: rows >= q_base bitwise equal");
+        }
+    }
+}
+
+#[test]
+#[ignore = "needs a GPU and CUA_S1_CUDA_LIB"]
+fn gdn_prefill_two_phase_matches_one_shot_bit_for_bit() {
+    let st = setup();
+    let d = 128usize;
+    for (t, h, hk, qk_amp, decay_scale) in [
+        (107usize, 4usize, 2usize, 1.0f32, 1.0f32),
+        (936, 4, 2, 0.01, 1.0),
+        (3399, 3, 1, 0.01, 1.0),
+        (65, 4, 2, 0.01, 1e-9),
+    ] {
+        let k = random(t * hk * d, 12, qk_amp);
+        let q: Vec<bf16> = k
+            .iter()
+            .zip(random(t * hk * d, 11, qk_amp))
+            .map(|(k, n)| bf16::from_f32(0.8 * k.to_f32() + 0.2 * n.to_f32()))
+            .collect();
+        let v = random(t * h * d, 13, 1.0);
+        let g: Vec<f32> = random(t * h, 14, 1.0)
+            .iter()
+            .map(|x| (x.to_f32() - 1.0) * decay_scale)
+            .collect();
+        let beta: Vec<bf16> = random(t * h, 15, 0.5)
+            .iter()
+            .map(|x| bf16::from_f32(x.to_f32() + 0.5))
+            .collect();
+        let (qd, kd, vd, gd, bd) = (
+            to_device(&q, st),
+            to_device(&k, st),
+            to_device(&v, st),
+            f32_to_device(&g, st),
+            to_device(&beta, st),
+        );
+        let floats = unsafe { (api().cs1_gdn_workspace_floats)(t as i32, h as i32) };
+        let ws0 = DeviceBuffer::new(floats * 4).unwrap();
+        let o_full = DeviceBuffer::new(t * h * d * 2).unwrap();
+        // SAFETY: every buffer holds t rows of the widths above; workspace its size.
+        unsafe {
+            check(
+                (api().cs1_gdn_prefill)(
+                    qd.at(0),
+                    kd.at(0),
+                    vd.at(0),
+                    gd.at(0).cast(),
+                    bd.at(0),
+                    o_full.at(0),
+                    ws0.at(0).cast(),
+                    t as i32,
+                    h as i32,
+                    hk as i32,
+                    (d as f32).powf(-0.5),
+                    st,
+                ),
+                "one-shot prefill",
+            )
+            .unwrap();
+        }
+        // phase 1 over rows [0, p) with the float32 state dump, phase 2 continues.
+        let p = ((t as f64 * 0.6) as usize / 64 * 64).max(64);
+        let state = DeviceBuffer::new(h * d * d * 4).unwrap();
+        let o_p1 = DeviceBuffer::new(p * h * d * 2).unwrap();
+        let ws1 =
+            DeviceBuffer::new(unsafe { (api().cs1_gdn_workspace_floats)(p as i32, h as i32) } * 4)
+                .unwrap();
+        // SAFETY: the p-row prefix of the same inputs; the state buffer is [H][K][V] f32.
+        unsafe {
+            check(
+                (api().cs1_gdn_prefill_x)(
+                    qd.at(0),
+                    kd.at(0),
+                    vd.at(0),
+                    gd.at(0).cast(),
+                    bd.at(0),
+                    o_p1.at(0),
+                    ws1.at(0).cast(),
+                    p as i32,
+                    h as i32,
+                    hk as i32,
+                    (d as f32).powf(-0.5),
+                    std::ptr::null(),
+                    state.at(0).cast(),
+                    st,
+                ),
+                "capture phase",
+            )
+            .unwrap();
+        }
+        let t2 = t - p;
+        let o_p2 = DeviceBuffer::new(t2 * h * d * 2).unwrap();
+        let ws2 =
+            DeviceBuffer::new(unsafe { (api().cs1_gdn_workspace_floats)(t2 as i32, h as i32) } * 4)
+                .unwrap();
+        // SAFETY: the t2-row suffix of the same inputs; the captured state feeds it.
+        unsafe {
+            check(
+                (api().cs1_gdn_prefill_x)(
+                    qd.at(p * hk * d * 2),
+                    kd.at(p * hk * d * 2),
+                    vd.at(p * h * d * 2),
+                    gd.at(p * h * 4).cast(),
+                    bd.at(p * h * 2),
+                    o_p2.at(0),
+                    ws2.at(0).cast(),
+                    t2 as i32,
+                    h as i32,
+                    hk as i32,
+                    (d as f32).powf(-0.5),
+                    state.at(0).cast_const(),
+                    std::ptr::null_mut(),
+                    st,
+                ),
+                "continuation phase",
+            )
+            .unwrap();
+        }
+        let full = from_device(&o_full, t * h * d, st);
+        let first = from_device(&o_p1, p * h * d, st);
+        let second = from_device(&o_p2, t2 * h * d, st);
+        assert_eq!(first, full[..p * h * d], "capture rows diverge at t = {t}");
+        assert_eq!(
+            second,
+            full[p * h * d..],
+            "continuation rows diverge at t = {t}"
+        );
+        eprintln!("gdn two-phase t = {t}, split = {p}: both phases bitwise equal to one-shot");
+        // capture-only, T = 0: the state passes through untouched.
+        let passthru = DeviceBuffer::new(h * d * d * 4).unwrap();
+        let empty = DeviceBuffer::new(4).unwrap();
+        // SAFETY: T = 0 touches only the state buffers.
+        unsafe {
+            check(
+                (api().cs1_gdn_prefill_x)(
+                    empty.at(0),
+                    empty.at(0),
+                    empty.at(0),
+                    empty.at(0).cast(),
+                    empty.at(0),
+                    empty.at(0),
+                    empty.at(0).cast(),
+                    0,
+                    h as i32,
+                    hk as i32,
+                    1.0,
+                    state.at(0).cast_const(),
+                    passthru.at(0).cast(),
+                    st,
+                ),
+                "state passthrough",
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            f32_from_device(&state, h * d * d, st),
+            f32_from_device(&passthru, h * d * d, st),
+            "T = 0 must copy the state through"
+        );
     }
 }

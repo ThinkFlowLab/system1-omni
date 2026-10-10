@@ -1,0 +1,12 @@
+{
+ "id": "err-score-thinking-on",
+ "status": 400,
+ "body": {
+  "error": {
+   "message": "thinking is supported for noul and choice",
+   "type": "BadRequestError",
+   "code": 400
+  }
+ },
+ "client_s": 0.0006450740620493889
+}
