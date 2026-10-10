@@ -4,16 +4,16 @@ The `omni-cua-s1-vision` screenshot worker can capture the complete vision
 encoder, including all 24 blocks, unmerged FP32 LoRA branches and the merger.
 Set `CUA_S1_VISION_GRAPH=1` before loading the worker to enable it. Leave it
 unset or set it to `0` for eager execution. This switch is independent of
-`CUA_S1_GRAPH`, which controls language execution; this change does not enable
-multimodal language Graph replay.
+`CUA_S1_GRAPH`, which controls language execution. Enabling vision Graph alone
+does not enable language Graph replay.
 
-Both modes retain one scratch allocation for the latest exact `[T,H,W]` patch
-grid. Equal patch counts with different heights or widths replace the scratch
-and Graph. The worker synchronizes, destroys the old executable, and releases
-its buffers before allocating the new shape. Pixel values are uploaded on every
-request, including replay. Geometry tables remain valid only for that exact grid.
-This bounds activation storage to one grid (at most 4608 patches); it does not
-bound loaded weights or the GEMM plan cache.
+Both modes use the shared Qwen vision executor and retain at most four exact
+[T,H,W] scratch/Graph pairs in FIFO order. Equal patch counts with different
+heights or widths remain distinct. Before eviction the worker synchronizes,
+destroys the old executable, and releases its buffers. Pixel values are uploaded
+on every request, including replay; geometry tables belong to their exact grid.
+Each retained grid has at most 4608 patches. This bounds the number of retained
+activations, not their total bytes, loaded weights or the GEMM plan cache.
 
 The first ordinary forward for a grid finishes eagerly, then captures operators
 for subsequent requests and returns the completed eager result. Capture time is
@@ -55,7 +55,7 @@ Export the same `CUA_S1_BASE`, `CUA_S1_VISION_ADAPTER`, `CUA_S1_MODEL`, and
 `CUA_S1_CUDA_LIB` variables for these commands:
 
 ```sh
-cargo test --release --locked -p omni-cua-s1-native --lib vision_graph_ \
+cargo test --release --locked -p omni-qwen3-5-native --lib vision_graph_ \
   -- --ignored --test-threads=1 --nocapture
 CUA_S1_VISION_GRAPH=0 cargo run --release --locked -p omni-cua-s1-native \
   --example vision_graph_bench -- /tmp/vision-eager.json
@@ -74,11 +74,11 @@ g++ -std=c++17 -shared -fPIC -Wall -Wextra tests/cua_s1/fail_graph_capture.cpp \
   -Wl,--no-as-needed "$CUA_S1_REAL_CUDA_LIB" -ldl \
   -o /tmp/cua-fail-capture.so
 CUA_S1_CUDA_LIB=/tmp/cua-fail-capture.so CUA_S1_TEST_CAPTURE_FAILURE=1 \
-CUA_S1_GRAPH_TRACE=0 cargo test --release --locked -p omni-cua-s1-native \
+CUA_S1_GRAPH_TRACE=0 cargo test --release --locked -p omni-qwen3-5-native \
   --lib vision_capture_failure_ -- --ignored --test-threads=1 --nocapture
 ```
 
-The root GPU tests cover changed pixels, full-grid replacement, retirement,
+The root GPU tests cover changed pixels, exact-grid residency and eviction, retirement,
 trace bypass, invalid input and capture-failure fallback. Ordinary CI compiles
 these tests but skips device execution. Run them explicitly on a reserved GPU.
 
