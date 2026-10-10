@@ -12,7 +12,8 @@ that share the [Qwen3.5/3.8 executor](../src/models/qwen3_5/native/), which acce
 single prompts and bounded packed prefill. Cua-S1 and Open-Jev-9B use
 single-prompt calls; Open-Jev-27B-v1.1 packs candidates within one request for
 input and gate/up GEMMs while preserving per-sequence mixers and output/down GEMM
-shapes.
+shapes. The executor can also run prompts that share token prefixes, each prefix
+once (below); no worker uses that yet.
 [Laya's native worker](../src/models/laya/README.md)
 uses a separate Hopper CUDA backend for one complete padded request. All three
 coordinate independent processors and executors through
@@ -26,6 +27,23 @@ hidden state. Laya computes its scorer and action head on CUDA. Its fixed-shape
 Graph captures Encoder/Decision; gather, scorer/action head and synchronized
 readback remain outside capture. Native Metal remains planned; Python workers
 retain their documented reference/serving roles.
+
+The Qwen executor's `forward_shared` takes a request prefix, group prefixes and
+branches, ends each prefix at its last multiple of 64 tokens, and returns one final
+hidden state per branch in order
+([#85](https://github.com/ThinkFlowLab/system1-omni/issues/85)). It runs on the
+prefix continuation that JEV-VL's cache uses: each prefix is captured once (per
+linear-attention layer the float32 recurrent state and the last three conv inputs,
+per full-attention layer the prefix keys and values), and each branch then runs as
+its own pass from that state. The two prefix states persist across calls and grow only for a
+longer prefix; their contents are valid only within one call, which runs eagerly and
+synchronizes its stream before returning, also on error. Its GEMMs keep one
+algorithm per weight shape, so on GPUs where that keeps rows independent of M
+(checked by `fixed_gemm_rows_do_not_depend_on_m`, so far on sm_89) each result equals
+`forward_fixed` on the full prompt bit for bit; it differs from `forward` by
+rounding. Each prefix state takes about 50 MiB on Qwen3.5-4B and 9B, plus 32 KiB per
+position of its prefix rounded up to 1,024 positions, and the GEMM handle a 32 MiB
+workspace.
 
 ## Native worker boundaries
 

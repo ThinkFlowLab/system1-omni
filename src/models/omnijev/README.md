@@ -3,11 +3,12 @@
 OmniJev-4B v1.1 ([#114](https://github.com/ThinkFlowLab/system1-omni/issues/114))
 answers Choice, Noul and Score questions about one image with a Qwen3.5-4B backbone,
 a merged LoRA adapter, two option-marker tokens and trained FP32 heads. This directory
-holds the native implementation's CPU side so far: the request contract, preparation
-and the branch layout, the heads, and response finishing, each checked against the
-pinned reference. Vision and language execution, the worker and frontend integration
-come next. The [recipe](../../../recipe/omnijev/README.md) exports the checkpoint and
-regenerates the fixtures.
+holds the native worker: the request contract, image decoding and preparation, the
+branch layout, execution on the shared Qwen3.5 vision and language CUDA path, the
+heads, and response finishing, each checked against the pinned reference. The
+[preparation recipe](../../../recipe/omnijev/README.md) exports the checkpoint and
+regenerates the fixtures; [the worker recipe](../../../recipe/omnijev/native.md) builds,
+runs and validates the worker.
 
 ## Pinned artifacts
 
@@ -48,10 +49,13 @@ linear-attention state of every row from zero, and 5.2 to 5.4 fail in it.
 Option text is cut to 200 characters, and region coordinates are rounded half to even,
 both as the reference does. Answers keep the reference's fields: `noul`; `choice`,
 `probabilities`, `abstain`, `valid` and `confidence`; or `score`, `probabilities` and
-`confidence`; each with `latency_s`, and with `latency_total_s` once the worker adds
-it, both from the native timing. Probabilities are rounded to four decimals. The
-layout also gives the reference's input-token count, the shared prefix once plus every
-row, for the worker's `usage`.
+`confidence`; each with `latency_s` and `latency_total_s`, which time the request's
+preparation and its vision and language passes, as the reference times `ask_branch`
+from encoding to the heads. Probabilities are
+rounded to four decimals. The response is
+`{"model": "tinnel123/OmniJev", "answers": {id: answer}, "usage": {"input_tokens": n,
+"output_tokens": 0}}`, with the reference's input-token count: the shared prefix once
+plus every row.
 
 Deliberate differences from the reference:
 
@@ -60,12 +64,16 @@ Deliberate differences from the reference:
 - Text containing `<|opt|>`, `<|/opt|>`, `<|image_pad|>`, `<|video_pad|>`,
   `<|vision_start|>` or `<|vision_end|>` is refused. The reference would read it as
   option or image markers and misplace its readouts.
-- Images arrive as data URLs instead of file paths.
+- Images arrive as data URLs instead of file paths. PNG files decode to the same RGB
+  values as Pillow's `convert("RGB")`, including its 16-bit conversions; JPEG files use
+  the `image` crate's decoder, whose values can differ from Pillow's libjpeg-turbo by
+  rounding (by at most 3 in the committed sample).
 - Explicit limits: a 12 MiB body; an 8 MiB image of at most 4096 pixels per side and
   an aspect ratio of at most 200, which the processor also requires; 64 questions with
   ids of at most 256 characters; 1 to 255 options per question and 1,024 in all;
-  8,192 characters per text field; 8,192 tokens per question; and 65,536 processed
-  tokens per request.
+  8,192 characters per text field; 8,192 tokens per question; 65,536 processed
+  tokens per request; and, while every row reruns the prefix, 262,144 tokens in the
+  rows' passes and 16,384 option-text tokens whose log-probabilities are read.
 - Fields the reference ignores (Noul `criteria`, `criteria` next to Choice `options` or
   Score `levels`, unknown fields), and values it would turn into text (numbers as
   levels, for example), are refused.
@@ -84,18 +92,33 @@ chat template does:
 ```
 
 The template trims the user content, so trailing whitespace in the instructions goes,
-by Python's definition of whitespace. The image placeholder expands to one token per
-2×2 merged patch of the processor's resize, with `MSO1`'s 602,112-pixel budget (it
-overrides the processor config's 401,408) and the 65,536-pixel minimum.
+by Python's definition of whitespace. The image is decoded and preprocessed by the
+shared Qwen crate (`image_decode` and `image_preprocess`, the port of the reference's
+`Qwen2VLImageProcessor`) with `MSO1`'s 602,112-pixel budget (it overrides the processor
+config's 401,408) and the 65,536-pixel minimum, and its placeholder expands to one token
+per 2×2 merged patch.
 
 The layout follows `MSO1.ask_branch`. The shared prefix is the questions' common token
 prefix, cut at least one token before any question's first `<|opt|>`. Each row is the
 rest of its question plus one option block. A row's readouts are `u` at its closing
 marker, `zq` at the token before its option marker, and, for the LM features, each
 option-text token with the position that predicts it. Rotary positions are Qwen3.5's
-T/H/W positions of the single-question sequence; after the prefix, rows continue from
-its largest position plus one. Since every row equals a plain forward over prefix plus
-row up to rounding, execution may choose its own split points.
+T/H/W positions (the shared `inputs::image_positions`); after the prefix, rows continue
+from its largest position plus one. Since every row equals a plain forward over prefix
+plus row up to rounding, execution may choose its own split points.
+
+## Execution
+
+[`executor.rs`](native/src/executor.rs) runs the vision tower once per request, then one
+pass per (question, option) row over the prefix and that row, unpadded, with
+`Model::forward_multimodal_readout`. That pass uses the fixed-algorithm GEMMs, so a row's
+result does not depend on what else runs, and reads the final-norm hidden states at
+`zq` and `u`, which is what the reference's `hidden_states[-1]` holds, and the
+option-text tokens' log-probabilities: BF16 logits from the tied embedding over the
+248,079-entry vocabulary, converted to float32, with a float64 sum in the log-softmax. Score rows skip the
+log-probabilities, which its ordinal head does not use. The heads run on the CPU; the
+question state `zq` is the first row's, as in the reference. Reusing the prefix across
+rows is the next step.
 
 ## Heads and finishing
 
@@ -103,9 +126,8 @@ row up to rounding, execution may choose its own split points.
 and Noul use `OptionScorer`: gated option and question MLPs, the LM features, a
 per-type temperature, and for Choice a softmax that includes the abstain logit; Noul
 is a sigmoid. Score uses only the cumulative-link ordinal head. The six LM
-features of an option come from its text tokens' log-probabilities over the full
-248,079-entry vocabulary, which execution computes. A plain Noul option has no text,
-so its features are zero.
+features of an option come from its text tokens' log-probabilities. A plain Noul
+option has no text, so its features are zero.
 
 `contract::answer` follows `MSO1._finish`: Noul's log-odds bias before its
 temperature, the saved temperatures for each type, Choice's abstain and validity,
@@ -114,27 +136,29 @@ confidence, and four-decimal rounding. The float32 sum of more than four head ou
 can add in a different order than PyTorch's, which moves the fourth decimal by one at
 most; the reference's own sum on a GPU has the same freedom.
 
-[`processing::image_grid`](native/src/processing.rs) and `processing::image_positions`
-follow Transformers 5.17.0's `Qwen2VLImageProcessor` resize and Qwen3.5 rotary
-positions (Apache-2.0, Copyright 2025 The Qwen team, Alibaba Group and the HuggingFace
-Inc. team), as Cua-S1's copies do. Both move to the shared Qwen crate once its image
-preprocessing is shared.
-
 ## Validation
 
 [`generate_fixtures.py`](../../../tests/omnijev/generate_fixtures.py) runs the
-reference's own preparation, layout, rotary positions, heads and finishing on the CPU
-without loading the backbone. The tests in [`tests/omnijev/`](../../../tests/omnijev/)
-compare against those fixtures: prompts, answer keys and option text, marker
-positions, image grids, rotary positions, the prefix, rows, readouts and token counts
-for seven requests, exactly; the LM features within 1e-6; and finished answers for
-eighteen head outputs, exactly up to four options and within one unit of the fourth
-decimal beyond. Two checks are opt-in: token ids against the checkpoint's tokenizer,
-exactly, and the heads against an export, within 1e-5 (relative for values above one). Contract tests cover
-refused requests, with the reason, and the limits.
+reference's own image loading and processor, preparation, layout, rotary positions,
+heads and finishing on the CPU without loading the backbone. The tests in
+[`tests/omnijev/`](../../../tests/omnijev/) compare against those fixtures:
 
-No GPU work runs in this crate, and nothing here establishes parity of the model's
-outputs; that comes with execution.
+- prompts, answer keys and option text, marker positions, image grids, rotary
+  positions, the prefix, rows, readouts and token counts for seven requests, exactly;
+- decoded RGB values and pixel values for nine images (patterns at four sizes, RGBA,
+  grayscale, palette, 16-bit grayscale and JPEG), exactly for PNG, and for JPEG the
+  decoder within 3 of Pillow and the processor exactly on Pillow's values;
+- the LM features within 1e-6, and finished answers for eighteen head outputs, exactly
+  up to four options and within one unit of the fourth decimal beyond;
+- refused requests, with the reason, the limits, and the export manifest checks.
+
+Opt-in checks need the checkpoint or an export: token ids against the checkpoint's
+tokenizer, exactly; the heads against an export, within 1e-5 (relative for values above
+one); and on a GPU, the readout pass (`tests/qwen3_5/readout.rs`: equal to
+`forward_fixed` for text, independent of the other rows and targets read, and
+log-probabilities against the CPU) and the worker (repeatable answers, independent of
+question order). [`validate.py`](../../../recipe/omnijev/validate.py) compares the
+worker's answers with the reference's.
 
 The Rust code adapts OmniJev's Apache-2.0 code; its copyright and license are retained
 in [`native/LICENSE.omnijev`](native/LICENSE.omnijev). No model weights are

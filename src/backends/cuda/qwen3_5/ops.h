@@ -13,7 +13,7 @@
 #include <stdint.h>
 
 // Bumped whenever the required interface below changes.
-#define CS1_ABI_VERSION 6
+#define CS1_ABI_VERSION 7
 
 #ifdef __cplusplus
 extern "C" {
@@ -118,6 +118,12 @@ int cs1_silu_mul(const void* gate_up, int ld, void* out, int T, int I, void* str
 // y [M, N] (rows of ldy) = x [M, K] * w [N, K]^T through cuBLASLt, float32 accumulation,
 // with cuBLASLt's first heuristic choice for each shape (see gemm.cu).
 void* cs1_gemm_create(size_t workspace_bytes);
+// A handle that keeps one algorithm per weight shape (N, K, ldy) for every M, chosen at
+// reference_m rows among algorithms without split-K, so that a row's result depends
+// neither on M nor on its row index (checked by tests/qwen3_5/kernels.rs on the GPU it
+// runs on). Null if reference_m <= 0 or setup fails. cs1_gemm with this handle returns a
+// cuBLAS status for an M the algorithm cannot serve, rather than switching algorithms.
+void* cs1_gemm_create_fixed(size_t workspace_bytes, int reference_m);
 void cs1_gemm_destroy(void* gemm);
 int cs1_gemm(void* gemm, const void* x, const void* w, void* y, int M, int N, int K, int ldy,
              void* stream);
@@ -131,6 +137,11 @@ int cs1_vision_position(void* x, const void* table, const int* indices, const fl
 int cs1_vision_rope(const void* qkv, const float* co, const float* si, void* q, void* k, int n, void* stream);
 // q/k [N,1024], V is a slice in qkv [N,3072]. No causal mask, O(N) memory.
 int cs1_vision_attention(const void* q, const void* k, const void* v, void* out, int n, void* stream);
+// Additive vision endpoints, optional within the required CUDA ABI. Supports the exact 4B/27B layouts.
+// Rotary cos/sin [N,head_dim/2]. Attention workspace: 4*N*16*80 BF16 elements for head72.
+int cs1_vision_position_v2(void* x, const void* table, const int* indices, const float* weights, int n, int hidden, void* stream);
+int cs1_vision_rope_v2(const void* qkv, const float* co, const float* si, void* q, void* k, int n, int hidden, int head_dim, void* stream);
+int cs1_vision_attention_v2(const void* q, const void* k, const void* v, void* out, int n, int heads, int head_dim, void* workspace, void* stream);
 int cs1_vision_bias(void* x, const void* bias, size_t n, int d, void* stream);
 int cs1_vision_gelu(void* x, size_t n, int exact, void* stream);
 int cs1_vision_add(void* x, const void* delta, size_t n, void* stream);

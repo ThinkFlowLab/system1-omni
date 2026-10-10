@@ -6,7 +6,14 @@
 //
 // Each shape uses cuBLASLt's first heuristic choice, excluding split-K reductions that
 // accumulate into the output in place, since their order, and so the rounding, is not
-// fixed.
+// fixed (vision's FP32 and biased GEMMs exclude all split-K). That choice depends on M,
+// so a row's result can change with the number of rows in the call. A handle from
+// cs1_gemm_create_fixed instead keeps one algorithm per weight shape (N, K, ldy, and for
+// vision's GEMMs the data type and bias) for every M: the heuristic's first choice at a
+// reference M among algorithms without split-K. Each output row then takes the same
+// path whatever the other rows, so its result does not depend on M or on its row index.
+// cuBLASLt does not document this; tests/qwen3_5/kernels.rs checks it on the GPU it
+// runs on.
 #include <cublasLt.h>
 
 #include <map>
@@ -28,7 +35,9 @@ struct Gemm {
     cublasLtHandle_t handle = nullptr;
     void* workspace = nullptr;
     size_t workspace_bytes = 0;
+    int reference_m = 0;  // > 0: one algorithm per weight shape, chosen at this M
     std::map<Key, Plan> plans;
+    std::map<std::tuple<int, int, int, bool, bool>, cublasLtMatmulAlgo_t> fixed;  // N, K, ldy, FP32, bias
 };
 
 int status(cublasStatus_t s) { return s == CUBLAS_STATUS_SUCCESS ? 0 : 1000 + (int)s; }
@@ -58,15 +67,13 @@ int describe(int M, int N, int K, int ldy, Plan& p, bool fp32, bool bias) {
     return 0;
 }
 
-// The heuristic's first choice. Vision disables all split-K to avoid BF16
-// intermediate reductions; existing language GEMMs exclude only in-place reductions.
-int first_choice(Gemm& g, Plan& p, bool vision) {
+// The heuristic's first choice among the given reduction schemes.
+int first_choice(Gemm& g, Plan& p, uint32_t schemes) {
     cublasLtMatmulPreference_t pref;
     cublasStatus_t s = cublasLtMatmulPreferenceCreate(&pref);
     if (s != CUBLAS_STATUS_SUCCESS) return status(s);
     cublasLtMatmulPreferenceSetAttribute(pref, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &g.workspace_bytes,
                                          sizeof(g.workspace_bytes));
-    const uint32_t schemes = vision ? CUBLASLT_REDUCTION_SCHEME_NONE : (CUBLASLT_REDUCTION_SCHEME_MASK & ~CUBLASLT_REDUCTION_SCHEME_INPLACE);
     cublasLtMatmulPreferenceSetAttribute(pref, CUBLASLT_MATMUL_PREF_REDUCTION_SCHEME_MASK, &schemes,
                                          sizeof(schemes));
     cublasLtMatmulHeuristicResult_t r{};
@@ -76,6 +83,40 @@ int first_choice(Gemm& g, Plan& p, bool vision) {
     if (s != CUBLAS_STATUS_SUCCESS) return status(s);
     if (found == 0 || r.state != CUBLAS_STATUS_SUCCESS) return status(CUBLAS_STATUS_NOT_SUPPORTED);
     p.algo = r.algo;
+    return 0;
+}
+
+// The weight shape's algorithm, chosen at the reference M on first use. An M it cannot
+// serve is an error, not a reason to switch algorithms.
+int fixed_choice(Gemm& g, int N, int K, int ldy, bool fp32, bool bias, Plan& p) {
+    const std::tuple<int, int, int, bool, bool> key{N, K, ldy, fp32, bias};
+    auto it = g.fixed.find(key);
+    if (it == g.fixed.end()) {
+        Plan r;
+        int rc = describe(g.reference_m, N, K, ldy, r, fp32, bias);
+        if (rc == 0) rc = first_choice(g, r, CUBLASLT_REDUCTION_SCHEME_NONE);
+        if (rc == 0) {
+            // Check that the choice really has no split-K reduction.
+            int32_t splits = 0;
+            uint32_t scheme = 0;
+            size_t written = 0;
+            const bool read =
+                cublasLtMatmulAlgoConfigGetAttribute(&r.algo, CUBLASLT_ALGO_CONFIG_SPLITK_NUM, &splits,
+                                                     sizeof(splits), &written) == CUBLAS_STATUS_SUCCESS &&
+                cublasLtMatmulAlgoConfigGetAttribute(&r.algo, CUBLASLT_ALGO_CONFIG_REDUCTION_SCHEME, &scheme,
+                                                     sizeof(scheme), &written) == CUBLAS_STATUS_SUCCESS;
+            if (!read || splits != 1 || scheme != CUBLASLT_REDUCTION_SCHEME_NONE)
+                rc = status(CUBLAS_STATUS_NOT_SUPPORTED);
+        }
+        if (rc == 0) it = g.fixed.emplace(key, r.algo).first;
+        destroy(r);
+        if (rc != 0) return rc;
+    }
+    p.algo = it->second;
+    cublasLtMatmulHeuristicResult_t check{};
+    const cublasStatus_t s = cublasLtMatmulAlgoCheck(g.handle, p.op, p.a, p.b, p.c, p.c, &p.algo, &check);
+    if (s != CUBLAS_STATUS_SUCCESS) return status(s);
+    if (check.workspaceSize > g.workspace_bytes) return status(CUBLAS_STATUS_NOT_SUPPORTED);
     return 0;
 }
 
@@ -89,7 +130,14 @@ int plan_for(Gemm& g, int M, int N, int K, int ldy, Plan*& out, bool fp32 = fals
     }
     Plan p;
     int rc = describe(M, N, K, ldy, p, fp32, bias);
-    if (rc == 0) rc = first_choice(g, p, fp32 || bias);
+    if (rc == 0 && g.reference_m > 0) {
+        rc = fixed_choice(g, N, K, ldy, fp32, bias, p);
+    } else if (rc == 0) {
+        // Vision's FP32 and biased GEMMs exclude all split-K to avoid BF16 intermediate
+        // reductions; the language GEMMs exclude only in-place reductions.
+        rc = first_choice(g, p, fp32 || bias ? CUBLASLT_REDUCTION_SCHEME_NONE
+                                             : CUBLASLT_REDUCTION_SCHEME_MASK & ~CUBLASLT_REDUCTION_SCHEME_INPLACE);
+    }
     if (rc != 0) {
         destroy(p);
         return rc;
@@ -99,6 +147,13 @@ int plan_for(Gemm& g, int M, int N, int K, int ldy, Plan*& out, bool fp32 = fals
 }
 
 }  // namespace
+
+extern "C" void* cs1_gemm_create_fixed(size_t workspace_bytes, int reference_m) {
+    if (reference_m <= 0) return nullptr;
+    Gemm* g = static_cast<Gemm*>(cs1_gemm_create(workspace_bytes));
+    if (g) g->reference_m = reference_m;
+    return g;
+}
 
 extern "C" void* cs1_gemm_create(size_t workspace_bytes) {
     Gemm* g = new Gemm();

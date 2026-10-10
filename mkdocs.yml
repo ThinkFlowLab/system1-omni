@@ -72,5 +72,6 @@ nav:
       - JEV-27B-VL experimental worker: recipe/jev_vl/README.md
       - JEV-27B-VL validation status: recipe/jev_vl/validation.md
       - OmniJev preparation: recipe/omnijev/README.md
+      - OmniJev native worker: recipe/omnijev/native.md
       - CLM stub-encoder contract: recipe/clm/README.md
   - Contributing: CONTRIBUTING.md
