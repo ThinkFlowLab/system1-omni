@@ -42,5 +42,5 @@ CUA_S1_CUDA_LIB=$PWD/target/release/libqwen3_5_cuda.so \
 ```
 
 For the screenshot worker, [the vision Graph recipe](native_vision_graph.md)
-documents `CUA_S1_VISION_GRAPH`, retained single-grid scratch, memory/lifetime
+documents `CUA_S1_VISION_GRAPH`, bounded exact-grid scratch, memory/lifetime
 limits and the real CUDA capture-failure wrapper build and test commands.

@@ -30,6 +30,9 @@ impl Drop for Gemm {
 pub struct VisionModel {
     // Field order retires graph/scratch before weights, GEMM workspace and stream.
     scratch: Option<Scratch>,
+    // Inactive entries in least-to-most-recently-used order; scratch is MRU.
+    cached: Vec<Scratch>,
+    cache_limits: CacheLimits,
     base: BTreeMap<String, DeviceBuffer>,
     lora: BTreeMap<String, DeviceBuffer>,
     gemm: Gemm,
@@ -46,6 +49,8 @@ impl VisionModel {
         ensure!(!gemm.0.is_null(), "cannot create vision cuBLAS handle");
         let mut model = Self {
             scratch: None,
+            cached: Vec::new(),
+            cache_limits: CacheLimits::from_env(),
             graph_enabled: std::env::var("CUA_S1_VISION_GRAPH").as_deref() == Ok("1"),
             base: BTreeMap::new(),
             lora: BTreeMap::new(),
@@ -241,6 +246,7 @@ impl VisionModel {
             .scratch
             .as_ref()
             .is_some_and(|s| s.grid == image.image_grid_thw)
+            || self.cached.iter().any(|s| s.grid == image.image_grid_thw)
         {
             None
         } else {
@@ -265,36 +271,116 @@ impl VisionModel {
             .iter()
             .flat_map(|v| bf16::from_f32(*v).to_bits().to_le_bytes())
             .collect();
-        if let Some(geo) = geo {
+        let bytes = Scratch::bytes_for_grid(image.image_grid_thw);
+        if !self.cache_limits.retains(bytes) {
+            // A valid large grid still works, but neither buffers nor graph are retained.
+            // Keep all cached geometries intact while using transient eager scratch.
             self.synchronize()?;
-            // Destroy the executable before releasing any address it references.
-            self.scratch = None;
-            self.scratch = Some(Scratch::new(self, image.image_grid_thw, geo)?);
+            let geo = match geo {
+                Some(geo) => geo,
+                None => Geometry::new(image.image_grid_thw)?,
+            };
+            let scratch = Scratch::new(self, image.image_grid_thw, geo)?;
+            self.cache_trace("transient", image.image_grid_thw);
+            let result = self.run_scratch(&scratch, &pixels, &mut callback, false);
+            // Also drain an enqueue/download/callback error before releasing buffers.
+            let drained = self.synchronize();
+            drop(scratch);
+            return result.and_then(|(values, _)| drained.map(|()| values));
+        }
+        if !self
+            .scratch
+            .as_ref()
+            .is_some_and(|s| s.grid == image.image_grid_thw)
+        {
+            self.synchronize()?;
+            if let Some(previous) = self.scratch.take() {
+                self.cached.push(previous);
+            }
+            if let Some(index) = self
+                .cached
+                .iter()
+                .position(|s| s.grid == image.image_grid_thw)
+            {
+                self.scratch = Some(self.cached.remove(index));
+                self.cache_trace("hit", image.image_grid_thw);
+            } else {
+                while self.cache_limits.needs_eviction(
+                    self.cached.len(),
+                    self.retained_bytes(),
+                    bytes,
+                ) {
+                    // Already synchronized; Scratch drops Graph before its referenced buffers.
+                    let retired = self.cached.remove(0);
+                    let grid = retired.grid;
+                    drop(retired);
+                    self.cache_trace("evicted", grid);
+                }
+                self.scratch = Some(Scratch::new(self, image.image_grid_thw, geo.unwrap())?);
+                self.cache_trace("miss", image.image_grid_thw);
+            }
+        } else {
+            self.cache_trace("hit", image.image_grid_thw);
         }
         let scratch = self.scratch.as_ref().unwrap();
+        let (result, captured) =
+            self.run_scratch(scratch, &pixels, &mut callback, self.graph_enabled)?;
+        if let Some(captured) = captured {
+            self.finish_capture(captured);
+        }
+        Ok(result)
+    }
+    fn retained_bytes(&self) -> usize {
+        self.scratch
+            .iter()
+            .chain(&self.cached)
+            .map(|s| Scratch::bytes_for_grid(s.grid))
+            .sum()
+    }
+    fn cache_trace(&self, action: &str, grid: [usize; 3]) {
+        if std::env::var("CUA_S1_GRAPH_TRACE").as_deref() == Ok("1") {
+            eprintln!(
+                "Vision cache {action} grid={grid:?} retained_entries={} retained_bytes={} entry_limit={} byte_limit={}",
+                self.cached.len() + usize::from(self.scratch.is_some()),
+                self.retained_bytes(),
+                self.cache_limits.entries,
+                self.cache_limits.bytes
+            );
+        }
+    }
+    fn run_scratch(
+        &self,
+        scratch: &Scratch,
+        pixels: &[u8],
+        callback: &mut Trace<'_>,
+        graph_enabled: bool,
+    ) -> Result<(Vec<bf16>, Option<Result<cuda::Graph>>)> {
+        let n = scratch.grid[1] * scratch.grid[2];
         // SAFETY: pixels have the validated exact size of the resident allocation.
         unsafe {
-            cuda::upload(scratch.pixels.at(0), &pixels, self.stream.0)?;
+            cuda::upload(scratch.pixels.at(0), pixels, self.stream.0)?;
         }
         if callback.is_none()
-            && self.graph_enabled
+            && graph_enabled
             && let Some(graph) = &scratch.graph
         {
             graph.launch(self.stream.0)?;
             graph_trace("replayed", scratch.grid);
-            return self.read(&scratch.out, n / 4 * 2560);
+            return Ok((self.read(&scratch.out, n / 4 * 2560)?, None));
         }
-        self.enqueue(scratch, &mut callback)?;
+        self.enqueue(scratch, callback)?;
         let result = self.read(&scratch.out, n / 4 * 2560)?;
+        let mut captured = None;
         if let Some(callback) = callback.as_mut() {
             callback("merger.output", &result)?;
-        } else if self.graph_enabled {
+        } else if graph_enabled {
             // The eager read completed warmup. Capture does not execute the operators;
             // return the already completed result even if recording fails.
-            let captured = cuda::Graph::capture(self.stream.0, || self.enqueue(scratch, &mut None));
-            self.finish_capture(captured);
+            captured = Some(cuda::Graph::capture(self.stream.0, || {
+                self.enqueue(scratch, &mut None)
+            }));
         }
-        Ok(result)
+        Ok((result, captured))
     }
     fn finish_capture(&mut self, captured: Result<cuda::Graph>) {
         match captured {
@@ -428,7 +514,7 @@ fn graph_trace(action: &str, grid: [usize; 3]) {
     }
 }
 struct Scratch {
-    // Executable is dropped first. One exact grid bounds resident activation memory.
+    // Executable is dropped first, before every address referenced by its graph.
     graph: Option<cuda::Graph>,
     grid: [usize; 3],
     pixels: DeviceBuffer,
@@ -447,7 +533,43 @@ struct Scratch {
     mlp: DeviceBuffer,
     out: DeviceBuffer,
 }
+/// Budgets cover every retained Scratch allocation, excluding shared weights/GEMM workspace.
+#[derive(Clone, Copy)]
+struct CacheLimits {
+    entries: usize,
+    bytes: usize,
+}
+impl CacheLimits {
+    fn from_env() -> Self {
+        let value = |name: &str, default| match std::env::var_os(name) {
+            None => default,
+            Some(raw) => match raw.to_str().and_then(|v| v.parse::<usize>().ok()) {
+                Some(value) => value,
+                None => {
+                    eprintln!(
+                        "Invalid {name}={raw:?}; expected an unsigned integer, using default {default}"
+                    );
+                    default
+                }
+            },
+        };
+        Self {
+            entries: value("CUA_S1_VISION_CACHE_ENTRIES", 1).min(16),
+            bytes: value("CUA_S1_VISION_CACHE_BYTES", 256 << 20),
+        }
+    }
+    fn retains(self, bytes: usize) -> bool {
+        self.entries > 0 && bytes <= self.bytes
+    }
+    fn needs_eviction(self, entries: usize, retained_bytes: usize, incoming_bytes: usize) -> bool {
+        entries >= self.entries || incoming_bytes > self.bytes.saturating_sub(retained_bytes)
+    }
+}
 impl Scratch {
+    fn bytes_for_grid(grid: [usize; 3]) -> usize {
+        // pixels 3072 + position tables 32 + RoPE 256 + Work 32832 + activations 27904.
+        grid[1] * grid[2] * 64_096
+    }
     fn new(model: &VisionModel, grid: [usize; 3], geo: Geometry) -> Result<Self> {
         let n = grid[1] * grid[2];
         Ok(Self {
