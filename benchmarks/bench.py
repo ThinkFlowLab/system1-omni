@@ -74,11 +74,12 @@ def load_cases(path):
 
 
 def number(value):
-    return (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and math.isfinite(value)
-    )
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 WIRE_DECIMALS = 4  # workers round probabilities on the wire to four decimal places
@@ -289,6 +290,7 @@ def measurement_state(output):
     if output is not None:
         state["manifest_sha256"] = digest(output / "requests.jsonl")
         state["config_sha256"] = digest(output / "config.json")
+        state["warmup_sha256"] = digest(output / "warmup.json")
     return state
 
 
@@ -468,6 +470,10 @@ def summarize_saved(path):
     state = json.loads((path / "completion.json").read_text())
     if digest(path / "config.json") != state["config_sha256"]:
         raise ValueError("saved config checksum does not match completion")
+    if "warmup_sha256" not in state:
+        raise ValueError("saved warmup checksum missing; use the collector that produced this run")
+    if not (path / "warmup.json").is_file() or digest(path / "warmup.json") != state["warmup_sha256"]:
+        raise ValueError("saved warmup checksum does not match completion")
     if config["latency_basis"] != "post_to_body_json_and_schema_validation":
         raise ValueError("unsupported saved latency basis")
     manifest_hash = digest(path / "requests.jsonl")

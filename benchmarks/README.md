@@ -5,6 +5,10 @@ First harness for #39: replay the same labelled requests against CUDA-backed
 required (`python -m pip install -r benchmarks/requirements.txt`). Reuse an
 existing benchmark environment when available.
 
+The [latency leaderboard](latency-leaderboard.md) records the five-model H800
+comparison and its timing rules. Its historical body-receipt clock is kept
+separate from this runner's body/JSON/schema-validation clock.
+
 The runner is an HTTP client: it neither launches models nor reserves or accesses
 a GPU. Start each server separately through the host's verified GPU scheduler,
 using the same exact reserved device and pinned Laya checkpoint. Verify CUDA
@@ -167,21 +171,26 @@ python benchmarks/bench.py summary /tmp/laya-c1-run1
 
 This command makes no requests and prints the recomputed summary without changing
 saved files. It checks frozen IDs, duplicates and unknown entries, saved manifest,
-config and response checksums, and agreement between original response text and
+config, warmup and response checksums, and agreement between original response text and
 normalized answers/validation. It requires the new `completion.json` evidence;
 older runs remain usable by `compare` but cannot acquire unrecorded timing or
 interruption boundaries through this command.
+Runs recorded before `warmup_sha256` was added must use their original collector
+for offline summaries. Do not add a checksum to historical evidence to make it
+look verified at collection time.
 
 After a hard kill, a valid start snapshot can distinguish unattempted IDs from
 attempted IDs without completed records. Without a saved terminal boundary,
 `wall_seconds` and both throughput fields are null and `evidence_complete` is
-false. Partial files, checksum disagreement or missing claimed completed records
-are rejected; inspect the retained originals instead of repairing timing or
+false. A response flush and its completion snapshot are separate writes. A kill
+between them can leave an extra response with a stale checksum or completed-ID
+list. Such runs, partial files and missing claimed records are rejected; inspect
+the retained originals instead of repairing timing or
 declaring a complete baseline. Hashes detect inconsistency, not authenticity
 against someone rewriting all evidence and hashes. Interrupted runs provide
 partial observations with explicit coverage, not complete traversals.
-Flushing records and atomically replacing state cover process interruption/kill
-for the successfully written records. They do not promise machine power-loss
+Flushing records and atomically replacing state preserve consistent snapshots
+when both writes finish. They do not promise machine power-loss
 durability; this tool does not call `fsync`.
 
 ## Compare output fidelity

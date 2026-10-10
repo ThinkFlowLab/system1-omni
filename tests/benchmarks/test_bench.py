@@ -38,6 +38,7 @@ def response_for(case):
 
 def saved_inputs(path, cases=CASES):
     path.mkdir()
+    bench.write_json(path / "warmup.json", [])
     (path / "requests.jsonl").write_text("".join(json.dumps(c) + "\n" for c in cases))
     bench.write_json(
         path / "config.json",
@@ -122,6 +123,7 @@ class ReplayTests(unittest.IsolatedAsyncioTestCase):
                 for field in ("wall_seconds", "requests_per_second", "decisions_per_second"):
                     self.assertIsNone(saved[field])
                 state = json.loads((args.output / "completion.json").read_text())
+                self.assertEqual(state["warmup_sha256"], bench.digest(args.output / "warmup.json"))
                 self.assertIsNone(state["started_at"])
                 self.assertIsNone(state["finished_at"])
                 self.assertEqual(state["attempted_ids"], [])
@@ -230,6 +232,8 @@ class ReplayTests(unittest.IsolatedAsyncioTestCase):
             summary = json.loads((args.output / "summary.json").read_text())
             self.assertEqual(summary["requests"], 4)
             self.assertEqual(bench.summarize_saved(args.output), summary)
+            state = json.loads((args.output / "completion.json").read_text())
+            self.assertEqual(state["warmup_sha256"], bench.digest(args.output / "warmup.json"))
             self.assertEqual(
                 len(json.loads((args.output / "warmup.json").read_text())), 2
             )
@@ -462,6 +466,35 @@ class PersistenceTests(unittest.IsolatedAsyncioTestCase):
             expected["stop_reason"] = "completed"
             self.assertEqual(summary, expected)
 
+    async def test_large_integer_responses_are_saved_failures(self):
+        choice, noul = response_for(CASES[0]), response_for(CASES[1])
+        probabilities = choice["answers"]["route"]["probabilities"]
+        probabilities[next(iter(probabilities))] = 10**400
+        noul["answers"]["refund"]["noul"] = 10**400
+        payloads = [choice, noul, *(response_for(case) for case in CASES[2:])]
+        replies = iter(httpx.Response(200, json=payload) for payload in payloads)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "run"
+            saved_inputs(path)
+            async with httpx.AsyncClient(
+                transport=httpx.MockTransport(lambda _: next(replies))
+            ) as client:
+                records, elapsed = await bench.replay(
+                    client, "http://localhost/v1/systemone", CASES, "english", 1, 1, path
+                )
+            summary = bench.summarize_saved(path)
+            self.assertEqual(summary["errors"], {"invalid_response": 2})
+            self.assertEqual(summary["completed_requests"], 4)
+            self.assertEqual(summary["successful_requests"], 2)
+            self.assertTrue(summary["evidence_complete"])
+            for record, payload in zip(records[:2], payloads[:2]):
+                self.assertEqual(json.loads(record["response"]), payload)
+                self.assertEqual(record["response_sha256"], bench.response_digest(record["response"]))
+                self.assertEqual(record["answers"], {})
+            expected = bench.summarize(CASES, records, elapsed)
+            expected["stop_reason"] = "completed"
+            self.assertEqual(summary, expected)
+
     async def test_out_of_order_records_recompute_by_frozen_id(self):
         release = asyncio.Event()
         later_completed = asyncio.Event()
@@ -590,6 +623,41 @@ class PersistenceTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(summary["decisions_per_second"])
             self.assertFalse(summary["evidence_complete"])
 
+    async def test_flushed_response_with_stale_completion_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "run"
+            await self.collect(path)
+            records = (path / "responses.jsonl").read_bytes().splitlines(keepends=True)
+            state = json.loads((path / "completion.json").read_text())
+            state.update(
+                finished_at=None, wall_seconds=None, stop_reason=None,
+                completed_ids=state["completed_ids"][:-1],
+                active_ids=[CASES[-1]["id"]],
+                responses_sha256=bench.hashlib.sha256(b"".join(records[:-1])).hexdigest(),
+            )
+            bench.write_json(path / "completion.json", state)
+            with self.assertRaisesRegex(ValueError, "saved responses checksum"):
+                bench.summarize_saved(path)
+            state["responses_sha256"] = bench.digest(path / "responses.jsonl")
+            bench.write_json(path / "completion.json", state)
+            with self.assertRaisesRegex(ValueError, "completed IDs"):
+                bench.summarize_saved(path)
+
+    async def test_missing_warmup_evidence_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "run"
+            await self.collect(path)
+            state = json.loads((path / "completion.json").read_text())
+            state.pop("warmup_sha256")
+            bench.write_json(path / "completion.json", state)
+            with self.assertRaisesRegex(ValueError, "saved warmup checksum missing"):
+                bench.summarize_saved(path)
+            state["warmup_sha256"] = bench.digest(path / "warmup.json")
+            bench.write_json(path / "completion.json", state)
+            (path / "warmup.json").unlink()
+            with self.assertRaisesRegex(ValueError, "saved warmup checksum"):
+                bench.summarize_saved(path)
+
     async def test_id_coverage_duplicate_and_unknown_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "run"
@@ -613,10 +681,10 @@ class PersistenceTests(unittest.IsolatedAsyncioTestCase):
             files = {
                 name: (path / name).read_bytes()
                 for name in (
-                    "requests.jsonl", "config.json", "responses.jsonl", "completion.json"
+                    "requests.jsonl", "config.json", "responses.jsonl", "completion.json", "warmup.json"
                 )
             }
-            for name in ("requests.jsonl", "config.json", "responses.jsonl"):
+            for name in ("requests.jsonl", "config.json", "responses.jsonl", "warmup.json"):
                 (path / name).write_bytes(files[name] + b"\n")
                 with self.assertRaisesRegex(ValueError, "checksum"):
                     bench.summarize_saved(path)
