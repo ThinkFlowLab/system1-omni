@@ -1,13 +1,15 @@
 //! Geometry in the processor's 2×2 block-major patch order.
+use super::VisionConfig;
 use anyhow::{Result, ensure};
-pub(super) struct Geometry {
+pub struct VisionGeometry {
     pub indices: Vec<i32>,
     pub weights: Vec<f32>,
     pub cos: Vec<f32>,
     pub sin: Vec<f32>,
 }
-impl Geometry {
-    pub fn new([t, h, w]: [usize; 3]) -> Result<Self> {
+impl VisionGeometry {
+    pub fn new([t, h, w]: [usize; 3], config: &VisionConfig) -> Result<Self> {
+        config.validate()?;
         ensure!(
             t == 1 && h > 0 && w > 0 && h % 2 == 0 && w % 2 == 0,
             "expected one image with an even, nonzero patch grid"
@@ -17,14 +19,18 @@ impl Geometry {
             .ok_or_else(|| anyhow::anyhow!("vision grid overflow"))?;
         // Processor bounds allow rounding up a 1,048,576-pixel source and narrow upscaled images.
         ensure!(
-            n <= 4608 && h <= 512 && w <= 512,
+            if config.hidden_size == 1024 {
+                n <= 4608 && h <= 512 && w <= 512
+            } else {
+                n <= 65536 && h <= 16384 && w <= 16384
+            },
             "vision grid exceeds processor bounds"
         );
         let mut g = Self {
             indices: Vec::with_capacity(n * 4),
             weights: Vec::with_capacity(n * 4),
-            cos: Vec::with_capacity(n * 32),
-            sin: Vec::with_capacity(n * 32),
+            cos: Vec::with_capacity(n * (config.head_dim() / 2)),
+            sin: Vec::with_capacity(n * (config.head_dim() / 2)),
         };
         for br in 0..h / 2 {
             for bc in 0..w / 2 {
@@ -45,8 +51,9 @@ impl Geometry {
                             }
                         }
                         for pos in [row, col] {
-                            for i in 0..16 {
-                                let angle = pos as f32 / 10000f32.powf(i as f32 / 16.);
+                            for i in 0..config.head_dim() / 4 {
+                                let angle = pos as f32
+                                    / 10000f32.powf(i as f32 / (config.head_dim() / 4) as f32);
                                 g.cos.push(angle.cos());
                                 g.sin.push(angle.sin());
                             }
