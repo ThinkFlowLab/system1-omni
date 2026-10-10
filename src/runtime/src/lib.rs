@@ -1,4 +1,6 @@
-//! Shared admission and blocking dispatch for a loaded native executor.
+//! Shared admission, dispatch and the worker-side engine contract for a loaded executor.
+
+pub mod engine;
 
 use std::sync::Arc;
 
