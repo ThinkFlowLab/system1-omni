@@ -1,4 +1,6 @@
 use super::storage_dtype;
+#[cfg(unix)]
+use super::*;
 
 #[test]
 fn resident_precision_matches_cuda_consumers() {
@@ -27,3 +29,22 @@ fn resident_precision_matches_cuda_consumers() {
         1
     );
 }
+
+// Private model regression helpers remain in the repository-level tests tree.
+#[cfg(unix)]
+#[path = "../cuda/laya/fixture.rs"]
+mod fixture;
+#[cfg(unix)]
+#[path = "model_fixture.rs"]
+mod model_fixture;
+#[cfg(unix)]
+use model_fixture::fixture_model_at;
+#[cfg(unix)]
+#[path = "model_dispatch.rs"]
+mod dispatch;
+#[cfg(unix)]
+#[path = "model_grouped.rs"]
+mod grouped;
+#[cfg(unix)]
+#[path = "original_encode.rs"]
+mod original_encode;

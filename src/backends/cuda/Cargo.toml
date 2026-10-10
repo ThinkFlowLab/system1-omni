@@ -7,3 +7,10 @@ publish = false
 [dependencies]
 anyhow = "1"
 libloading = "0.8"
+
+[dev-dependencies]
+tempfile = "3"
+
+[[test]]
+name = "laya_runtime"
+path = "../../../tests/cuda/laya_runtime.rs"

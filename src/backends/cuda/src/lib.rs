@@ -7,7 +7,7 @@ use std::{
     rc::Rc,
 };
 pub type Ptr = *mut c_void;
-type Kernel = unsafe extern "C" fn(*mut Ptr, i32, i32, i32, Ptr) -> i32;
+type Launch = unsafe extern "C" fn(*mut Ptr, i32, i32, i32, Ptr) -> i32;
 struct Context {
     lib: Library,
     stream: Ptr,
@@ -83,8 +83,57 @@ impl Cuda {
         b.write(bytes)?;
         Ok(b)
     }
+    /// Complete a prevalidated group with one synchronization before host borrows end.
+    /// A failed submission is also drained; this does not overlap copies and compute.
+    pub fn write_many(&self, writes: &[(&Buffer, &[u8])]) -> Result<()> {
+        for (buffer, bytes) in writes {
+            ensure!(
+                Rc::ptr_eq(&self.ctx, &buffer.ctx),
+                "upload buffer belongs to another CUDA context"
+            );
+            ensure!(bytes.len() <= buffer.bytes, "upload exceeds allocation");
+        }
+        if writes.iter().all(|(_, bytes)| bytes.is_empty()) {
+            return Ok(());
+        }
+        let upload = self
+            .ctx
+            .symbol::<unsafe extern "C" fn(Ptr, *const u8, usize, Ptr) -> i32>(b"laya_upload\0")?;
+        let sync = self
+            .ctx
+            .symbol::<unsafe extern "C" fn(Ptr) -> i32>(b"laya_sync\0")?;
+        let mut copied = 0;
+        for (buffer, bytes) in writes {
+            if bytes.is_empty() {
+                continue;
+            }
+            copied = unsafe { upload(buffer.p, bytes.as_ptr(), bytes.len(), self.ctx.stream) };
+            if copied != 0 {
+                break;
+            }
+        }
+        // Resolve both entry points before submission and keep every source borrowed
+        // through the drain even when a copy reports an error after queuing work.
+        let synced = unsafe { sync(self.ctx.stream) };
+        match (self.ctx.check(copied), self.ctx.check(synced)) {
+            (Err(copy), Err(sync)) => Err(anyhow!(
+                "{copy}; stream synchronization also failed: {sync}"
+            )),
+            (Err(e), _) | (_, Err(e)) => Err(e),
+            (Ok(()), Ok(())) => Ok(()),
+        }
+    }
     pub fn sync(&self) -> Result<()> {
         self.ctx.sync()
+    }
+    /// Resolve a kernel once while retaining the owning runtime and native code.
+    pub fn resolve(&self, name: &str) -> Result<Kernel> {
+        Ok(Kernel {
+            ctx: self.ctx.clone(),
+            launch: self
+                .ctx
+                .symbol::<Launch>(format!("laya_{name}\0").as_bytes())?,
+        })
     }
     /// # Safety
     /// Tensor shape, dtype, layout, aliasing and allocation sizes must match the generated kernel.
@@ -96,7 +145,7 @@ impl Cuda {
         );
         let k = self
             .ctx
-            .symbol::<Kernel>(format!("laya_{name}\0").as_bytes())?;
+            .symbol::<Launch>(format!("laya_{name}\0").as_bytes())?;
         self.ctx.check(unsafe {
             k(
                 args.as_ptr() as *mut Ptr,
@@ -151,7 +200,7 @@ impl Cuda {
     ) -> Result<()> {
         let k = self
             .ctx
-            .symbol::<Kernel>(format!("laya_{name}\0").as_bytes())?;
+            .symbol::<Launch>(format!("laya_{name}\0").as_bytes())?;
         self.ctx.check(unsafe {
             k(
                 args.as_ptr() as *mut Ptr,
@@ -187,13 +236,10 @@ impl Buffer {
         self.p
     }
     pub fn write(&self, bytes: &[u8]) -> Result<()> {
-        ensure!(bytes.len() <= self.bytes, "upload exceeds allocation");
-        let f = self
-            .ctx
-            .symbol::<unsafe extern "C" fn(Ptr, *const u8, usize, Ptr) -> i32>(b"laya_upload\0")?;
-        self.ctx
-            .check(unsafe { f(self.p, bytes.as_ptr(), bytes.len(), self.ctx.stream) })?;
-        self.ctx.sync()
+        Cuda {
+            ctx: self.ctx.clone(),
+        }
+        .write_many(&[(self, bytes)])
     }
     pub fn read(&self, bytes: usize) -> Result<Vec<u8>> {
         ensure!(bytes <= self.bytes, "download exceeds allocation");
@@ -243,5 +289,33 @@ impl Drop for Graph {
                 f(self.p);
             }
         }
+    }
+}
+
+/// A resolved entry point retaining its stream and native library.
+#[derive(Clone)]
+pub struct Kernel {
+    ctx: Rc<Context>,
+    launch: Launch,
+}
+impl Kernel {
+    /// # Safety
+    /// Shapes, dtype, layout, aliasing and pointer lifetimes must match this kernel.
+    /// Every pointer belongs to this context and stays alive through synchronization
+    /// or destruction of any graph that captures the launch.
+    pub unsafe fn launch(&self, args: &[Ptr], b: usize, l: usize) -> Result<()> {
+        ensure!(
+            b > 0 && b <= 16 && l > 0 && l <= 512 && l.is_multiple_of(16),
+            "invalid CUDA shape"
+        );
+        self.ctx.check(unsafe {
+            (self.launch)(
+                args.as_ptr() as *mut Ptr,
+                b as i32,
+                l as i32,
+                (b * l) as i32,
+                self.ctx.stream,
+            )
+        })
     }
 }
