@@ -13,7 +13,7 @@
 #include <stdint.h>
 
 // Bumped whenever the required interface below changes.
-#define CS1_ABI_VERSION 6
+#define CS1_ABI_VERSION 7
 
 #ifdef __cplusplus
 extern "C" {
@@ -118,6 +118,12 @@ int cs1_silu_mul(const void* gate_up, int ld, void* out, int T, int I, void* str
 // y [M, N] (rows of ldy) = x [M, K] * w [N, K]^T through cuBLASLt, float32 accumulation,
 // with cuBLASLt's first heuristic choice for each shape (see gemm.cu).
 void* cs1_gemm_create(size_t workspace_bytes);
+// A handle that keeps one algorithm per weight shape (N, K, ldy) for every M, chosen at
+// reference_m rows among algorithms without split-K, so that a row's result depends
+// neither on M nor on its row index (checked by tests/qwen3_5/kernels.rs on the GPU it
+// runs on). Null if reference_m <= 0 or setup fails. cs1_gemm with this handle returns a
+// cuBLAS status for an M the algorithm cannot serve, rather than switching algorithms.
+void* cs1_gemm_create_fixed(size_t workspace_bytes, int reference_m);
 void cs1_gemm_destroy(void* gemm);
 int cs1_gemm(void* gemm, const void* x, const void* w, void* y, int M, int N, int K, int ldy,
              void* stream);
