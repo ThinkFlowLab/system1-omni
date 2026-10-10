@@ -1,4 +1,14 @@
 //! Jev HTTP transport. The worker owns request parsing and inference.
+//!
+//! Two ways to answer `/v1/systemone`, sharing one HTTP surface:
+//!
+//! - [`Config`] and [`app`] forward to a worker that already speaks HTTP. The frontend owns no
+//!   model state.
+//! - [`engine`] serves a worker linked into this binary through
+//!   [`omni_runtime::engine::Engine`]. Admission, the queue and readiness are the runtime's;
+//!   the frontend owns the transport and the status mapping.
+
+pub mod engine;
 
 use std::{env, error::Error, net::SocketAddr, time::Duration};
 
