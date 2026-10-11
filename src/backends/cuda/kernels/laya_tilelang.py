@@ -9,6 +9,11 @@ import tilelang.language as T
 
 DT, ACC = "bfloat16", "float"
 FAST = {tilelang.PassConfigKey.TL_ENABLE_FAST_MATH: True}
+# These kernels are Hopper-only: the export embeds compute_90a and callers
+# compile with -gencode=arch=compute_90a. Pinning the target here keeps the
+# export from inferring one from whatever device happens to be attached. With
+# no device TileLang falls back to sm_50, which nvcc rejects.
+TARGET = {"kind": "cuda", "arch": "sm_90a"}
 
 
 def _act(x, kind):
@@ -20,7 +25,7 @@ def _act(x, kind):
 
 
 # ----------------------------------------------------------------------------- GEMM
-@tilelang.jit(pass_configs=FAST)
+@tilelang.jit(target=TARGET, pass_configs=FAST)
 def gemm_kernel(N, K, bias=False, act="none", bm=64, bn=128, bk=64, stages=3, threads=128):
     """C[M,N] = act(A[M,K] @ W[N,K]^T + b)."""
     M = T.dynamic("M")
@@ -45,7 +50,7 @@ def gemm_kernel(N, K, bias=False, act="none", bm=64, bn=128, bk=64, stages=3, th
     return main
 
 
-@tilelang.jit(pass_configs=FAST)
+@tilelang.jit(target=TARGET, pass_configs=FAST)
 def gemm_geglu_kernel(F, K, bm=64, bn=64, bk=64, stages=3, threads=128):
     """ModernBERT GLU MLP up-projection, fused:  C[M,F] = gelu(A @ Wi[:F]^T) * (A @ Wi[F:]^T)."""
     M = T.dynamic("M")
@@ -72,7 +77,7 @@ def gemm_geglu_kernel(F, K, bm=64, bn=64, bk=64, stages=3, threads=128):
 
 
 # ----------------------------------------------------------------------------- LayerNorm (+residual)
-@tilelang.jit(pass_configs=FAST)
+@tilelang.jit(target=TARGET, pass_configs=FAST)
 def add_ln_kernel(D, residual=True, bias=False, eps=1e-5, bm=4, threads=32):
     """X (fp32 residual stream) += R (bf16 branch output, if residual);  Y (bf16) = LN(X) * w (+ b).
 
@@ -119,7 +124,7 @@ def add_ln_kernel(D, residual=True, bias=False, eps=1e-5, bm=4, threads=32):
 
 
 # ----------------------------------------------------------------------------- RoPE (in place on packed qkv)
-@tilelang.jit(pass_configs=FAST)
+@tilelang.jit(target=TARGET, pass_configs=FAST)
 def rope_kernel(H, Dh, bm=32, threads=128):
     """QKV[M, 3*H*Dh] packed as (q|k|v)(h)(d).  Rotates q and k in place (rotate-half convention, fp32 math).
     cos/sin: [L, Dh/2].  Row r has position r % L.  M and L are runtime symbols."""
@@ -147,7 +152,7 @@ def rope_kernel(H, Dh, bm=32, threads=128):
 
 
 # ----------------------------------------------------------------------------- flash attention (padding mask + sliding window)
-@tilelang.jit(pass_configs=FAST)
+@tilelang.jit(target=TARGET, pass_configs=FAST)
 def attn_kernel(B, L, H, Dh, window=0, bm=64, bn=64, stages=1, threads=128):
     """QKV: [B, L, 3, H, Dh] bf16 (a view of the packed [M, 3*H*Dh] buffer).  Lens: [B] int32 valid length.
     O: [B, L, H*Dh].  window>0 => bidirectional sliding window |i-j| <= window.  Masked scores use a large
