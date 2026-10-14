@@ -5,6 +5,11 @@ First harness for #39: replay the same labelled requests against CUDA-backed
 required (`python -m pip install -r benchmarks/requirements.txt`). Reuse an
 existing benchmark environment when available.
 
+For repeated local checks across model paths, use the
+[weekly GPU E2E regression suite](e2e/README.md). It starts configured workers
+and the frontend under an exact GPU reservation, preserves two measured passes,
+and checks labelled quality, output parity and latency against a chosen baseline.
+
 The runner is an HTTP client: it neither launches models nor reserves or accesses
 a GPU. Start each server separately through the host's verified GPU scheduler,
 using the same exact reserved device and pinned Laya checkpoint. Verify CUDA

@@ -30,3 +30,6 @@ weights/
 # Documentation site build and environment
 /site/
 .venv-docs/
+
+# Machine-specific weekly E2E configuration and raw results
+.local/

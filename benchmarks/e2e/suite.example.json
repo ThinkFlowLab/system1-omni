@@ -1,0 +1,91 @@
+{
+  "startup_timeout": 600,
+  "request_timeout": 180,
+  "concurrency": 1,
+  "warmup": 3,
+  "gates": {
+    "max_accuracy_drop": 0.0,
+    "max_score_mae_increase": 0.02,
+    "max_latency_increase": 0.15,
+    "max_probability_drift": 0.02,
+    "max_score_drift": 0.02,
+    "max_flips": 0
+  },
+  "models": [
+    {
+      "id": "laya-native",
+      "unavailable": "Requires a prepared Hopper CUDA bundle; this L20X host is sm_89.",
+      "recipe": "recipe/laya/native/README.md"
+    },
+    {
+      "id": "laya-python-cuda",
+      "unavailable": "Configure the real CUDA worker and pinned English checkpoint.",
+      "recipe": "recipe/laya/README.md"
+    },
+    {
+      "id": "cua-s1-text-native",
+      "unavailable": "Configure the merged text checkpoint and native CUDA worker.",
+      "recipe": "recipe/cua_s1/native.md"
+    },
+    {
+      "id": "cua-s1-text-reference",
+      "unavailable": "Configure the pinned Python reference environment and weights.",
+      "recipe": "recipe/cua_s1/text.md"
+    },
+    {
+      "id": "cua-s1-multimodal",
+      "unavailable": "Requires a labelled screenshot corpus and the reference screenshot worker.",
+      "recipe": "src/frontend/cua_s1.py"
+    },
+    {
+      "id": "valen-text",
+      "unavailable": "Configure the pinned Preview/base checkpoints and Python environment.",
+      "recipe": "recipe/valen/reference.md"
+    },
+    {
+      "id": "valen-image",
+      "unavailable": "Requires a labelled image corpus and pinned Preview reference worker.",
+      "recipe": "recipe/valen/reference.md"
+    },
+    {
+      "id": "open-jev-27b",
+      "unavailable": "Configure the pinned merged export and native CUDA worker.",
+      "recipe": "recipe/open_jev/native.md"
+    },
+    {
+      "id": "open-jev-9b",
+      "unavailable": "Configure the pinned 9B merged export and native CUDA worker.",
+      "recipe": "recipe/open_jev/native.md"
+    },
+    {
+      "id": "jev-vl-text",
+      "unavailable": "Configure the experimental merged checkpoint; use protocol jev-vl.",
+      "recipe": "recipe/jev_vl/README.md"
+    },
+    {
+      "id": "jev-vl-image",
+      "unavailable": "Requires offline preencoded images and a labelled image corpus; offline encoding is separate from serving latency.",
+      "recipe": "recipe/jev_vl/README.md"
+    },
+    {
+      "id": "clm-real-encoder",
+      "unavailable": "Configure a real Qwen3-8B embeddings server and decision head; stub accuracy is not valid.",
+      "recipe": "recipe/clm/native/VALIDATION.md"
+    },
+    {
+      "id": "lfm2",
+      "unavailable": "Configure pinned LFM2.5-350M weights and CUDA Transformers environment.",
+      "recipe": "recipe/lfm2/README.md"
+    },
+    {
+      "id": "decider",
+      "unavailable": "Configure pinned Decider-2B v11 weights and native CUDA worker.",
+      "recipe": "recipe/decider/download_weights.py"
+    },
+    {
+      "id": "omnijev",
+      "unavailable": "No complete inference worker on this repository revision.",
+      "recipe": "recipe/omnijev/README.md"
+    }
+  ]
+}

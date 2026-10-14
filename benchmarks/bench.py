@@ -82,7 +82,7 @@ def sum_allowance(count):
     return count * 0.5 * 10**-WIRE_DECIMALS + 1e-9
 
 
-def read_answers(case, payload):
+def read_answers(case, payload, score_decimals=4):
     """Validate wire results and normalize probabilities by label, never by order."""
     answers = payload["answers"]
     if set(answers) != set(case["request"]["questions"]):
@@ -120,7 +120,13 @@ def read_answers(case, payload):
             raise ValueError("decision value must be finite")
         if kind == "score":
             expected = sum(int(k) * p for k, p in probabilities.items())
-            if not math.isclose(value, expected, abs_tol=1e-4):
+            # The score and each wire probability are rounded independently.
+            allowance = (
+                0.5 * 10**-score_decimals
+                + sum(int(k) for k in probabilities) * 0.5 * 10**-WIRE_DECIMALS
+                + 1e-9
+            )
+            if abs(value - expected) > allowance:
                 raise ValueError("score must equal the expected level")
         normalized[qid] = {"value": value, "probabilities": probabilities}
     return normalized
@@ -173,7 +179,61 @@ def summarize(cases, records, elapsed):
     }
 
 
-async def request_one(client, endpoint, case, model, timeout):
+def wire_request(case, model, protocol):
+    if protocol == "systemone":
+        return {**case["request"], "model": model}
+    questions = case["request"]["questions"]
+    if len(questions) != 1:
+        raise ValueError("JEV-VL requires one question per request")
+    question = next(iter(questions.values()))
+    if question["type"] != "choice":
+        raise ValueError("the JEV-VL benchmark adapter supports choice only")
+    state = case["request"]["state"]
+    if isinstance(state, dict) and set(state) == {"image"}:
+        # JEV-VL treats a plain object as JSON text; media must be a parts list.
+        state = [state]
+    return {
+        "model": model,
+        "kind": "choice",
+        "state": state,
+        "question": question["instructions"],
+        "options": [f"{k}: {v}" for k, v in question["criteria"].items()],
+    }
+
+
+def wire_answers(case, payload, model, protocol, score_decimals=4):
+    if protocol == "systemone":
+        return read_answers(case, payload, score_decimals)
+    request = wire_request(case, model, protocol)
+    qid, question = next(iter(case["request"]["questions"].items()))
+    labels = list(question["criteria"])
+    index = payload["choice_index"]
+    if (
+        payload["kind"] != "choice"
+        or payload["effective_kind"] != "choice"
+        or payload["options"] != request["options"]
+        or type(index) is not int
+        or not 0 <= index < len(labels)
+        or payload["choice"] != request["options"][index]
+        or len(payload["probabilities"]) != len(labels)
+    ):
+        raise ValueError("JEV-VL decision does not match the request")
+    return read_answers(
+        case,
+        {
+            "answers": {
+                qid: {
+                    "choice": labels[index],
+                    "probabilities": dict(zip(labels, payload["probabilities"])),
+                }
+            }
+        },
+    )
+
+
+async def request_one(
+    client, endpoint, case, model, timeout, protocol="systemone", score_decimals=4
+):
     started = time.perf_counter()
     record = {
         "id": case["id"],
@@ -186,12 +246,14 @@ async def request_one(client, endpoint, case, model, timeout):
     try:
         async with asyncio.timeout(timeout):
             response = await client.post(
-                endpoint, json={**case["request"], "model": model}
+                endpoint, json=wire_request(case, model, protocol)
             )
         record["status"] = response.status_code
         record["response"] = response.text
         response.raise_for_status()
-        record["answers"] = read_answers(case, response.json())
+        record["answers"] = wire_answers(
+            case, response.json(), model, protocol, score_decimals
+        )
     except httpx.HTTPStatusError as exc:
         record.update(error=str(exc), error_kind=f"http_{record['status']}")
     except (TimeoutError, httpx.TimeoutException) as exc:
@@ -206,13 +268,24 @@ async def request_one(client, endpoint, case, model, timeout):
     return record
 
 
-async def replay(client, endpoint, cases, model, concurrency, timeout):
+async def replay(
+    client,
+    endpoint,
+    cases,
+    model,
+    concurrency,
+    timeout,
+    protocol="systemone",
+    score_decimals=4,
+):
     pending = iter(enumerate(cases))
     records = [None] * len(cases)
 
     async def worker():
         for index, case in pending:
-            records[index] = await request_one(client, endpoint, case, model, timeout)
+            records[index] = await request_one(
+                client, endpoint, case, model, timeout, protocol, score_decimals
+            )
 
     started = time.perf_counter()
     await asyncio.gather(*(worker() for _ in range(concurrency)))
@@ -241,9 +314,12 @@ async def run(args, cases):
         {
             "manifest_sha256": digest(args.manifest),
             "runner_sha256": digest(Path(__file__)),
+            "validation_protocol": "probabilities-4dp-model-score-v1",
+            "score_decimals": getattr(args, "score_decimals", 4),
             "metadata": metadata,
             "endpoint": args.endpoint,
             "model": args.model,
+            "protocol": getattr(args, "protocol", "systemone"),
             "phase": args.phase,
             "concurrency": args.concurrency,
             "warmup": args.warmup,
@@ -274,6 +350,8 @@ async def run(args, cases):
                     cases[i % len(cases)],
                     args.model,
                     args.timeout,
+                    getattr(args, "protocol", "systemone"),
+                    getattr(args, "score_decimals", 4),
                 )
             )
             if warmup[-1]["error"]:
@@ -281,7 +359,14 @@ async def run(args, cases):
                 raise ValueError("readiness/warmup failed; see warmup.json")
         write_json(args.output / "warmup.json", warmup)
         records, elapsed = await replay(
-            client, args.endpoint, cases, args.model, args.concurrency, args.timeout
+            client,
+            args.endpoint,
+            cases,
+            args.model,
+            args.concurrency,
+            args.timeout,
+            getattr(args, "protocol", "systemone"),
+            getattr(args, "score_decimals", 4),
         )
     (args.output / "responses.jsonl").write_text(
         "".join(json.dumps(r, allow_nan=False) + "\n" for r in records)
@@ -375,6 +460,10 @@ def main():
         "--model", required=True, help="backend's alias for the pinned checkpoint"
     )
     runner.add_argument("--metadata", type=Path, required=True)
+    runner.add_argument(
+        "--protocol", choices=("systemone", "jev-vl"), default="systemone"
+    )
+    runner.add_argument("--score-decimals", type=int, choices=(2, 3, 4), default=4)
     runner.add_argument(
         "--output", type=Path, required=True, help="new directory; never overwritten"
     )
