@@ -77,3 +77,4 @@ nav:
       - LFM2.5-350M choice worker: recipe/lfm2/README.md
       - D3 reference worker: recipe/d3/reference.md
   - Contributing: CONTRIBUTING.md
+  - Development loop: docs/development-loop.md

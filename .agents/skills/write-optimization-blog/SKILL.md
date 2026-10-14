@@ -9,6 +9,11 @@ Turn implementation and experiment records into a readable engineering post.
 Explain the bottleneck, the change that addresses it, and the measured result.
 Keep measured behavior distinguishable from implemented support and future work.
 
+When the destination is System1-Omni, first read its root
+[AGENTS.md](../../../AGENTS.md), [CONTRIBUTING.md](../../../CONTRIBUTING.md),
+and applicable [lessons](../../../lessons.md). For another repository, use that
+repository's own instructions and canonical lessons.
+
 ## Choose the destination and evidence
 
 Inspect the target repository's blog/docs conventions and contribution rules.

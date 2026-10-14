@@ -33,9 +33,23 @@ existing failure behavior.
 
 This implements serial admission per executor within a worker process. Admitted
 concurrency is one. Queue-length limits, token budgets, compatibility grouping,
-shared processing orchestration and GPU batching remain planned. The Qwen
-executor still accepts one prompt per forward; this scheduler does not pack
-inputs or coordinate separately running workers.
+shared processing orchestration and cross-request GPU batching remain planned
+for this scheduler. The shared Qwen executor supports single prompts and bounded
+packed prefill: Open-Jev-27B-v1.1's model adapter groups up to 16 candidates and
+4096 tokens, with longer prompts run alone, while Open-Jev-9B uses single-prompt
+calls. `SerialScheduler` does not pack those inputs or coordinate separately
+running workers. See the [architecture contracts](../../docs/architecture.md)
+for grouping and reconstruction ownership.
+
+## In-process engine interface
+
+The separate [`engine` module](src/engine.rs) defines a byte-oriented `Engine`
+contract: readiness, request submission with a deadline, a reply channel and
+optional queue/failure reporting. Implementations own admission and their queue;
+the trait does not supply a queue or batching policy. The
+[frontend library](../frontend/README.md#in-process-library-transport) maps this
+interface onto HTTP. The default `omni-jev` binary still forwards to an external
+HTTP worker; the interface alone does not migrate existing native workers.
 
 CPU tests cover FIFO serialization, queued cancellation, retention of admission
 and resources after dispatched cancellation, errors/panics, and independent

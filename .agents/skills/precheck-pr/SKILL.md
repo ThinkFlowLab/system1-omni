@@ -5,6 +5,11 @@ description: Self-review a System1-Omni branch before opening a PR or marking it
 
 # PR self-review
 
+Read the root [agent entrypoint](../../../AGENTS.md) and applicable
+[lessons](../../../lessons.md) before this review. Use the canonical
+[development loop](../../../docs/development-loop.md) for evidence freshness and
+handoff; independent read-only reviews remain outside the contributor-intent gate.
+
 Review the contributor's changes against System1-Omni's conventions. Read
 `CONTRIBUTING.md`, `README.md`, and applicable `AGENTS.md` instructions from the
 checkout before starting. Paths below are relative to the repository root.

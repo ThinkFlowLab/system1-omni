@@ -216,6 +216,10 @@ request: self-review the full diff, keep serving, processing, scheduling, and
 model execution separate according to the [architecture contracts](docs/architecture.md),
 and run the checks appropriate to your changes.
 
+For agent-assisted work, start with [AGENTS.md](AGENTS.md). The
+[development loop](docs/development-loop.md) explains resumable handoffs, and
+[lessons](lessons.md) records verified prevention rules.
+
 **Have an idea or found a problem?** [Open an
 issue](https://github.com/ThinkFlowLab/system1-omni/issues/new) with the
 details, or [send a pull

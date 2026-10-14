@@ -6,8 +6,11 @@ design. Concrete input/output types follow each executor's supported layout.
 
 ## Implementation status
 
-The [Rust frontend](../src/frontend/README.md) currently forwards HTTP requests
-to separately running workers. Cua-S1 and Open-Jev have native Rust/CUDA workers
+The [Rust frontend](../src/frontend/README.md) binary forwards HTTP requests
+to separately running workers. Its library also provides an in-process transport
+for the runtime's byte-oriented `Engine` interface; admission, readiness and queue
+reporting stay worker-owned. This interface does not implement shared model
+processing or dynamic batching. Cua-S1 and Open-Jev have native Rust/CUDA workers
 that share the [Qwen3.5/3.8 executor](../src/models/qwen3_5/native/), which accepts
 single prompts and bounded packed prefill. Cua-S1 and Open-Jev-9B use
 single-prompt calls; Open-Jev-27B-v1.1 packs candidates within one request for
@@ -118,7 +121,9 @@ executor, with FIFO waiting. Engines own scheduler instances; model-specific
 execution adapters declare the unit and submit owned closures. Waiting is async,
 so queued requests do not occupy blocking threads waiting for a model lock.
 Schedulers are local to each worker/executor; this does not coordinate separate
-processes. Queue-length limits and token budgets are not implemented yet.
+processes. `SerialScheduler` does not impose queue-length limits or token budgets.
+The separate `Engine` interface can report a worker's capacity and refusals; it
+does not itself implement an admission policy.
 
 - Batch only work accepted by the same loaded executor, with compatible
   checkpoint/adapter identity, device, dtype, and input layout. Models declare

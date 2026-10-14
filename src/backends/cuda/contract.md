@@ -13,8 +13,11 @@ engine" is the older word for the second of those. A backend does not need
 identical internal structures to another backend, and no universal tensor
 abstraction is introduced here.
 
-Status: proposed. The checker is [`check_contract.py`](check_contract.py); wiring it
-into CI is a separate change, so nothing here is enforced yet.
+Status: the static Tier 1 checker, [`check_contract.py`](check_contract.py), is
+wired into the `cuda-contract` job in [CI](../../../.github/workflows/ci.yml),
+alongside checker and backend tests. The Tier 2 CUDA compile and Tier 3 GPU parity
+jobs described below are not configured there. Static enforcement does not prove
+compiled artifacts or numerical parity.
 
 ## Why this exists
 
@@ -99,7 +102,8 @@ before its second consumer lands.
 
 ### Build script interface
 
-`build.script` is invoked by the compile job as:
+A future compile job could invoke `build.script` as follows; no such job is
+configured in the current CI:
 
 ```sh
 ./<build.script> <output-dir> <compute-capability>
@@ -205,7 +209,7 @@ instead of leaving it to be discovered in a parity failure:
 
 ## 4. Validation
 
-Two tiers, because they have different requirements.
+Three tiers, because they have different requirements.
 
 **Tier 1 — contract check (no GPU).** `check_contract.py` reads the manifests and
 the build scripts and checks: the schema, that every declared source exists, that
@@ -213,16 +217,16 @@ a build script declares the architectures the manifest claims and writes the
 library the manifest names, that `abi_version` matches the `<PREFIX>_ABI_VERSION`
 macro the declared sources define, and that a `validated` backend declares both a
 tolerance and a reference entrypoint. It runs on a stock runner and needs no CUDA
-toolkit. This is the tier implemented in this change.
+toolkit. This tier is implemented and runs in the current CI workflow.
 
 It does not compile CUDA and does not prove numerics.
 
-**Tier 2 — compile (no GPU).** Building each backend with `nvcc` in a CUDA
-container, so a kernel that stops compiling cannot land. The interface it relies
-on is the one Tier 1 already checks: `./<build.script> <output-dir>
-<compute-capability>`, producing exactly the declared library. Not yet wired up;
-it needs a container image and belongs with the rest of the CI wiring rather than
-with the checker.
+**Tier 2 — proposed compile check (no GPU; not configured).** A possible future
+job would build selected backends with `nvcc` in a CUDA container. This is not
+an active merge requirement. Its proposed interface is the one Tier 1 checks:
+`./<build.script> <output-dir> <compute-capability>`, producing exactly the declared
+library. Adopting it would require an explicit repository decision, a suitable
+toolchain image and an agreed scope; this document does not require its installation.
 
 Note what a build check does and does not prove. It shows the sources compile and
 that a file of the declared name appears. It does not prove the binary honoured
@@ -231,18 +235,19 @@ and nothing reads the artifact to confirm which targets are inside. Inspecting
 that would need `cuobjdump`, which is a reasonable follow-up rather than
 something this change claims to do.
 
-**Tier 3 — GPU parity (self-hosted).** Running each validated backend's
-`reference.entrypoint` on a real GPU, and reporting kernel-level and end-to-end
-parity separately. Contributors with a card can attach their own runner to their
-own fork, which is how `#19` (RTX 6000 Ada, sm_89), `#12` (RTX 4090) and `#14`
-(H800, sm_90a) can each be checked on the hardware they were measured on. Not yet
-wired up.
+**Tier 3 — proposed GPU parity check (not configured).** Where a specific change
+and available hardware justify it, a contributor can run the affected model's
+existing reference recipe and report kernel-level and end-to-end parity
+separately. GPU CI would be a separate repository decision, not an obligation
+to attach a runner or provide hardware. The recorded hardware in `#19`, `#12`
+and `#14` does not establish current CI capacity.
 
 The split is the point. A CPU-only workflow that claims to validate CUDA is worse
 than no workflow, which is the gap `#14`'s own validation report already records:
-today's CI checks every Rust feature and compiles no CUDA at all. Tier 1 removes
-the part of that gap which does not need hardware; Tiers 2 and 3 need hardware and
-are therefore separate.
+the current Rust CI selects `omni-laya/serve`, and the CUDA-contract job reads
+source text without compiling CUDA. Tier 1 covers the static part of that gap;
+Tier 2 needs a CUDA toolchain, and Tier 3 additionally needs a GPU and model
+artifacts. Neither is established by a passing Tier 1 job.
 
 ## Reporting
 

@@ -5,6 +5,11 @@ description: Review ThinkFlowLab/system1-omni pull requests for Rust serving, mo
 
 # System1-Omni PR review
 
+Read the root [agent entrypoint](../../../AGENTS.md) and applicable
+[lessons](../../../lessons.md) before this review. Use the canonical
+[development loop](../../../docs/development-loop.md) for evidence freshness and
+handoff; independent read-only reviews remain outside the contributor-intent gate.
+
 Use in `ThinkFlowLab/system1-omni` (repository ID `1386454853`). Produce a local reviewer report. The existing `precheck-pr` and `self-review` skills support contributor preparation; this skill supplies repository-specific independent review and does not replace their checklist. It grants no authority to edit code, push, post reviews/comments, approve, change labels or merge. It does not authorize model downloads, GPU reservations, paid execution or benchmark campaigns.
 
 ## Establish evidence

@@ -5,6 +5,11 @@ description: Self-review System1-Omni changes before requesting maintainer revie
 
 # System1-Omni self-review
 
+Read the root [agent entrypoint](../../../AGENTS.md) and applicable
+[lessons](../../../lessons.md) before this review. Use the canonical
+[development loop](../../../docs/development-loop.md) for evidence freshness and
+handoff; independent read-only reviews remain outside the contributor-intent gate.
+
 Start with the [human contributor-intent gate](#human-contributor-intent-gate).
 
 Follow the target checkout's `CONTRIBUTING.md` when present and its PR template.

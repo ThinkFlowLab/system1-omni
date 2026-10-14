@@ -1,14 +1,16 @@
 # Rust frontend
 
-An Axum/Tokio server that forwards requests to a separately running model worker
-using Reqwest. The worker handles validation, media loading, preprocessing and
-inference.
+The default `omni-jev` binary is an Axum/Tokio server that forwards requests to a
+separately running model worker using Reqwest. The library also exposes an
+in-process transport described below. In both paths the worker handles model
+validation, media loading, preprocessing and inference.
 
 In the [target architecture](../../docs/architecture.md), a shared Rust worker
 runtime coordinates independent processors, a scheduler/batcher, and model
 executors. Rust handles host orchestration; CUDA/Metal handle device operations
-through backend bindings. That shared runtime is planned; the current frontend
-continues to forward requests to existing model-specific worker pipelines.
+through backend bindings. Serial admission and an in-process `Engine` interface
+exist; shared processing orchestration and dynamic batching remain planned. The
+default binary continues to forward to existing model-specific worker pipelines.
 
 ## Run
 
@@ -35,7 +37,7 @@ connections bypass system HTTP proxies.
 
 The health timeout and response limit must be positive integers.
 
-## HTTP interface
+## Forwarding HTTP interface
 
 - `POST /v1/systemone` forwards the `model`, `state` and `questions` envelope
   unchanged. Workers return `choice`, `score` or `noul` decisions; see the
@@ -55,6 +57,23 @@ Text, image, audio, video and mixed payloads pass through as bytes. Actual infer
 support depends on the worker. The [Laya recipe](../../recipe/laya/README.md) verifies
 text decisions against a real backend.
 
+## In-process library transport
+
+[`omni_jev::engine::app`](src/engine.rs) accepts an `Arc<dyn Engine>` and
+`ServiceConfig`; [`Engine`](../runtime/src/engine.rs) lives in `omni-runtime`.
+It exposes the same two route paths, but it is a separate library integration,
+not a binary configuration switch. `src/main.rs` selects the forwarding router.
+
+The transport passes request/response bytes without parsing the decision envelope.
+It owns body limits, the total request deadline and HTTP status mapping; the
+worker owns admission, execution, readiness and optional queue reports. Defaults
+are a 30-second total budget and 1 MiB request body limit. Invalid requests map to
+400, oversized bodies to 413, busy/unavailable engines to 503, inference failures
+to 500, and upload/queue/inference timeouts to 504. Health reads engine readiness
+without waiting for inference; successful replies expose the reported queue depth.
+`engine::serve` drains HTTP connections; stopping admission and joining worker
+threads remain the caller's responsibility.
+
 ## Checks
 
 From the repository root:
@@ -63,12 +82,12 @@ From the repository root:
 # Focused CPU-only API integration suite.
 cargo test -p omni-jev --test frontend --locked
 
-# Full workspace checks.
-cargo fmt --all --check
-cargo clippy --workspace --locked --all-targets -- -D warnings
-cargo test --workspace --locked
+# Other transport paths and the in-process interface.
+cargo test -p omni-jev --test forwarding_limits --test in_process --locked
 ```
 
 Tests use local mock workers; no model weights or GPU are needed. They cover
 multimodal byte preservation, authorization, connection reuse, large uploads,
 backend errors, timeouts, health and binary startup/shutdown.
+
+For full workspace checks, use the current [Rust CI commands](../../CONTRIBUTING.md#rust-ci-checks).

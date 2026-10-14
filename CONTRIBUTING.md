@@ -4,6 +4,11 @@ Review the [README](README.md) and
 [architecture and integration contracts](docs/architecture.md) for the project's
 ownership boundaries and current implementation status before making changes.
 
+Before changing or reviewing an area, read the applicable [lessons](lessons.md).
+Use the [development loop](docs/development-loop.md) to checkpoint evidence and
+resume work. Agent-assisted contributors also follow [AGENTS.md](AGENTS.md);
+these entrypoints link to the same canonical guidance.
+
 ## Before implementation or a PR
 
 Complete the [human contributor-intent gate](.agents/skills/self-review/SKILL.md#human-contributor-intent-gate)
@@ -97,11 +102,13 @@ from the repository root and record the exact revision and environment.
 | Frontend transport (`src/frontend/`) | `cargo test -p omni-jev --test frontend --locked`; include `cargo test -p omni-jev --test forwarding_limits --test in_process --locked` when those paths change. | Check request/response, failure and cancellation behavior against the [frontend contract](src/frontend/README.md), then run Rust CI. |
 | Native admission or execution interface (`src/runtime/`) | `cargo test --locked -p omni-runtime` | Check affected workers against the [runtime contract](src/runtime/README.md) and [architecture invariants](docs/architecture.md), then run Rust CI. |
 | Benchmark tooling (`benchmarks/`, `tests/benchmarks/`) | Install `benchmarks/requirements.txt`; run `python benchmarks/bench.py validate benchmarks/smoke.jsonl` and `python -m unittest discover -s tests/benchmarks -p 'test_*.py' -v`. | Follow the [benchmark protocol](benchmarks/README.md) for performance claims. Tooling smoke tests are not model-quality or throughput measurements. |
-| CUDA contract or backend tooling | Use the `cuda-contract` job's current commands and prerequisites in [CI](.github/workflows/ci.yml). | Text-based contract checks do not execute kernels. Changed native/device behavior needs the affected model recipe's hardware and numerical evidence. |
-| Model processing, execution, batching or backend behavior | Select tests under root `tests/` using the model's manifest, README and recipe. | Follow the [architecture contracts](docs/architecture.md), [model/hardware coverage](docs/supported-models.md) and model-specific validation recipe. Identify unsupported and untested configurations; arrange unavailable hardware checks with the maintainer. |
+| CUDA contract or backend tooling | Use the `cuda-contract` job's current commands and prerequisites in [CI](.github/workflows/ci.yml). | This is a CPU/static job: it does not compile CUDA or execute kernels. Choose further checks for the changed behavior from the affected model recipe and available resources. |
+| Model processing, execution, batching or backend behavior | Select tests under root `tests/` using the model's manifest, README and recipe. | Follow the [architecture contracts](docs/architecture.md), [model/hardware coverage](docs/supported-models.md) and model-specific validation recipe. Identify unsupported and untested configurations. For performance claims or concrete numerical/performance risk, use the [conditional comparison guidance](.agents/skills/self-review/SKILL.md#conditional-ab-checks). Report unavailable checks and their effect on the claim; agree additional hardware validation separately. |
 
-The author supplies reproducible results and names any unresolved validation
-handoff. Maintainer review remains separate from author evidence. Do not claim
+The matrix distinguishes existing checks from change-specific validation choices;
+it creates no new hardware gate or obligation to supply hardware. The author
+reports reproducible results and unresolved validation limits. Maintainer review
+remains separate from author evidence. Do not claim
 merge authority or required-check settings from this matrix or passing CI alone.
 Before handing off, record the PR head, commands, results and evidence links,
 remaining blockers, and next action. Recheck evidence after a head change;
