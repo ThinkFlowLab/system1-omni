@@ -187,6 +187,7 @@ fn parse(cfg: &Config, bytes: &[u8], scale: f32) -> Result<Parsed> {
         }
         let native = name
             .strip_prefix(PREFIX)
+            .or_else(|| name.strip_prefix("base_model.model.model."))
             .context("unsupported LoRA tensor prefix")?;
         let (target, letter) = if let Some(target) = native.strip_suffix(".lora_A.weight") {
             (target, 0)

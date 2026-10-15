@@ -81,6 +81,10 @@ macro_rules! api {
         }
 
         impl Api {
+            /// Language arithmetic does not require cuDNN patch convolution.
+            pub fn language_reference(&self) -> Result<&Reference> {
+                self.reference.as_ref().context("missing framework language CUDA symbols; rebuild the library")
+            }
             pub fn reference(&self) -> Result<&Reference> {
                 let reference=self.reference.as_ref().context("JEMM requires the optional reference CUDA symbols; rebuild libqwen3_5_cuda.so")?;
                 // SAFETY: this capability query takes no arguments.
@@ -197,6 +201,112 @@ api! {
 }
 
 static API: OnceLock<Api> = OnceLock::new();
+
+type Fp32GdnRun = unsafe extern "C" fn(
+    *mut c_void,
+    *const c_void,
+    *const c_void,
+    *const c_void,
+    *const f32,
+    *const c_void,
+    *mut c_void,
+    *mut f32,
+    c_int,
+    c_int,
+    c_int,
+    f32,
+    Stream,
+) -> c_int;
+/// Model-owned FP32 chunk solver. Destruction drains its last producer stream.
+pub struct Fp32Gdn {
+    handle: *mut c_void,
+    run: Fp32GdnRun,
+    destroy: unsafe extern "C" fn(*mut c_void),
+    size: unsafe extern "C" fn(c_int, c_int) -> usize,
+}
+impl Fp32Gdn {
+    pub fn workspace_floats(&self, tokens: usize, heads: usize) -> Result<usize> {
+        ensure!(tokens <= 65536 && heads <= 256, "FP32 GDN shape limit");
+        // SAFETY: this getter does not dereference memory.
+        let size = unsafe { (self.size)(tokens as c_int, heads as c_int) };
+        ensure!(size > 0, "cannot size FP32 GDN workspace");
+        Ok(size)
+    }
+    /// # Safety
+    /// All pointers hold the documented complete tensors; workspace has at least
+    /// workspace_floats(tokens,heads) entries. Serialize this context and retain
+    /// every allocation until stream completion.
+    #[allow(clippy::too_many_arguments)] // Exact CUDA operation boundary.
+    pub unsafe fn run(
+        &self,
+        q: *const c_void,
+        k: *const c_void,
+        v: *const c_void,
+        g: *const f32,
+        beta: *const c_void,
+        out: *mut c_void,
+        workspace: *mut f32,
+        tokens: c_int,
+        heads: c_int,
+        key_heads: c_int,
+        scale: f32,
+        stream: Stream,
+    ) -> c_int {
+        unsafe {
+            (self.run)(
+                self.handle,
+                q,
+                k,
+                v,
+                g,
+                beta,
+                out,
+                workspace,
+                tokens,
+                heads,
+                key_heads,
+                scale,
+                stream,
+            )
+        }
+    }
+}
+impl Drop for Fp32Gdn {
+    fn drop(&mut self) {
+        // SAFETY: this object exclusively owns the context; the backend drains before freeing it.
+        unsafe { (self.destroy)(self.handle) };
+    }
+}
+impl Api {
+    pub fn fp32_gdn(&self) -> Result<Fp32Gdn> {
+        // SAFETY: these optional signatures match ops.h; the library lives in static API.
+        let (create, destroy, run, size) = unsafe {
+            (
+                *self
+                    ._lib
+                    .get::<unsafe extern "C" fn(usize) -> *mut c_void>(b"cs1_gdn_fp32_create\0")?,
+                *self
+                    ._lib
+                    .get::<unsafe extern "C" fn(*mut c_void)>(b"cs1_gdn_fp32_destroy\0")?,
+                *self._lib.get::<Fp32GdnRun>(b"cs1_gdn_prefill_fp32\0")?,
+                *self
+                    ._lib
+                    .get::<unsafe extern "C" fn(c_int, c_int) -> usize>(
+                        b"cs1_gdn_fp32_workspace_floats\0",
+                    )?,
+            )
+        };
+        // SAFETY: creation owns an independent cuBLAS handle and workspace.
+        let handle = unsafe { create(32 << 20) };
+        ensure!(!handle.is_null(), "FP32 GDN cuBLAS initialization failed");
+        Ok(Fp32Gdn {
+            handle,
+            run,
+            destroy,
+            size,
+        })
+    }
+}
 
 /// The library next to the running executable.
 pub fn default_library() -> Result<PathBuf> {

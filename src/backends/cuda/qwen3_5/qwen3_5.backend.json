@@ -10,6 +10,7 @@
     "elementwise.cu",
     "attention.cu",
     "gdn_prefill.cu",
+    "gdn_fp32.cu",
     "gemm.cu",
     "runtime.cu",
     "vision.cu",

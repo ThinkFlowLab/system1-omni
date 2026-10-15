@@ -8,6 +8,7 @@ use omni_runtime::SerialScheduler;
 use serde_json::Value as Json;
 
 use crate::model::Model;
+use crate::provenance::TextExport;
 
 /// Tied with the output projection in Qwen3.5-4B.
 const EMBEDDING: &str = "model.language_model.embed_tokens.weight";
@@ -21,16 +22,32 @@ pub struct Input {
 pub struct Executor {
     model: Arc<Mutex<Model>>,
     letters: Vec<f32>,
+    export: TextExport,
 }
 
 impl Executor {
-    pub async fn load(dir: &Path, library: &Path, letter_ids: &[u32]) -> Result<Self> {
+    pub(crate) async fn load(
+        dir: &Path,
+        library: &Path,
+        letter_ids: &[u32],
+        export: TextExport,
+    ) -> Result<Self> {
         let (d, lib) = (dir.to_path_buf(), library.to_path_buf());
-        let model = tokio::task::spawn_blocking(move || Model::load(&d, &lib)).await??;
+        let model = tokio::task::spawn_blocking(move || match export {
+            TextExport::Merged => Model::load(&d, &lib),
+            TextExport::Unmerged => {
+                let mut model =
+                    Model::load_with_lora(&d, &lib, &d.join("adapter.safetensors"), 2.0)?;
+                model.enable_reference_text_numerics()?;
+                Ok(model)
+            }
+        })
+        .await??;
         let letters = letter_rows(dir, letter_ids, model.cfg.hidden)?;
         Ok(Self {
             model: Arc::new(Mutex::new(model)),
             letters,
+            export,
         })
     }
 
@@ -52,21 +69,38 @@ impl Executor {
                         .forward(&input.ids)
                 })
                 .await?;
-            rows.push(letter_logits(&self.letters, &last, input.n_options)?);
+            rows.push(letter_logits(
+                &self.letters,
+                &last,
+                input.n_options,
+                self.export,
+            )?);
         }
         Ok(rows)
     }
 }
 
-fn letter_logits(letters: &[f32], last: &[f32], n_options: usize) -> Result<Vec<f32>> {
+fn letter_logits(
+    letters: &[f32],
+    last: &[f32],
+    n_options: usize,
+    export: TextExport,
+) -> Result<Vec<f32>> {
     let logits: Vec<f32> = letters
         .chunks_exact(last.len())
         .take(n_options)
         .map(|w| {
-            w.iter()
+            let dot = w
+                .iter()
                 .zip(last)
                 .map(|(&a, &b)| a as f64 * b as f64)
-                .sum::<f64>() as f32
+                .sum::<f64>() as f32;
+            match export {
+                // Preserve the original merged worker's FP32 readout on upgrade.
+                TextExport::Merged => dot,
+                // The unmerged reference profile's tied lm_head emits BF16.
+                TextExport::Unmerged => half::bf16::from_f32(dot).to_f32(),
+            }
         })
         .collect();
     // Abort before submitting a later prompt, as the former per-question softmax did.

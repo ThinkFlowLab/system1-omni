@@ -167,7 +167,7 @@ v1.1 has its checkpoint export and CPU contract, with no worker yet:
 | Model | Status |
 | --- | --- |
 | LAYA | [External worker](recipe/laya/README.md); [Python worker on Apple Silicon (MPS) and CPU](recipe/laya/apple-silicon.md); [CPU checkpoint reader](src/models/laya/README.md); [native Rust/CUDA worker on Hopper](recipe/laya/native/README.md) |
-| Cua-S1 4B 0.2 (`text` adapter) | [Python worker](recipe/cua_s1/text.md); [native worker](recipe/cua_s1/native.md), CUDA, run on sm_89 |
+| Cua-S1 4B 0.2 (`text` adapter) | [Python worker](recipe/cua_s1/text.md); [native worker](recipe/cua_s1/native.md), CUDA; unmerged profile validated on the cumulative A800 sm_80 build, earlier merged path on sm_89 |
 | Cua-S1 4B 0.2 (`multimodal` adapter) | [Python CUDA reference](src/frontend/cua_s1.py) and [native Rust/CUDA screenshot worker](recipe/cua_s1/native_screenshot.md); one PNG/JPEG image, `choice`; scoped RTX 4090 validation |
 | JEMM (Qwen3.8-27B) | [Native Rust/CUDA worker](recipe/jemm/README.md); [text and 1–4-image frozen-corpus parity on A800](src/models/jemm/README.md#validation) |
 | Valen-Preview-0923 | [Python reference worker](recipe/valen/reference.md); text state or one inline PNG/JPEG image, `choice`; author-run on RTX 5060 Laptop GPU (sm_120, WSL2), owner: community |

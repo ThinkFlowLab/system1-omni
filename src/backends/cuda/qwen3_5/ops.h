@@ -75,6 +75,14 @@ int cs1_gdn_gates(const void* b, const void* a, int ld, const void* A_log, const
 // Chunked gated delta rule, q and k L2-normalized inside, q scaled by `scale`.
 // q, k [T, HK, 128], v [T, H, 128], g float [T, H], beta [T, H], o [T, H, 128].
 size_t cs1_gdn_workspace_floats(int T, int H);
+// Optional no-FLA text precision mode: FP32 normalized Q/K and recurrent state,
+// BF16 output. Context and scratch remain model-owned; prefix continuation is unsupported.
+void* cs1_gdn_fp32_create(size_t workspace_bytes);
+void cs1_gdn_fp32_destroy(void* context);
+size_t cs1_gdn_fp32_workspace_floats(int T,int H);
+int cs1_gdn_prefill_fp32(void* context,const void* q, const void* k, const void* v, const float* g,
+                       const void* beta, void* o, float* workspace,
+                       int T, int H, int HK, float scale, void* stream);
 int cs1_gdn_prefill(const void* q, const void* k, const void* v, const float* g, const void* beta,
                     void* o, float* workspace, int T, int H, int HK, float scale, void* stream);
 

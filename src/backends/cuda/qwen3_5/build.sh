@@ -3,10 +3,10 @@
 #
 #   src/backends/cuda/qwen3_5/build.sh <output dir> [compute capability, e.g. 89]
 #
-# Needs nvcc (from NVCC, CUDA_HOME/bin or PATH) and cuBLASLt; the compute capability
+# Needs nvcc (from NVCC, CUDA_HOME/bin or PATH) and cuBLAS/cuBLASLt; the compute capability
 # defaults to CUDA_COMPUTE_CAP, else 89. The library holds machine code for that
 # compute capability and PTX that newer GPUs can compile at load time. The CUDA
-# runtime is linked statically and cuBLASLt dynamically, with an rpath to the
+# runtime is linked statically and cuBLAS/cuBLASLt dynamically, with an rpath to the
 # toolkit's library directory when there is one next to nvcc.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
@@ -16,9 +16,9 @@ nvcc=${NVCC:-}
 if [ -z "$nvcc" ]; then
     if [ -n "${CUDA_HOME:-}" ]; then nvcc=$CUDA_HOME/bin/nvcc; else nvcc=$(command -v nvcc); fi
 fi
-link=(-lcublasLt)
+link=(-lcublasLt -lcublas)
 if lib=$(cd "$(dirname "$nvcc")/../lib64" 2>/dev/null && pwd); then
-    link=(-L"$lib" -lcublasLt -Xlinker -rpath -Xlinker "$lib")
+    link=(-L"$lib" -lcublasLt -lcublas -Xlinker -rpath -Xlinker "$lib")
 fi
 extra=()
 # Optional JEMM framework-compatible Conv3D. Legacy builds do not require cuDNN.

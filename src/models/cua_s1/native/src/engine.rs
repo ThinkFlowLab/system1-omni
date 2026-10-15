@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result};
 use omni_runtime::SerialScheduler;
 
 use crate::contract::LETTERS;
@@ -17,12 +17,7 @@ pub struct Engine {
 
 impl Engine {
     pub async fn load(dir: &Path, library: &Path) -> Result<Self> {
-        // Written by export_text_merged.py; without it `dir` may hold the base model alone.
-        ensure!(
-            dir.join("cua_s1_export.json").exists(),
-            "{} is not a merged text checkpoint; see recipe/cua_s1/native.md",
-            dir.display()
-        );
+        let export = crate::provenance::text_export(dir)?;
         let processor = Processor::load(dir)?;
         let ids = LETTERS
             .chars()
@@ -33,7 +28,7 @@ impl Engine {
                     .context("letter token")
             })
             .collect::<Result<Vec<_>>>()?;
-        let executor = Executor::load(dir, library, &ids).await?;
+        let executor = Executor::load(dir, library, &ids, export).await?;
         Ok(Self {
             processor,
             scheduler: SerialScheduler::default(),
@@ -41,3 +36,11 @@ impl Engine {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../../tests/cua_s1/text_export.rs"]
+mod tests;
+
+#[cfg(test)]
+#[path = "../../../../../tests/cua_s1/legacy_merged_gpu.rs"]
+mod legacy_merged_tests;

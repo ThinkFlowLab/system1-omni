@@ -56,8 +56,12 @@ dispatch retains the scheduler permit until execution completes. Laya
 synchronizes and disposes a failed model before returning an inference error
 and reports unavailable health thereafter.
 
-Qwen executors own loaded models and CPU head weights, preserving FP64 accumulation and
-the existing FP32 rounding and bias order. Finishing checks output cardinality
+Qwen executors own loaded models and CPU head weights with FP64 accumulation.
+Cua-S1's unmerged text profile rounds answer-letter logits to the tied `lm_head`
+BF16 output dtype before response finishing. Cua-S1 finishing normalizes in
+FP64 and returns FP32 probabilities. Legacy merged text and screenshot
+readouts retain FP32 logits; learned scalar heads retain their FP32 rounding
+and bias order. Finishing checks output cardinality
 before reconstruction. HTTP validation, error status/body conventions, and real
 warmup before readiness remain model-specific and unchanged.
 

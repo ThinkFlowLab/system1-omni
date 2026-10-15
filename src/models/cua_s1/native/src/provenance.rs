@@ -1,4 +1,4 @@
-//! Hash checks before assigning the pinned multimodal model identity.
+//! Validate text export policy and multimodal artifact identity before CUDA loading.
 use anyhow::{Context, Result, ensure};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -8,6 +8,35 @@ use std::{
     path::Path,
 };
 const LOCK_SHA: &str = "9820bd232c5762f114e19680c0f8203d7e1faaf8a60c196cfe01964d6d8a6c09";
+
+#[derive(Clone, Copy)]
+pub(crate) enum TextExport {
+    Merged,
+    Unmerged,
+}
+
+pub(crate) fn text_export(dir: &Path) -> Result<TextExport> {
+    let marker: Value = serde_json::from_slice(&fs::read(dir.join("cua_s1_export.json"))?)
+        .context("invalid text export marker")?;
+    match marker["format"].as_str() {
+        Some("cua-s1-text-merged/1") => Ok(TextExport::Merged),
+        Some("cua-s1-text-unmerged/1") => {
+            ensure!(
+                marker["lora_scale"].as_f64() == Some(2.0),
+                "Cua-S1 text LoRA scale must be 2"
+            );
+            let expected = marker["adapter_sha256"]
+                .as_str()
+                .context("missing adapter checksum")?;
+            ensure!(
+                hash_file(&dir.join("adapter.safetensors"))? == expected,
+                "adapter checksum mismatch"
+            );
+            Ok(TextExport::Unmerged)
+        }
+        _ => anyhow::bail!("unsupported text export; see recipe/cua_s1/native.md"),
+    }
+}
 
 fn hash_file(path: &Path) -> Result<String> {
     let mut file = File::open(path)?;

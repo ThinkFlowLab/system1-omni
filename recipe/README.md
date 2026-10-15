@@ -14,7 +14,8 @@ For a first real decision, follow the [complete CPU walkthrough](../docs/getting
 - [Valen-Preview-0923 reference worker](valen/reference.md): prepare the pinned
   Preview checkpoint and Qwen base, start the text-or-image `choice` worker and verify the frontend.
 - [Cua-S1 4B 0.2 native text worker](cua_s1/native.md): build the CUDA library and
-  the Rust worker, export the merged weights and start the worker.
+  the Rust worker, export BF16 weights with the original FP32 adapter and start
+  the worker.
 - [Cua-S1 native screenshot worker](cua_s1/native_screenshot.md): export the
   multimodal language checkpoint and serve one-image decisions with Rust/CUDA.
 - [Open-Jev native text worker](open_jev/native.md): export the merged text

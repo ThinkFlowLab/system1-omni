@@ -53,6 +53,29 @@ fn pair(target: &str, rows: usize, cols: usize, rank: usize) -> Vec<u8> {
 }
 
 #[test]
+fn text_adapter_prefix_preserves_the_same_fp32_projection() {
+    let cfg = config();
+    let bytes = tensors(&[
+        (
+            "base_model.model.model.layers.0.mlp.down_proj.lora_A.weight",
+            vec![16, cfg.intermediate],
+            Dtype::F32,
+            0.125,
+        ),
+        (
+            "base_model.model.model.layers.0.mlp.down_proj.lora_B.weight",
+            vec![cfg.hidden, 16],
+            Dtype::F32,
+            -0.25,
+        ),
+    ]);
+    let parsed = parse(&cfg, &bytes, 2.0).unwrap();
+    assert_eq!(parsed.pairs.len(), 1);
+    assert_eq!(parsed.pairs[0].target.group, Group::Down);
+    assert_eq!(parsed.pairs[0].rank, 16);
+}
+
+#[test]
 fn layouts_cover_both_mixers_and_the_small_gate_projections() {
     for (hidden, intermediate, heads, values) in [(5120, 17408, 24, 48), (2560, 9216, 16, 32)] {
         let mut cfg = config();

@@ -25,10 +25,10 @@ extern "C" int reference_norm_run(const void* x,const void* delta,const void* w,
 }
 
 extern "C" int cs1_reference_rms_norm(const void* x,const void* w,void* out,int rows,int d,float eps,void* stream) {
-    if(rows<=0 || d!=5120) return cudaErrorInvalidValue;
+    if(rows<=0 || (d!=5120 && d!=2560)) return cudaErrorInvalidValue;
     return reference_norm_run(x,nullptr,w,out,rows,d,eps,stream);
 }
 extern "C" int cs1_reference_add_rms_norm(void* x,const void* delta,const void* w,void* out,int rows,int d,float eps,void* stream) {
-    if(rows<=0 || d!=5120) return cudaErrorInvalidValue;
+    if(rows<=0 || (d!=5120 && d!=2560)) return cudaErrorInvalidValue;
     return reference_norm_run(x,delta,w,out,rows,d,eps,stream);
 }

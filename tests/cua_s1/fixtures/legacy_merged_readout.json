@@ -1,0 +1,228 @@
+{
+  "schema": "cua-s1-legacy-merged-readout-regression/1",
+  "purpose": "Compatibility oracle for the four merged-export upgrade changes; expected responses preserve the legacy baseline, not task ground truth.",
+  "baseline_source": "5bdd625b4c27efb02f43a1f71150e1a7d7c0f071",
+  "rejected_source": "7293c71cfb738504a30ff033ae3567f3368333c1",
+  "evidence": "https://github.com/Levius-Fubuki/system1-omni/releases/tag/cua-a800-abi8-20261015",
+  "corpus_source": "869260649f7dd5b56cac4d91eaae9087f2e985ee",
+  "corpus_sha256": "8f4b912e5dfd8706992e90f1b87bb07a78a8339e5a9fad3ef64b3b04771f9daf",
+  "environment": {
+    "gpu": "A800 sm80",
+    "abi": 8,
+    "base_revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+    "adapter_revision": "16818868b0cc7813808aae4e87b417657046ab79",
+    "torch": "2.14.0+cu130",
+    "transformers": "5.17.0",
+    "tf32_override": "0",
+    "export_format": "cua-s1-text-merged/1"
+  },
+  "cases": [
+    {
+      "id": "original-routing-06-1",
+      "request": {
+        "state": "Give me three creative pet-dragon names.",
+        "questions": {
+          "q": {
+            "criteria": {
+              "coding": "Self-contained code writing or explanation without repository operations",
+              "coding_agent": "Inspect/edit repository files or run tests",
+              "document": "Answer from a supplied document",
+              "general": "None of the specialist categories",
+              "math": "Self-contained calculation or proof",
+              "tools": "Carry out an external service action"
+            },
+            "instructions": "Choose the specialist needed for the request. File edits with test execution use coding_agent, even if code-related.",
+            "type": "choice"
+          }
+        },
+        "model": "cua-s1-4b-0.2"
+      },
+      "expected_response": {
+        "model": "cua-ai/cua-s1-4b-0.2@16818868b0cc7813808aae4e87b417657046ab79:text",
+        "answers": {
+          "q": {
+            "type": "choice",
+            "choice": "tools",
+            "probabilities": {
+              "coding": 0.12521012127399445,
+              "coding_agent": 0.2372714877128601,
+              "document": 0.0032456598710268736,
+              "general": 0.3135629892349243,
+              "math": 0.0015466281911358237,
+              "tools": 0.31916311383247375
+            },
+            "confidence": 0.24194648916375006
+          }
+        },
+        "usage": {
+          "input_tokens": 233,
+          "output_tokens": 0
+        }
+      },
+      "rounded_choice": "general"
+    },
+    {
+      "id": "hard-opus-a-temporal_numeric-07",
+      "request": {
+        "state": "NIMBUSGRID CLOUD — BUDGET ALERT CONFIGURATION AND DAILY COST EXPORT (ACCOUNT ANALYTICS-PROD, SEPTEMBER 2026, USD)\n\nBudget BGT-ANALYTICS-09: monthly budget USD 12,000.00.\nAlert rule A1: \"Fires once, at the end of the first day on which the month-to-date net cost is at or above 80% of the monthly budget.\"\nDefinitions (NimbusGrid billing guide): \"Net cost\" = usage charges minus credits applied, excluding taxes. Taxes are shown for information and are never counted toward budgets. Credits are counted on the day they are applied.\nNote: a promotional credit of USD 600.00 was applied on 18 September (migration incentive).\n\nDaily export:\nSep 01 | usage 402.10 | credits 0.00 | tax (8%) 32.17\nSep 02 | usage 389.55 | credits 0.00 | tax (8%) 31.16\nSep 03 | usage 415.00 | credits 0.00 | tax (8%) 33.20\nSep 04 | usage 398.40 | credits 0.00 | tax (8%) 31.87\nSep 05 | usage 377.25 | credits 0.00 | tax (8%) 30.18\nSep 06 | usage 361.80 | credits 0.00 | tax (8%) 28.94\nSep 07 | usage 420.65 | credits 0.00 | tax (8%) 33.65\nSep 08 | usage 433.10 | credits 0.00 | tax (8%) 34.65\nSep 09 | usage 409.95 | credits 0.00 | tax (8%) 32.80\nSep 10 | usage 395.00 | credits 0.00 | tax (8%) 31.60\nSep 11 | usage 388.70 | credits 0.00 | tax (8%) 31.10\nSep 12 | usage 402.35 | credits 0.00 | tax (8%) 32.19\nSep 13 | usage 371.20 | credits 0.00 | tax (8%) 29.70\nSep 14 | usage 366.45 | credits 0.00 | tax (8%) 29.32\nSep 15 | usage 418.90 | credits 0.00 | tax (8%) 33.51\nSep 16 | usage 427.30 | credits 0.00 | tax (8%) 34.18\nSep 17 | usage 411.05 | credits 0.00 | tax (8%) 32.88\nSep 18 | usage 399.60 | credits 600.00 | tax (8%) 31.97\nSep 19 | usage 404.25 | credits 0.00 | tax (8%) 32.34\nSep 20 | usage 392.80 | credits 0.00 | tax (8%) 31.42\nSep 21 | usage 386.15 | credits 0.00 | tax (8%) 30.89\nSep 22 | usage 375.40 | credits 0.00 | tax (8%) 30.03\nSep 23 | usage 410.00 | credits 0.00 | tax (8%) 32.80\nSep 24 | usage 421.75 | credits 0.00 | tax (8%) 33.74\nSep 25 | usage 398.00 | credits 0.00 | tax (8%) 31.84\nSep 26 | usage 223.30 | credits 0.00 | tax (8%) 17.86\nSep 27 | usage 380.00 | credits 0.00 | tax (8%) 30.40\nSep 28 | usage 412.60 | credits 0.00 | tax (8%) 33.01\nSep 29 | usage 405.10 | credits 0.00 | tax (8%) 32.41\nSep 30 | usage 399.85 | credits 0.00 | tax (8%) 31.99\n\nFinOps channel, 24 September: \"With tax we're already over 9,600 — the alert should have fired today. Something's broken?\"\n",
+        "questions": {
+          "q": {
+            "criteria": {
+              "sep_24": "At the end of 24 September.",
+              "sep_25": "At the end of 25 September.",
+              "sep_26": "At the end of 26 September.",
+              "sep_27": "At the end of 27 September.",
+              "sep_28": "At the end of 28 September."
+            },
+            "instructions": "On which day does alert rule A1 fire?",
+            "type": "choice"
+          }
+        },
+        "model": "cua-s1-4b-0.2"
+      },
+      "expected_response": {
+        "model": "cua-ai/cua-s1-4b-0.2@16818868b0cc7813808aae4e87b417657046ab79:text",
+        "answers": {
+          "q": {
+            "type": "choice",
+            "choice": "sep_28",
+            "probabilities": {
+              "sep_24": 0.3386138677597046,
+              "sep_25": 0.07059328258037567,
+              "sep_26": 0.07448268681764603,
+              "sep_27": 0.16069446504116058,
+              "sep_28": 0.3556157052516937
+            },
+            "confidence": 0.12471221294469215
+          }
+        },
+        "usage": {
+          "input_tokens": 1381,
+          "output_tokens": 0
+        }
+      },
+      "rounded_choice": "sep_24"
+    },
+    {
+      "id": "hard-sol-b-long_policy-05",
+      "request": {
+        "state": "RECORDS DELETION AND LEGAL HOLD HANDBOOK\n1. Rule hierarchy. Legal holds override ordinary deletion schedules. A later written release controls the named scope only. The privacy deletion process does not authorize destruction barred by a hold. The clarification memorandum at the end is binding.\n\n2. Definitions. \"Responsive record\" means a record within the custodians, systems, subjects, and time range stated by a hold. Exact duplicates are each responsive when stored in separate systems unless the hold notice permits deduplication. \"Derived analytics\" are records produced from source data; they are not source records. \"Verified deletion\" means deletion from active systems and expiration from ordinary backups under the stated schedule, with a logged confirmation. Cryptographic erasure counts only if the relevant keys exclusively protect the named records.\n\n3. Customer requests. A verified identity request is due within 30 calendar days. Data needed for contract performance may be retained while necessary. Data under legal hold is retained even after the ordinary purpose ends, and the customer receives the standard limitation notice. Non-held data in the same account remains subject to deletion.\n\n4. Backup process. Active copies are deleted by the due date. Immutable backups expire on a 35-day rotation; restoration procedures must reapply deletion markers. The completion record may therefore distinguish active deletion from final backup expiry.\n\n5. Holds. Hold H-17 covers support messages by custodians June and Omar concerning Project Cedar from 1 January through 31 March 2026, including attachments and exports. Hold H-22 covers all billing records for account 448 from 1 February onward. Neither permits deduplication. A legal email may release a hold only if it identifies the hold number and scope.\n\n6. Case file. Account 448 submitted a verified deletion request on 6 April. Contract service ended 5 April. The account contains profile data, invoices dated February and March, support messages with June about Project Cedar dated 20 March, unrelated support messages with Omar dated 2 April, and a dashboard table derived by counting Cedar messages by week. The table contains only week and count. On 10 April Legal wrote: \"Release H-17 for Omar's records only; June remains held. H-22 remains fully active.\" Privacy proposes deleting the profile, every support message, the derived table, and all invoices from active storage on 20 April, leaving deletion markers for backups.\n\n7. Scope application. A release for one custodian does not release another. Records outside a hold's date range are not held merely because a named custodian created them. Derived analytics are covered only if expressly included or if they independently meet the hold's stated record description.\n\n8. Decision options. The deletion team must choose the option that can be executed on 20 April without violating a hold. Ordinary backup expiry may follow later and does not prevent timely active-system action.\n\nCLARIFICATION MEMORANDUM, 12 April. H-22's term \"billing records\" includes invoices and payment ledger entries but not profile contact fields used only for login. H-17's term \"support messages\" does not include aggregate derived tables that contain no message text, attachment, customer identifier, or custodian identifier. This memorandum clarifies existing scope and does not release either hold.\n\nADMINISTRATIVE AND REFERENCE MATERIAL (part of the document):\n\nAppendix 1. identity verification. The organization keeps a contemporaneous record for this topic. Routine records identify the owner, the date recorded, the system of record, and any later correction. A draft note is not an approval, silence is not consent, and a copied recipient is not treated as the decision maker unless a controlling section expressly says otherwise. Staff should preserve ordinary supporting material and use the defined business calendar. This appendix supplies administration only: it does not enlarge eligibility, erase a deadline, reverse a precedence rule, or create an exception to a requirement stated in the operative sections. Where examples use names or dates, they illustrate recordkeeping and do not amend the operative case. Historical versions remain searchable for audit purposes, but a superseded version has no prospective effect. Questions are logged with enough context for a reviewer to reproduce the decision without relying on memory. The records team checks completeness monthly and reports aggregate defects; it does not re-decide the underlying case. Reference code REC-01 is an index locator, not a priority ranking or outcome code.\n\nAppendix 2. backup inventories. The organization keeps a contemporaneous record for this topic. Routine records identify the owner, the date recorded, the system of record, and any later correction. A draft note is not an approval, silence is not consent, and a copied recipient is not treated as the decision maker unless a controlling section expressly says otherwise. Staff should preserve ordinary supporting material and use the defined business calendar. This appendix supplies administration only: it does not enlarge eligibility, erase a deadline, reverse a precedence rule, or create an exception to a requirement stated in the operative sections. Where examples use names or dates, they illustrate recordkeeping and do not amend the operative case. Historical versions remain searchable for audit purposes, but a superseded version has no prospective effect. Questions are logged with enough context for a reviewer to reproduce the decision without relying on memory. The records team checks completeness monthly and reports aggregate defects; it does not re-decide the underlying case. Reference code REC-02 is an index locator, not a priority ranking or outcome code.\n\nAppendix 3. custodian interviews. The organization keeps a contemporaneous record for this topic. Routine records identify the owner, the date recorded, the system of record, and any later correction. A draft note is not an approval, silence is not consent, and a copied recipient is not treated as the decision maker unless a controlling section expressly says otherwise. Staff should preserve ordinary supporting material and use the defined business calendar. This appendix supplies administration only: it does not enlarge eligibility, erase a deadline, reverse a precedence rule, or create an exception to a requirement stated in the operative sections. Where examples use names or dates, they illustrate recordkeeping and do not amend the operative case. Historical versions remain searchable for audit purposes, but a superseded version has no prospective effect. Questions are logged with enough context for a reviewer to reproduce the decision without relying on memory. The records team checks completeness monthly and reports aggregate defects; it does not re-decide the underlying case. Reference code REC-03 is an index locator, not a priority ranking or outcome code.\n\nAppendix 4. deletion markers. The organization keeps a contemporaneous record for this topic. Routine records identify the owner, the date recorded, the system of record, and any later correction. A draft note is not an approval, silence is not consent, and a copied recipient is not treated as the decision maker unless a controlling section expressly says otherwise. Staff should preserve ordinary supporting material and use the defined business calendar. This appendix supplies administration only: it does not enlarge eligibility, erase a deadline, reverse a precedence rule, or create an exception to a requirement stated in the operative sections. Where examples use names or dates, they illustrate recordkeeping and do not amend the operative case. Historical versions remain searchable for audit purposes, but a superseded version has no prospective effect. Questions are logged with enough context for a reviewer to reproduce the decision without relying on memory. The records team checks completeness monthly and reports aggregate defects; it does not re-decide the underlying case. Reference code REC-04 is an index locator, not a priority ranking or outcome code.\n\nAppendix 5. request correspondence. The organization keeps a contemporaneous record for this topic. Routine records identify the owner, the date recorded, the system of record, and any later correction. A draft note is not an approval, silence is not consent, and a copied recipient is not treated as the decision maker unless a controlling section expressly says otherwise. Staff should preserve ordinary supporting material and use the defined business calendar. This appendix supplies administration only: it does not enlarge eligibility, erase a deadline, reverse a precedence rule, or create an exception to a requirement stated in the operative sections. Where examples use names or dates, they illustrate recordkeeping and do not amend the operative case. Historical versions remain searchable for audit purposes, but a superseded version has no prospective effect. Questions are logged with enough context for a reviewer to reproduce the decision without relying on memory. The records team checks completeness monthly and reports aggregate defects; it does not re-decide the underlying case. Reference code REC-05 is an index locator, not a priority ranking or outcome code.\n\nAppendix 6. analytics catalog. The organization keeps a contemporaneous record for this topic. Routine records identify the owner, the date recorded, the system of record, and any later correction. A draft note is not an approval, silence is not consent, and a copied recipient is not treated as the decision maker unless a controlling section expressly says otherwise. Staff should preserve ordinary supporting material and use the defined business calendar. This appendix supplies administration only: it does not enlarge eligibility, erase a deadline, reverse a precedence rule, or create an exception to a requirement stated in the operative sections. Where examples use names or dates, they illustrate recordkeeping and do not amend the operative case. Historical versions remain searchable for audit purposes, but a superseded version has no prospective effect. Questions are logged with enough context for a reviewer to reproduce the decision without relying on memory. The records team checks completeness monthly and reports aggregate defects; it does not re-decide the underlying case. Reference code REC-06 is an index locator, not a priority ranking or outcome code.\n\nAppendix 7. restoration drills. The organization keeps a contemporaneous record for this topic. Routine records identify the owner, the date recorded, the system of record, and any later correction. A draft note is not an approval, silence is not consent, and a copied recipient is not treated as the decision maker unless a controlling section expressly says otherwise. Staff should preserve ordinary supporting material and use the defined business calendar. This appendix supplies administration only: it does not enlarge eligibility, erase a deadline, reverse a precedence rule, or create an exception to a requirement stated in the operative sections. Where examples use names or dates, they illustrate recordkeeping and do not amend the operative case. Historical versions remain searchable for audit purposes, but a superseded version has no prospective effect. Questions are logged with enough context for a reviewer to reproduce the decision without relying on memory. The records team checks completeness monthly and reports aggregate defects; it does not re-decide the underlying case. Reference code REC-07 is an index locator, not a priority ranking or outcome code.\n\nAppendix 8. hold training. The organization keeps a contemporaneous record for this topic. Routine records identify the owner, the date recorded, the system of record, and any later correction. A draft note is not an approval, silence is not consent, and a copied recipient is not treated as the decision maker unless a controlling section expressly says otherwise. Staff should preserve ordinary supporting material and use the defined business calendar. This appendix supplies administration only: it does not enlarge eligibility, erase a deadline, reverse a precedence rule, or create an exception to a requirement stated in the operative sections. Where examples use names or dates, they illustrate recordkeeping and do not amend the operative case. Historical versions remain searchable for audit purposes, but a superseded version has no prospective effect. Questions are logged with enough context for a reviewer to reproduce the decision without relying on memory. The records team checks completeness monthly and reports aggregate defects; it does not re-decide the underlying case. Reference code REC-08 is an index locator, not a priority ranking or outcome code.",
+        "questions": {
+          "q": {
+            "criteria": {
+              "delete_everything": "The case results in delete everything under all controlling provisions.",
+              "delete_nothing": "The case results in delete nothing under all controlling provisions.",
+              "delete_only_profile": "The case results in delete only profile under all controlling provisions.",
+              "delete_profile_omar_april_and_table": "The case results in delete profile omar april and table under all controlling provisions."
+            },
+            "instructions": "Apply the controlling document and select the single authorized outcome for the case file.",
+            "type": "choice"
+          }
+        },
+        "model": "cua-s1-4b-0.2"
+      },
+      "expected_response": {
+        "model": "cua-ai/cua-s1-4b-0.2@16818868b0cc7813808aae4e87b417657046ab79:text",
+        "answers": {
+          "q": {
+            "type": "choice",
+            "choice": "delete_profile_omar_april_and_table",
+            "probabilities": {
+              "delete_everything": 0.3959157466888428,
+              "delete_nothing": 0.1504596620798111,
+              "delete_only_profile": 0.014968502335250378,
+              "delete_profile_omar_april_and_table": 0.4386560916900635
+            },
+            "confidence": 0.22369902796665087
+          }
+        },
+        "usage": {
+          "input_tokens": 2630,
+          "output_tokens": 0
+        }
+      },
+      "rounded_choice": "delete_everything"
+    },
+    {
+      "id": "hard-sol-b-temporal_numeric-03",
+      "request": {
+        "state": {
+          "event": "Classify the earned service credit.",
+          "rules": "An annual service credit is prorated by active calendar days in a leap year, including both activation and cancellation dates. The annual amount is 1,098 credits for 2028, which has 366 days. The service activated February 28 and cancelled March 2. A suspension covering February 29 removes that day from active days, but March 1 remains active. Compute exactly before classifying; no rounding is needed because the daily amount is integral."
+        },
+        "questions": {
+          "q": {
+            "criteria": {
+              "12_credits": "The correctly calculated outcome is 12 credits.",
+              "15_credits": "The correctly calculated outcome is 15 credits.",
+              "6_credits": "The correctly calculated outcome is 6 credits.",
+              "9_credits": "The correctly calculated outcome is 9 credits."
+            },
+            "instructions": "Apply all stated timing, unit, inclusion, correction, and threshold rules; select the exact band.",
+            "type": "choice"
+          }
+        },
+        "model": "cua-s1-4b-0.2"
+      },
+      "expected_response": {
+        "model": "cua-ai/cua-s1-4b-0.2@16818868b0cc7813808aae4e87b417657046ab79:text",
+        "answers": {
+          "q": {
+            "type": "choice",
+            "choice": "9_credits",
+            "probabilities": {
+              "12_credits": 0.3566144108772278,
+              "15_credits": 0.15715421736240387,
+              "6_credits": 0.1183929517865181,
+              "9_credits": 0.36783841252326965
+            },
+            "confidence": 0.07737968315894639
+          }
+        },
+        "usage": {
+          "input_tokens": 318,
+          "output_tokens": 0
+        }
+      },
+      "rounded_choice": "12_credits"
+    }
+  ],
+  "artifact_files": {
+    "chat_template.jinja": {
+      "size": 7756,
+      "sha256": "a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715"
+    },
+    "config.json": {
+      "size": 1979,
+      "sha256": "63f47812d0f11118e4d252d2b3ad488707eb9287a11589f4fd382a1d31182724"
+    },
+    "cua_s1_export.json": {
+      "size": 34,
+      "sha256": "472b609a176f714e2dc06db60a88659c30d87c6af487ae4986ba6cbf70deb101"
+    },
+    "generation_config.json": {
+      "size": 116,
+      "sha256": "62153eb6c69f2e1f426beaa8002b7186437e949c7588167085df14e10e9c0a73"
+    },
+    "model-00001-of-00002.safetensors": {
+      "size": 4972947968,
+      "sha256": "d2544c2400e723881244e260ce905eec23b3dca12e949cdcdc491a1457f34004"
+    },
+    "model-00002-of-00002.safetensors": {
+      "size": 3438610328,
+      "sha256": "31bf465a185fd605099a11d155582432499c13e2257e4c4fa13d1024630b4349"
+    },
+    "model.safetensors.index.json": {
+      "size": 41993,
+      "sha256": "83620b40d724f8b286580b5c7c504222b0bdbdd7dc9f068e565132409c7eec9d"
+    },
+    "tokenizer.json": {
+      "size": 19989325,
+      "sha256": "06b9509352d2af50381ab2247e083b80d32d5c0aba91c272ca9ff729b6a0e523"
+    },
+    "tokenizer_config.json": {
+      "size": 1124,
+      "sha256": "66e427c470fe580fe8c7b5725d857af23d8417e37fae62667ec698306a19987b"
+    }
+  }
+}

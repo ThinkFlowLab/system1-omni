@@ -65,6 +65,7 @@ nav:
       - Laya on Apple Silicon: recipe/laya/apple-silicon.md
       - Cua-S1 text worker: recipe/cua_s1/text.md
       - Cua-S1 native text worker: recipe/cua_s1/native.md
+      - Cua-S1 text numerical parity: docs/benchmarks/cua-s1-text-parity-20261013/README.md
       - Valen reference worker: recipe/valen/reference.md
       - Cua-S1 native screenshots: recipe/cua_s1/native_screenshot.md
       - Cua-S1 vision CUDA Graph: recipe/cua_s1/native_vision_graph.md

@@ -10,8 +10,12 @@ The native worker follows the [architecture contracts](../../../docs/architectur
 with independent [processing](native/src/processing.rs) and
 [executor](native/src/executor.rs) modules. Preparation returns token IDs and an
 option count per question, plus a response context for identity/order and usage.
-The executor returns FP32 letter logits; response finishing owns per-question
-softmax and the choice/confidence interpretation. The engine owns a
+The executor projects the letter rows with FP64 accumulation and returns FP32
+letter logits. Only the unmerged text profile first rounds to the BF16 `lm_head`
+output dtype; legacy merged text and screenshot readouts retain FP32. The text
+export policy is validated once and owned by each executor. Response finishing
+owns per-question softmax (FP64 normalization returning FP32 probabilities) and
+the choice/confidence interpretation. The engine owns a
 [shared serial scheduler](../../runtime/README.md) that admits each question's
 forward before blocking dispatch. Execution remains one prompt per question
 with a model-state mutex and CPU answer-letter projection after CUDA prefill,
@@ -116,6 +120,37 @@ The status is `422` when a well-formed request cannot be answered:
 The bfloat16 worker's own difference from the fp32 worker is reported next to each native-engine result.
 
 **Performance.** Performance results will state the hardware, revisions, commands and raw results. Load and warmup are reported separately from warm latency, and warm latency is broken down by prompt length and option count.
+
+## Native text precision profile
+
+The unmerged text export retains the original 256 FP32 LoRA tensors (rank 16,
+scale 2). It selects the shared executor's framework-compatible BF16 norm,
+GEMM and attention operations, and a model-owned FP32 chunked GDN context.
+Q/K normalization, triangular solves and recurrent state stay FP32 until the
+GDN output is cast to BF16. Cumulative decay follows Torch 2.14's scan association
+order. State resets on each prompt; prefix continuation is rejected. Context,
+workspace and streams retire after outstanding work and captures complete.
+The BF16 letter-logit boundary is applied before response softmax.
+
+This profile targets the pinned no-FLA reference described above. Installing
+FLA changes Transformers' GDN implementation; comparisons must record which
+implementation actually ran. A different Torch version or GPU may choose other
+reduction orders, so qualification remains tied to the recorded environment.
+The old merged export remains an approximate execution mode. Its legacy
+FP64-accumulated, FP32 letter-logit readout is preserved; BF16 rounding is selected
+only by `cua-s1-text-unmerged/1`. Applying that rounding to merged exports at
+`7293c71c` created four ordered-tie decision changes in a same-artifact A800
+upgrade comparison. The compatibility fix has CPU red/green projection and
+response coverage. At source `f212c56f`, the four-request device regression passed
+in eager/Graph, and both modes matched every legacy parent response byte in two
+139-request passes. Unmerged/reference parity remained within its original gates.
+See the [numerical report](../../../docs/benchmarks/cua-s1-text-parity-20261013/README.md#legacy-merged-upgrade-regression)
+for the four cases, source pins and device-validation limits. Restoring merged
+compatibility does not make merged weights equivalent to the unmerged reference.
+The precision profile does not change the screenshot adapter's execution mode.
+
+The historical cumulative A800 investigation and frozen-corpus results are recorded in
+[the numerical report](../../../docs/benchmarks/cua-s1-text-parity-20261013/README.md).
 
 ## Not covered yet
 
