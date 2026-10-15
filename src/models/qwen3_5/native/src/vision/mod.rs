@@ -318,4 +318,4 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for UniqueMap<T> {
 mod geometry;
 mod model;
 pub use geometry::VisionGeometry;
-pub use model::VisionModel;
+pub use model::{CacheLimits, VisionModel};

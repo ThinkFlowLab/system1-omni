@@ -3,6 +3,7 @@ use super::VisionCheckpoint;
 use crate::{cuda::DeviceBf16Matrix, image_preprocess::ProcessedImage};
 use anyhow::Result;
 use half::bf16;
+use omni_qwen3_5_native::vision::CacheLimits;
 use std::path::Path;
 pub struct VisionModel(omni_qwen3_5_native::vision::VisionModel);
 impl VisionModel {
@@ -25,7 +26,13 @@ impl VisionModel {
             .map(|n| Ok((n.to_owned(), checkpoint.adapter_tensor(n)?)))
             .collect::<Result<Vec<_>>>()?;
         Ok(Self(
-            omni_qwen3_5_native::vision::VisionModel::from_tensors(config, base, lora, library)?,
+            omni_qwen3_5_native::vision::VisionModel::from_tensors_with_cache(
+                config,
+                base,
+                lora,
+                library,
+                cache_limits_from_env(),
+            )?,
         ))
     }
     pub fn synchronize(&self) -> Result<()> {
@@ -38,6 +45,9 @@ impl VisionModel {
     pub fn forward_device(&mut self, image: &ProcessedImage) -> Result<DeviceBf16Matrix<'_>> {
         self.0.forward_device(image)
     }
+    pub fn release_transient(&mut self) -> Result<()> {
+        self.0.release_transient()
+    }
     pub fn forward_with_trace(
         &mut self,
         image: &ProcessedImage,
@@ -46,3 +56,26 @@ impl VisionModel {
         self.0.forward_with_trace(image, callback)
     }
 }
+
+fn cache_limits_from_env() -> CacheLimits {
+    let value = |name: &str, default| match std::env::var_os(name) {
+        None => default,
+        Some(raw) => match raw.to_str().and_then(|v| v.parse::<usize>().ok()) {
+            Some(value) => value,
+            None => {
+                eprintln!(
+                    "Invalid {name}={raw:?}; expected an unsigned integer, using default {default}"
+                );
+                default
+            }
+        },
+    };
+    CacheLimits {
+        entries: value("CUA_S1_VISION_CACHE_ENTRIES", 1).min(16),
+        bytes: value("CUA_S1_VISION_CACHE_BYTES", 256 << 20),
+    }
+}
+
+#[cfg(test)]
+#[path = "../../../../../../tests/cua_s1/vision_cache_env.rs"]
+mod cache_tests;

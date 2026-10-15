@@ -246,6 +246,7 @@ impl VisionEngine {
         let language_sync = self.language.synchronize();
         vision_sync?;
         language_sync?;
+        self.vision.release_transient()?;
         result
     }
 
@@ -320,3 +321,7 @@ mod device_feature_tests;
 #[cfg(test)]
 #[path = "../../../../../tests/cua_s1/device_copy_failure_gpu.rs"]
 mod device_copy_failure_tests;
+
+#[cfg(test)]
+#[path = "../../../../../tests/cua_s1/device_transient_failure_gpu.rs"]
+mod device_transient_failure_tests;
