@@ -62,7 +62,9 @@ class ExportTest(unittest.TestCase):
         self.write_adapter()
         self.config = {"peft_type": "LORA", "base_model_name_or_path": EXPORT.BASE_MODEL_ID, "r": 16, "lora_alpha": 32}
         (self.adapter / "adapter_config.json").write_text(json.dumps(self.config))
-        (self.adapter / "decision_config.json").write_text(json.dumps(EXPORT.CALIBRATION))
+        (self.adapter / "decision_config.json").write_text(json.dumps({"temperature": 1.3480874159655591,
+                                                                    "mm_temperature": 1.3954832341582943,
+                                                                    "threshold": 0.9872681877423998}))
         self.refresh_inventory()
 
     def tearDown(self):
@@ -102,6 +104,31 @@ class ExportTest(unittest.TestCase):
             self.assertTrue(torch.equal(reader.get_tensor("weight"), torch.arange(64).reshape(32, 2).to(torch.bfloat16)))
         with safe_open(str(self.out / "vision.safetensors"), framework="pt", device="cpu") as reader:
             self.assertTrue(torch.equal(reader.get_tensor("model.visual.patch_embed.weight"), torch.ones(2, 2, dtype=torch.bfloat16)))
+
+    def test_v2_export_uses_checksum_covered_file_calibration(self):
+        calibration = {"temperature": 2., "mm_temperature": 3., "threshold": 0.5}
+        source = self.adapter / "decision_config.json"
+        source.write_text(json.dumps(calibration))
+        self.refresh_inventory()
+        manifest = self.run_export()
+        self.assertEqual(manifest["format"], "jemm-native/2")
+        self.assertEqual(manifest["lora_mode"], "unmerged_fp32")
+        self.assertEqual({key: manifest[key] for key in calibration}, calibration)
+        self.assertEqual((self.out / source.name).read_bytes(), source.read_bytes())
+        self.assertEqual(manifest["export_sha256"][source.name], EXPORT.sha256(source))
+
+    def test_invalid_file_calibration_is_refused_before_output_creation(self):
+        for key, value in [("temperature", 0), ("temperature", True),
+                           ("mm_temperature", -1), ("threshold", 1.1),
+                           ("threshold", float("nan")), ("temperature", None)]:
+            with self.subTest(key=key, value=value):
+                calibration = {"temperature": 2., "mm_temperature": 3., "threshold": 0.5}
+                calibration[key] = value
+                (self.adapter / "decision_config.json").write_text(json.dumps(calibration))
+                self.refresh_inventory()
+                with self.assertRaisesRegex(ValueError, "invalid decision calibration"):
+                    self.run_export()
+                self.assertFalse(self.out.exists())
 
     def test_cross_device_copy_fallback_preserves_identical_source_bytes(self):
         with patch.object(EXPORT.os, "link", side_effect=OSError(errno.EXDEV, "cross-device")):

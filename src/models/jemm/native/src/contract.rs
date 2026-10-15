@@ -11,9 +11,6 @@ pub const LABELS: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ012345";
 pub const SYSTEM: &str = "Choose the best available candidate for the question using only the supplied state. Return exactly one candidate label.";
 pub const BASE_REVISION: &str = "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0";
 pub const CHECKPOINT_REVISION: &str = "76e3c209e8441fa658221c7ba2725bad2f811176";
-pub const TEMPERATURE: f64 = 1.3480874159655591;
-pub const MM_TEMPERATURE: f64 = 1.3954832341582943;
-pub const THRESHOLD: f64 = 0.9872681877423998;
 pub const SOURCE_REVISION: &str = "6822fe0fd53c5e6670af6ba99fb2c857a661e532";
 #[derive(Debug)]
 pub struct Question {

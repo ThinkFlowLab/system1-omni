@@ -104,6 +104,7 @@ pub fn verify_export_files(dir: &Path, manifest: &Value) -> Result<()> {
         "config.json",
         "tokenizer.json",
         "preprocessor_config.json",
+        "decision_config.json",
         "model.safetensors.index.json",
         "vision.safetensors",
         "jemm_lm_head.safetensors",

@@ -200,16 +200,33 @@ impl Processor {
             prefix.contains(contract::SYSTEM) && suffix.contains("<think>\n\n</think>"),
             "expected JEMM system and disabled-thinking template"
         );
-        let temperature = manifest["temperature"].as_f64().context("temperature")?;
-        let mm_temperature = manifest["mm_temperature"]
-            .as_f64()
-            .context("mm_temperature")?;
-        ensure!(
-            temperature == contract::TEMPERATURE
-                && mm_temperature == contract::MM_TEMPERATURE
-                && manifest["threshold"].as_f64() == Some(contract::THRESHOLD),
-            "expected pinned JEMM calibration"
-        );
+        let calibration: Value = serde_json::from_slice(
+            &std::fs::read(dir.join("decision_config.json")).context("decision_config.json")?,
+        )?;
+        let mut values = [0.0; 3];
+        for (index, key) in ["temperature", "mm_temperature", "threshold"]
+            .iter()
+            .enumerate()
+        {
+            let value = calibration[key]
+                .as_f64()
+                .with_context(|| format!("calibration {key}"))?;
+            ensure!(
+                value.is_finite()
+                    && if index < 2 {
+                        value > 0.0
+                    } else {
+                        (0.0..=1.0).contains(&value)
+                    },
+                "invalid calibration {key}"
+            );
+            ensure!(
+                manifest[key].as_f64() == Some(value),
+                "manifest disagrees with decision_config.json: {key}"
+            );
+            values[index] = value;
+        }
+        let [temperature, mm_temperature, _threshold] = values;
         let config: Value = serde_json::from_slice(&std::fs::read(dir.join("config.json"))?)?;
         let image_token = config["image_token_id"]
             .as_u64()
