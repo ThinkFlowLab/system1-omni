@@ -83,6 +83,29 @@ covers the entire request. Both streams synchronize before resource release;
 caught execution errors/panics clear atomic readiness and retire loaded state.
 There is no cross-request batching or prefix cache.
 
+## Optional CUDA Graph replay
+
+`CUA_S1_GRAPH=1` enables language replay, with separate 64-entry FIFO caches
+for text ordered lengths and multimodal `[tokens]`. `CUA_S1_VISION_GRAPH=1`
+independently enables vision replay. Vision retains separate four-slot FIFO
+caches for single-image `[T,H,W]` grids and ordered multi-image grid lists.
+Both switches default off. Current IDs/features/positions/pixels are uploaded
+before replay. An eager miss completes before recording, preserving its answer.
+Capture failure logs unconditionally, disables that graph path and keeps the
+eager result. Scratch growth and model retirement synchronize, destroy both
+language graph caches, and then release their referenced buffers and owned stream.
+
+Vision scratch persists even with graphs disabled. These limits bound grid
+slots, not weights or GEMM plan memory. Startup's image warmup can capture its own
+shape when enabled; it does not prewarm every user grid. Graph replay does not
+establish lower latency on every workload.
+
+The archived v2 HTTP campaign below used text-language and vision graphs with
+multimodal language eager. The combined v2 reference path and multimodal language
+replay has not yet been rerun on a GPU; earlier multimodal replay evidence used
+the premerged v1 path. CPU checks compile the graph regressions but cannot prove
+device replay equality for this integration.
+
 ## Validation
 
 The unmerged FP32-adapter v2 path passes the frozen **16 requests / 25 questions**
