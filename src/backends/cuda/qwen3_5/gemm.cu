@@ -28,6 +28,7 @@ struct Gemm {
     cublasLtHandle_t handle = nullptr;
     void* workspace = nullptr;
     size_t workspace_bytes = 0;
+    bool reference = false;
     std::map<Key, Plan> plans;
 };
 
@@ -66,7 +67,7 @@ int first_choice(Gemm& g, Plan& p, bool vision) {
     if (s != CUBLAS_STATUS_SUCCESS) return status(s);
     cublasLtMatmulPreferenceSetAttribute(pref, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &g.workspace_bytes,
                                          sizeof(g.workspace_bytes));
-    const uint32_t schemes = vision ? CUBLASLT_REDUCTION_SCHEME_NONE : (CUBLASLT_REDUCTION_SCHEME_MASK & ~CUBLASLT_REDUCTION_SCHEME_INPLACE);
+    const uint32_t schemes = g.reference ? CUBLASLT_REDUCTION_SCHEME_MASK : vision ? CUBLASLT_REDUCTION_SCHEME_NONE : (CUBLASLT_REDUCTION_SCHEME_MASK & ~CUBLASLT_REDUCTION_SCHEME_INPLACE);
     cublasLtMatmulPreferenceSetAttribute(pref, CUBLASLT_MATMUL_PREF_REDUCTION_SCHEME_MASK, &schemes,
                                          sizeof(schemes));
     cublasLtMatmulHeuristicResult_t r{};
@@ -160,4 +161,11 @@ extern "C" int cs1_gemm_f32(void* gemm, const float* x, const float* w, float* y
     const float alpha = 1.f, beta = 0.f;
     return status(cublasLtMatmul(g->handle, p->op, &alpha, w, p->a, x, p->b, &beta, y, p->c, y, p->c, &p->algo,
                                  g->workspace, g->workspace_bytes, static_cast<cudaStream_t>(stream)));
+}
+
+// JEMM matches the pinned framework heuristic, including all reduction schemes.
+extern "C" void* cs1_reference_gemm_create(size_t workspace_bytes) {
+    auto* g=static_cast<Gemm*>(cs1_gemm_create(workspace_bytes));
+    if(g) g->reference=true;
+    return g;
 }

@@ -20,8 +20,16 @@ link=(-lcublasLt)
 if lib=$(cd "$(dirname "$nvcc")/../lib64" 2>/dev/null && pwd); then
     link=(-L"$lib" -lcublasLt -Xlinker -rpath -Xlinker "$lib")
 fi
+extra=()
+# Optional JEMM framework-compatible Conv3D. Legacy builds do not require cuDNN.
+if [ -n "${CUDNN_INCLUDE_DIR:-}" ] || [ -n "${CUDNN_LIB_DIR:-}" ]; then
+    : "${CUDNN_INCLUDE_DIR:?set CUDNN_INCLUDE_DIR and CUDNN_LIB_DIR together}"
+    : "${CUDNN_LIB_DIR:?set CUDNN_INCLUDE_DIR and CUDNN_LIB_DIR together}"
+    extra=(-DCS1_REFERENCE_CUDNN -I"$CUDNN_INCLUDE_DIR")
+    link+=(-L"$CUDNN_LIB_DIR" -l:libcudnn.so.9 -Xlinker -rpath -Xlinker "$CUDNN_LIB_DIR")
+fi
 mkdir -p "$out"
 "$nvcc" -O3 -std=c++17 -gencode "arch=compute_${arch},code=[sm_${arch},compute_${arch}]" \
     -shared -Xcompiler -fPIC -Xcompiler -Wall,-Wextra -I"$here" "$here"/*.cu \
-    "${link[@]}" -o "$out/libqwen3_5_cuda.so"
+    "${extra[@]}" "${link[@]}" -o "$out/libqwen3_5_cuda.so"
 echo "built $out/libqwen3_5_cuda.so for sm_${arch}"

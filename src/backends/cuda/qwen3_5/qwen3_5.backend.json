@@ -12,13 +12,22 @@
     "gdn_prefill.cu",
     "gemm.cu",
     "runtime.cu",
-    "vision.cu"
+    "vision.cu",
+    "reference_attention.cuh",
+    "reference_gdn.cu",
+    "reference_language_attention.cu",
+    "reference_norm.cu",
+    "reference_patch.cu",
+    "reference_prep.cu",
+    "reference_vision.cu",
+    "reference_vision_attention.cu"
   ],
   "models": [
     "src/models/cua_s1/native/",
     "src/models/open_jev/native/",
     "src/models/jev_vl/native/",
-    "src/models/decider/native/"
+    "src/models/decider/native/",
+    "src/models/jemm/native/"
   ],
   "build": {
     "script": "build.sh",

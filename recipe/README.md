@@ -21,6 +21,8 @@ For a first real decision, follow the [complete CPU walkthrough](../docs/getting
   backbone and trained decision head of Open-Jev-27B-v1.1 or Open-Jev-9B, then
   serve with Rust and CUDA. [Open-Jev-9B validation](open_jev/validation-9b.md)
   compares the 9B worker with the reference.
+- [JEMM native worker](jemm/README.md): pinned text/image decisions and export;
+  known multi-image numerical limitation is documented in the model contract.
 - [JEV-27B-VL experimental worker](jev_vl/README.md): native text and preencoded
   image decisions; bounded H800 validation with explicit deployment limits.
 - [OmniJev-4B v1.1 preparation](omnijev/README.md): export the checkpoint and
