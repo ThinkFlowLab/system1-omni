@@ -19,3 +19,11 @@ path = "../../tests/runtime/scheduler.rs"
 [[test]]
 name = "engine"
 path = "../../tests/runtime/engine.rs"
+
+[[test]]
+name = "admission"
+path = "../../tests/runtime/admission.rs"
+
+[[test]]
+name = "control"
+path = "../../tests/runtime/control.rs"

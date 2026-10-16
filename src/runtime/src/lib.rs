@@ -1,5 +1,7 @@
 //! Shared admission, dispatch and the worker-side engine contract for a loaded executor.
 
+pub mod admission;
+pub mod control;
 pub mod engine;
 
 use std::sync::Arc;
@@ -44,5 +46,25 @@ impl SerialScheduler {
         })
         .await
         .context("execution task failed")?
+    }
+    /// Retain request capacity through device synchronization. Check again on the
+    /// blocking thread: dispatch itself can wait behind unrelated blocking work.
+    pub async fn run_with_context<F, T>(
+        &self,
+        context: control::ExecutionContext,
+        work: F,
+    ) -> Result<T>
+    where
+        F: FnOnce() -> Result<T> + Send + 'static,
+        T: Send + 'static,
+    {
+        context.check()?;
+        self.run(move || {
+            context.check()?;
+            let result = work();
+            drop(context);
+            result
+        })
+        .await
     }
 }

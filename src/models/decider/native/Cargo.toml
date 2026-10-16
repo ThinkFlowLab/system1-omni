@@ -16,7 +16,7 @@ safetensors = "0.8.0"
 omni-qwen3-5-native = { path = "../../qwen3_5/native" }
 omni-runtime = { path = "../../../runtime" }
 axum = "0.8.8"
-tokio = { version = "1.49.0", features = ["macros", "net", "rt-multi-thread", "sync", "signal"] }
+tokio = { version = "1.49.0", features = ["macros", "net", "rt-multi-thread", "sync", "signal", "time"] }
 
 [[bin]]
 name = "omni-decider"
@@ -41,3 +41,10 @@ path = "../../../../tests/decider/batching.rs"
 [[example]]
 name = "decider-run"
 path = "../../../../tests/decider/runner.rs"
+
+[[test]]
+name = "runtime"
+path = "../../../../tests/decider/runtime.rs"
+
+[dev-dependencies]
+tokio = { version = "1.49.0", features = ["io-util"] }

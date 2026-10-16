@@ -11,6 +11,7 @@ use omni_qwen3_5_native::{
     model::Model,
 };
 use omni_runtime::SerialScheduler;
+use omni_runtime::control::ExecutionContext;
 use std::{
     ffi::c_void,
     path::Path,
@@ -229,6 +230,16 @@ impl Executor {
         scheduler: &SerialScheduler,
         rows: Vec<RowInput>,
     ) -> Result<Vec<Vec<f32>>> {
+        self.execute_with_context(scheduler, rows, ExecutionContext::default())
+            .await
+    }
+    pub async fn execute_with_context(
+        &self,
+        scheduler: &SerialScheduler,
+        rows: Vec<RowInput>,
+        context: ExecutionContext,
+    ) -> Result<Vec<Vec<f32>>> {
+        context.check()?;
         validate_rows(&rows, &self.labels)?;
         ensure!(self.is_ready(), "executor unavailable");
         if rows.is_empty() {
@@ -236,7 +247,7 @@ impl Executor {
         }
         let (loaded, ready) = (self.loaded.clone(), self.ready.clone());
         scheduler
-            .run(move || {
+            .run_with_context(context, move || {
                 let mut guard = match loaded.lock() {
                     Ok(guard) => guard,
                     Err(_) => {
