@@ -1,0 +1,26 @@
+{
+  "model": "d3",
+  "state": "The attached screenshot shows the customer's order history: one order charged twice on the same card.",
+  "questions": {
+    "refund": {
+      "type": "choice",
+      "instructions": "Decide the refund action.",
+      "criteria": {
+        "refund": "Refund the duplicate charge now",
+        "wait": "Wait for manual review"
+      }
+    },
+    "severity": {
+      "type": "score",
+      "instructions": "Rate the severity of the billing error.",
+      "criteria": [
+        "minor",
+        "moderate",
+        "major"
+      ]
+    }
+  },
+  "images": [
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAABTElEQVR4nO3ayxHCMAwEUIWhJVIBZVMBqSd37iAnkfXZNeM9Mhz8sB1sKcu+7zJybugBeDMB6EwAOn8N2J5r2Ti6s7T+BwhH/3i9fz/UZ4Bw9K3oANXKmfv1r6JUx8vB8BTiXFe2xyih4RzwtXLYDJdmgNlwdQnRGgx7gNNg28SEBvNhjs3QcxqlMnQep3kM/fcBEoPrQsNg8N7I4IaAKyXWEHMnBhrCLvUoQ2RVAmIILqvUG+LrQsWGlMJWpSGrMldmSCwt1hhya6MFhvTibrahojqdaigqr+cZ6voDSYbSBkeGobpDE24AtJhiDZgeWaAB1uSLMiC7lCEGcJvVb8D3iZ0GPEB8BgqAOAwsAOk1EAGky8AFELuBDiDGjjojQCyG81cN4E2k45DOgBr1pxwJoK6r5gtPVNmea2tXjAE4yEhLSM0EoDMB6HwA6F2Vhz1WcLcAAAAASUVORK5CYII="
+  ]
+}

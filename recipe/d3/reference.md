@@ -18,15 +18,55 @@ The slice is:
 - the Python reference worker behind the Rust frontend, executing the
   checkpoint's own pinned runtime (`d3_runtime.py` and siblings) after a
   full-hash manifest gate;
-- text/JSON state and the three typed kinds — `choice`, `noul`, `score` —
-  in one request;
+- text/JSON state plus inline base64 media — `images` and `videos` lists on
+  the five-field request envelope — and the three typed kinds — `choice`,
+  `noul`, `score` — in one request;
 - BF16 backbone with FP32 readout, noncausal full attention, last-position
   pooling, one forward pass per question.
 
-Out of scope for this slice: `images`/`videos` (rejected with 422; upstream
-supports them per-item at 8,000,000 bytes per image and 32,000,000 per
-video), upstream's FastAPI server features (API key, request ids, server
-timing), and any native Rust/CUDA executor.
+Out of scope for this slice: upstream's FastAPI server features (API key,
+request ids, server timing, `/v1/models`), and any native Rust/CUDA
+executor.
+
+## Media budgets and the transport cap
+
+Per-item validation is the pinned runtime's strict loading
+(`load_images`/`load_videos` with `strict=True`); a media item it cannot
+decode rejects the whole request with HTTP 422 naming the item
+(`images[i]: ...` / `videos[i]: ...`). The budgets, transcribed from the
+pinned `d3_runtime.py` constants of this revision:
+
+| Media | Budget |
+| --- | --- |
+| one image | PNG, JPEG or WebP data URL; at most 8,000,000 decoded bytes (base64 length ≤ 4·⌈8,000,000/3⌉ ≈ 10.7 MB, decoded length re-checked) and 16,000,000 source pixels |
+| one video | MP4, WebM, QuickTime or Matroska data URL; at most 32,000,000 bytes (≈ 42.7 MB of base64), 300 seconds, 8,294,400 pixels per frame |
+| video sampling | 2 frames per second, 4–32 frames spread over the video, each sampled frame at most 200,704 pixels |
+| all videos of one request | at most 16,384 video input tokens |
+
+Media capability follows the loaded checkpoint: when the vision tower, the
+`qwen3_5` backbone or the video processor is missing, non-empty `images`/
+`videos` are refused with the upstream server's messages (`This model reads
+text only; images are not supported.` / `This model does not read videos.`).
+Empty or absent lists never trigger the capability check.
+
+On top of the per-item budgets this worker enforces a **64 MiB total request
+body cap** (HTTP 413). Upstream sets no total-body limit — its budgets are
+per item — so this is a deliberate difference, sized for one full-budget
+video (~42.7 MB of base64) plus envelope headroom; a second full-budget
+video in one request is refused with 413, not decoded. The cap also bounds
+the memory the stdlib worker holds while reading a body.
+
+## Timeout ceilings
+
+- The Rust frontend applies a **60 s total timeout** per forwarded request
+  (default, no environment override; only `OMNI_JEV_BIND`,
+  `OMNI_JEV_BACKEND_URL`, `OMNI_JEV_HEALTH_TIMEOUT_MS` and
+  `OMNI_JEV_MAX_RESPONSE_BYTES` are configurable). Uploading a near-budget
+  video over a slow link plus video inference can exceed it and surface as
+  a frontend 504.
+- The worker's 15 s connection timeout is per `recv` on the request stream:
+  a slow but continuously flowing upload does not trip it; only a stall
+  longer than 15 s produces the 408 body timeout.
 
 ## Architecture and ownership
 
@@ -34,6 +74,8 @@ timing), and any native Rust/CUDA executor.
 Rust frontend
   -> Python worker
      -> admit: envelope (protocol), pinned-runtime question errors (preprocess)
+     -> decode: media decode stage — empty short-circuit, capability gates,
+        strict loading via the executor (frontend.d3 mirroring d3_server.py)
      -> verify: manifest identity pin (repo id + runtime digests), full
         SHA-256 of the manifest runtime table, then import it (engine)
      -> execute: the checkpoint's own d3_runtime prepare/run/respond
@@ -44,16 +86,16 @@ The ownership boundary follows
 [`docs/architecture.md`](../../docs/architecture.md) and the
 [model contract](../../src/models/d3/README.md):
 
-- `protocol.py` owns the five-field envelope and the slice-scoped media
-  refusal;
+- `protocol.py` owns the five-field envelope and the media list-shape check;
 - `preprocess.py` owns the pre-execution 422 mapping
   (`invalid_questions` map, plain `max_length_exceeded` message);
-- `engine.py` owns the pinned runtime and the manifest gate stronger than
-  the upstream default;
+- `engine.py` owns the pinned runtime, the manifest gate stronger than the
+  upstream default, the capability flags and the strict-loading wrappers;
 - `postprocess.py` owns the pure answer formulas and the warning on
   embedded `invalid_model_output` answers (partial success stays HTTP 200
   but never passes silently);
-- `frontend.d3` owns HTTP lifecycle and orchestration;
+- `frontend.d3` owns HTTP lifecycle and orchestration, including the media
+  decode stage;
 - The Rust frontend forwards `/v1/systemone` and `/health` unchanged.
 
 ## Pinned artifacts
@@ -165,7 +207,39 @@ Expected response shape:
 }
 ~~~
 
-This is a serving smoke test, not an accuracy result; the exact numbers come
+### Media request
+
+[`example-request-media.json`](example-request-media.json) is the same shape
+with one inline PNG data URL in `images` — a screenshot-style input every
+question of the request sees:
+
+~~~sh
+curl -sS http://127.0.0.1:8000/v1/systemone \
+  -H 'Content-Type: application/json' \
+  --data-binary @recipe/d3/example-request-media.json
+~~~
+
+The response shape is unchanged; `usage.input_tokens` accounts for the image
+tokens. For a video request, generate a small in-budget clip and build the
+data URL yourself (the base64 is too large to commit as an example):
+
+~~~sh
+ffmpeg -f lavfi -i testsrc=duration=4:size=320x240:rate=8 \
+  -pix_fmt yuv420p -c:v libx264 -preset veryfast -crf 30 /tmp/d3-clip.mp4
+base64 -w0 /tmp/d3-clip.mp4 > /tmp/d3-clip.b64
+python3 - <<'PY'
+import json, pathlib
+encoded = pathlib.Path("/tmp/d3-clip.b64").read_text().strip()
+request = json.loads(pathlib.Path("recipe/d3/example-request.json").read_text())
+request["videos"] = [f"data:video/mp4;base64,{encoded}"]
+pathlib.Path("/tmp/d3-video-request.json").write_text(json.dumps(request))
+PY
+curl -sS http://127.0.0.1:8000/v1/systemone \
+  -H 'Content-Type: application/json' \
+  --data-binary @/tmp/d3-video-request.json
+~~~
+
+Both are serving smoke tests, not accuracy results; the exact numbers come
 from the checkpoint and are recorded by the parity tool below.
 
 ## Start and verify the Rust frontend
@@ -221,13 +295,16 @@ the pull request description, not in this recipe.
 
 [`compare_reference.py`](compare_reference.py) drives one fixture through
 two paths that share the loaded pinned model: the upstream
-`d3_server.py` decide body (prepare, 422 admission, run, respond) and the
-production `frontend.d3.decide` pipeline. The criteria are exact decision
-agreement including embedded `invalid_model_output` shapes, equal token
-accounting, and a numeric tolerance of 1e-6. `--export` freezes the oracle
-fixture (token ids, probabilities, answers) for the future native worker,
-and writes it only after a passing, non-rejected comparison — a failed run
-or an agreed 422 never touches the existing fixture.
+`d3_server.py` `system_one` body (media decode, prepare, 422 admission, run,
+respond) and the production `frontend.d3.decide` pipeline. The criteria are
+exact decision agreement including embedded `invalid_model_output` shapes
+and agreed 422 rejections (media decode errors among them), equal token
+accounting, and a numeric tolerance of 1e-6. Point `--fixture` at
+`example-request-media.json` (or any media request) to compare the media
+paths. `--export` freezes the oracle fixture (token ids, probabilities,
+answers) for the future native worker, and writes it only after a passing,
+non-rejected comparison — a failed run or an agreed 422 never touches the
+existing fixture.
 
 ~~~sh
 PYTHONPATH=src .venv/bin/python recipe/d3/compare_reference.py \
@@ -251,12 +328,25 @@ stage-3 native worker and is committed with the integration.
 - Upstream moved after the manifest was built — do not track `main` of the
   repository; re-pin deliberately and re-record the revision and the pinned
   runtime table (`PINNED_RUNTIME_SHA256`) in `src/models/d3/engine.py`.
-- `images`/`videos` non-empty lists are rejected with 422 in this slice;
-  the 8 MiB body cap is slice-scoped and will re-align to the upstream
-  per-item budgets when media opens (stage 2).
-- `/health` reports the loaded model's modalities even while this slice
-  refuses media; the 422 marks the serving boundary, not the checkpoint's
-  capability.
+- Media 422s name the item (`images[0]: ...`, `videos[1]: ...`) with the
+  pinned runtime's message; non-empty media against a checkpoint without
+  the capability is refused whole with the upstream server's message
+  (`This model reads text only; images are not supported.` /
+  `This model does not read videos.`). `/health`'s `modalities` shows what
+  the loaded checkpoint reads.
+- Over-budget totals are 413 (`request exceeds the 64 MiB body limit`):
+  the cap is this worker's deliberate difference from upstream, sized for
+  one full-budget video plus envelope headroom.
+- An inline base64 video is written to a named temporary file by the pinned
+  runtime before OpenCV decodes it (`d3-video-*` in the temp directory);
+  that is upstream behavior, not a worker-side staging step.
+- Decoding runs inside the worker's inference lock: one request at a time
+  covers decode, prepare, run and respond (upstream decodes outside its
+  lock in a thread pool — a deliberate throughput difference of this
+  worker, recorded in the integration PR).
+- The Rust frontend's 60 s total timeout has no override; a near-budget
+  video upload plus inference can surface as a frontend 504 (see
+  [Timeout ceilings](#timeout-ceilings)).
 - `/health` has no `authentication` field: this worker has no API key
   (a deliberate difference from upstream, which reads `DECISION_API_KEY`).
 - Without optional `causal_conv1d`, the pinned runtime falls back to its
@@ -265,4 +355,5 @@ stage-3 native worker and is committed with the integration.
 - The noncausal full-attention hook inside the pinned runtime is adapted
   from perplexity-ai/pplx-decider-v1.1-27b (Apache-2.0).
 - GPU evidence for the supported-models table is recorded in the
-  integration pull request, not in this recipe.
+  integration pull request, not in this recipe; media serving evidence is
+  author-side opt-in and likewise lives there until measured.

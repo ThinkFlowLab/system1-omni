@@ -1,12 +1,15 @@
 """End-to-end decide() tests with a CPU-only FakeD3: no weights, no torch.
 
 FakeD3 mirrors the upstream runtime surface the worker drives —
-prepare/run/respond plus model_name, max_length and modalities — with the
-pinned question-validation rules reimplemented just far enough to produce
-upstream-shaped per-question errors, and answer construction delegated to
-models.d3.postprocess (which locks the pinned formulas).
+prepare/run/respond plus model_name, max_length, the capability flags and
+load_images/load_videos — with the pinned question-validation rules
+reimplemented just far enough to produce upstream-shaped per-question
+errors, and answer construction delegated to models.d3.postprocess (which
+locks the pinned formulas).
 """
 
+import base64
+import binascii
 import json
 import logging
 
@@ -18,6 +21,20 @@ from models.d3.protocol import MODEL_NAME, RequestError
 
 from .test_protocol import body
 
+# Upstream strict-loading budgets (d3_runtime.py), reimplemented only for
+# the fake's rejections: real pixel decode and frame sampling belong to the
+# pinned runtime and stay author-side.
+MAX_IMAGE_BYTES = 8_000_000
+MAX_VIDEO_BYTES = 32_000_000
+
+
+def image_data_url(payload=b"tiny-png-bytes"):
+    return f"data:image/png;base64,{base64.b64encode(payload).decode()}"
+
+
+def video_data_url(payload=b"tiny-mp4-bytes"):
+    return f"data:video/mp4;base64,{base64.b64encode(payload).decode()}"
+
 
 class FakePrepared:
     def __init__(self, keys, questions, errors):
@@ -27,17 +44,114 @@ class FakePrepared:
 
 
 class FakeD3:
-    """The pinned runtime's contract, driven without its code."""
+    """The pinned runtime's contract, driven without its code.
+
+    Two shapes, switched by ``media``: a vision-capable checkpoint
+    (``image_unavailable``/``video_unavailable`` are None) and the text-only
+    shape the runtime produces when the vision tower is missing.
+    ``load_images``/``load_videos`` reimplement the data-URL slice of the
+    runtime's strict loading just far enough to raise upstream-shaped
+    rejections; they return ``("image"/"video", payload)`` markers instead
+    of decoded pixels or sampled frames.
+    """
 
     model_name = MODEL_NAME
-    max_length = None
-    modalities = ["text"]
 
-    def __init__(self, probabilities=None, max_length=None):
+    def __init__(self, probabilities=None, max_length=None, media=False):
         self.probabilities = dict(probabilities or {})
         self.max_length = max_length
         self.warmed = False
         self.closed = False
+        self.image_unavailable = (
+            None if media else "the checkpoint has no vision tower (visual.* weights)"
+        )
+        self.video_unavailable = None if media else self.image_unavailable
+        self.modalities = ["text", "image", "video"] if media else ["text"]
+        self.loaded_images = []
+        self.loaded_videos = []
+        self.prepare_calls = []
+
+    # -- upstream strict loading, reduced to the data-URL envelope ---------
+    @staticmethod
+    def _image_payload(value):
+        if not isinstance(value, str) or not value.startswith("data:"):
+            raise ValueError("images must be base64 PNG, JPEG or WebP data URLs")
+        header, separator, encoded = value.partition(",")
+        kind = header.strip().lower()
+        if (
+            not separator
+            or not kind.startswith("data:image/")
+            or not kind.endswith(";base64")
+        ):
+            raise ValueError("a data URL image is data:image/<format>;base64,<data>")
+        if kind[len("data:image/") : -len(";base64")] not in ("png", "jpeg", "jpg", "webp"):
+            raise ValueError("images must be base64 PNG, JPEG or WebP data URLs")
+        if len(encoded) > 4 * -(-MAX_IMAGE_BYTES // 3):
+            raise ValueError(f"each image must be at most {MAX_IMAGE_BYTES:,} bytes")
+        try:
+            payload = base64.b64decode(encoded, validate=True)
+        except binascii.Error as exc:
+            raise ValueError("invalid base64 image data") from exc
+        if len(payload) > MAX_IMAGE_BYTES:
+            raise ValueError(f"each image must be at most {MAX_IMAGE_BYTES:,} bytes")
+        return payload
+
+    @staticmethod
+    def _video_payload(value):
+        header, separator, encoded = value.partition(",")
+        kind = header.strip().lower()
+        if (
+            not separator
+            or not kind.startswith("data:video/")
+            or not kind.endswith(";base64")
+        ):
+            raise ValueError("a data URL video is data:video/<format>;base64,<data>")
+        if kind[len("data:video/") :].split(";")[0] not in (
+            "mp4",
+            "webm",
+            "quicktime",
+            "x-matroska",
+        ):
+            raise ValueError(
+                "videos must be base64 MP4, WebM, QuickTime or Matroska data URLs"
+            )
+        if len(encoded) > 4 * -(-MAX_VIDEO_BYTES // 3):
+            raise ValueError(f"each video must be at most {MAX_VIDEO_BYTES:,} bytes")
+        try:
+            payload = base64.b64decode(encoded, validate=True)
+        except binascii.Error as exc:
+            raise ValueError("invalid base64 video data") from exc
+        if len(payload) > MAX_VIDEO_BYTES:
+            raise ValueError(f"each video must be at most {MAX_VIDEO_BYTES:,} bytes")
+        return payload
+
+    def load_images(self, images):
+        if not images:
+            return []
+        if self.image_unavailable is not None:
+            raise ValueError(f"image inputs are not available: {self.image_unavailable}")
+        self.loaded_images.append(list(images))
+        decoded = []
+        for number, value in enumerate(images):
+            try:
+                decoded.append(("image", self._image_payload(value)))
+            except ValueError as exc:
+                raise ValueError(f"images[{number}]: {exc}") from exc
+        return decoded
+
+    def load_videos(self, videos):
+        if not videos:
+            return []
+        if self.video_unavailable is not None:
+            raise ValueError(f"video inputs are not available: {self.video_unavailable}")
+        self.loaded_videos.append(list(videos))
+        decoded = []
+        for number, value in enumerate(videos):
+            try:
+                decoded.append(("video", self._video_payload(value)))
+            except ValueError as exc:
+                raise ValueError(f"videos[{number}]: {exc}") from exc
+        return decoded
 
     # -- upstream normalize_question, reduced to what the tests exercise ----
     @staticmethod
@@ -74,7 +188,8 @@ class FakeD3:
     def _tokens(self, state, question):
         return 8 + len(json.dumps(state)) // 8 + len(json.dumps(question)) // 8
 
-    def prepare(self, state, questions):
+    def prepare(self, state, questions, images=None, videos=None):
+        self.prepare_calls.append((state, questions, images, videos))
         errors = {}
         normalized = {}
         for key, question in questions.items():
@@ -251,3 +366,94 @@ def test_decide_rejects_responses_that_break_question_order():
 
     with pytest.raises(RuntimeError, match="question order"):
         decide(json.dumps(three_kind_body()).encode("utf-8"), ReorderedD3())
+
+
+def test_decide_decodes_images_and_passes_them_to_prepare():
+    executor = FakeD3(media=True)
+    value = three_kind_body()
+    value["images"] = [image_data_url(b"one"), image_data_url(b"two")]
+    result = decide(json.dumps(value).encode("utf-8"), executor)
+
+    state, questions, images, videos = executor.prepare_calls[0]
+    assert images == [("image", b"one"), ("image", b"two")]
+    assert videos is None
+    assert executor.loaded_images == [list(value["images"])]
+    assert executor.loaded_videos == []
+    assert result["model"] == "d3"
+    assert list(result["answers"]) == ["refund", "urgent", "severity"]
+
+
+def test_decide_routes_media_to_the_upstream_prepare_branches():
+    # Videos (with or without images) take the four-argument branch, images
+    # alone the three-argument one, and empty or absent media stays text.
+    executor = FakeD3(media=True)
+    value = three_kind_body()
+    value["images"] = [image_data_url()]
+    value["videos"] = [video_data_url()]
+    decide(json.dumps(value).encode("utf-8"), executor)
+    _, _, images, videos = executor.prepare_calls[0]
+    assert images == [("image", b"tiny-png-bytes")]
+    assert videos == [("video", b"tiny-mp4-bytes")]
+
+    executor = FakeD3(media=True)
+    value = three_kind_body()
+    value["images"] = []
+    value["videos"] = []
+    decide(json.dumps(value).encode("utf-8"), executor)
+    _, _, images, videos = executor.prepare_calls[0]
+    assert images is None and videos is None
+    assert executor.loaded_images == [] and executor.loaded_videos == []
+
+    executor = FakeD3(media=True)
+    decide(json.dumps(three_kind_body()).encode("utf-8"), executor)
+    _, _, images, videos = executor.prepare_calls[0]
+    assert images is None and videos is None
+
+
+def test_decide_refuses_media_a_text_only_checkpoint_cannot_read():
+    value = three_kind_body()
+    value["images"] = [image_data_url()]
+    with pytest.raises(RequestError) as excinfo:
+        decide(json.dumps(value).encode("utf-8"), FakeD3())
+    assert excinfo.value.status == 422
+    assert str(excinfo.value) == "This model reads text only; images are not supported."
+
+    value = three_kind_body()
+    value["videos"] = [video_data_url()]
+    with pytest.raises(RequestError) as excinfo:
+        decide(json.dumps(value).encode("utf-8"), FakeD3())
+    assert excinfo.value.status == 422
+    assert str(excinfo.value) == "This model does not read videos."
+
+    # The gates are independent: an image-capable checkpoint without video
+    # support still refuses videos, after the images have decoded.
+    executor = FakeD3(media=True)
+    executor.video_unavailable = "video inputs need a Qwen3.5 backbone"
+    value = three_kind_body()
+    value["images"] = [image_data_url()]
+    value["videos"] = [video_data_url()]
+    with pytest.raises(RequestError) as excinfo:
+        decide(json.dumps(value).encode("utf-8"), executor)
+    assert str(excinfo.value) == "This model does not read videos."
+    assert executor.loaded_images == [list(value["images"])]
+    assert executor.loaded_videos == []
+    assert executor.prepare_calls == []
+
+
+def test_decide_rejects_undecodable_media_with_the_runtime_message():
+    for field, bad, expected in (
+        ("images", "https://example.com/pic.png", "images must be base64 PNG"),
+        ("images", "data:image/tiff;base64,AAAA", "images must be base64 PNG"),
+        ("images", "data:image/png;base64,!!!!", "invalid base64 image data"),
+        ("images", "data:image/png;base64," + "A" * 11_000_000, "8,000,000 bytes"),
+        ("videos", "data:video/avi;base64,AAAA", "videos must be base64 MP4"),
+        ("videos", "data:video/mp4;base64," + "A" * 43_000_000, "32,000,000 bytes"),
+    ):
+        value = three_kind_body()
+        value[field] = [bad]
+        with pytest.raises(RequestError) as excinfo:
+            decide(json.dumps(value).encode("utf-8"), FakeD3(media=True))
+        assert excinfo.value.status == 422
+        assert excinfo.value.body is None
+        assert str(excinfo.value).startswith(f"{field}[0]: ")
+        assert expected in str(excinfo.value)

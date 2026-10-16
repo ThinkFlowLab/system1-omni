@@ -187,20 +187,78 @@ class D3Executor:
         self._closed = False
 
     @property
+    def image_unavailable(self) -> str | None:
+        """Why the loaded checkpoint cannot read images; ``None`` when it can.
+
+        Mirrors the runtime's own flag: it is set when the vision tower
+        weights, the patch embedding or the image processor are missing, and
+        the upstream server refuses non-empty ``images`` on it.
+        """
+
+        return self._image_unavailable
+
+    @property
+    def video_unavailable(self) -> str | None:
+        """Why the loaded checkpoint cannot read videos; ``None`` when it can."""
+
+        return self._video_unavailable
+
+    @property
     def modalities(self) -> list[str]:
         """The loaded model's input modalities, in upstream /health order."""
 
         names = ["text", "image"] if self._image_unavailable is None else ["text"]
         return names + ["video"] if self._video_unavailable is None else names
 
-    def prepare(self, state: Any, questions: dict[str, Any]) -> Any:
-        """Validate and tokenize one request; per-question failures land in
-        ``prepared.errors`` instead of raising (envelope problems raise)."""
+    def load_images(self, images: list[Any]) -> list[Any]:
+        """Decode one request's images (RGB PIL) through strict loading.
+
+        The pinned runtime is the per-item validation authority — data URL
+        shape, PNG/JPEG/WEBP format, the 8,000,000-byte and 16,000,000-pixel
+        budgets — and its ``ValueError`` rejections name the item
+        (``images[i]: ...``). The empty short-circuit and the capability gate
+        with the upstream server's message live in the worker's decode stage,
+        mirroring ``d3_server.py``'s ``decode_images``.
+        """
 
         with self._lock:
             if self._closed:
                 raise RuntimeError("D3 executor is closed")
-            return self.model.prepare(state, questions)
+            return self.model.load_images(images, strict=True)
+
+    def load_videos(self, videos: list[Any]) -> list[Any]:
+        """Decode and sample one request's videos through strict loading.
+
+        Per-item validation (MP4/WebM/QuickTime/Matroska data URLs, the
+        32,000,000-byte, 300-second and per-frame budgets, 2 fps sampling of
+        4-32 frames) is the pinned runtime's; rejections name the item
+        (``videos[i]: ...``).
+        """
+
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("D3 executor is closed")
+            return self.model.load_videos(videos, strict=True)
+
+    def prepare(
+        self,
+        state: Any,
+        questions: dict[str, Any],
+        images: Any = None,
+        videos: Any = None,
+    ) -> Any:
+        """Validate and tokenize one request; per-question failures land in
+        ``prepared.errors`` instead of raising (envelope problems raise).
+
+        ``images``/``videos`` are already-decoded media from the worker's
+        decode stage; the runtime picks the video, image or text path by
+        their truthiness, exactly as the upstream server passes them.
+        """
+
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("D3 executor is closed")
+            return self.model.prepare(state, questions, images, videos)
 
     def run(self, prepared: Any) -> tuple[dict[str, list[float]], int]:
         """Probabilities per runnable question and the input token count."""

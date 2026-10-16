@@ -2,9 +2,9 @@
 
 This module deliberately has no torch dependency and validates only the
 request envelope: the five-field System One request, unknown-field rejection,
-and the slice-scoped media refusal. Per-question validation belongs to the
-checkpoint's pinned runtime, whose aggregated rejections ``preprocess`` maps
-to HTTP 422.
+and the list shape of the ``images``/``videos`` fields. Per-question and
+per-item media validation belongs to the checkpoint's pinned runtime, whose
+aggregated rejections ``preprocess`` and the decode stage map to HTTP 422.
 """
 
 from __future__ import annotations
@@ -14,10 +14,11 @@ from dataclasses import dataclass
 from typing import Any
 
 MODEL_NAME = "d3"
-# Slice-scoped transport cap. Upstream d3_server.py sets no total-body limit
-# (its budgets are per image and per video); stage 2 re-aligns this when the
-# media paths open.
-MAX_BODY = 8 * 1024 * 1024
+# Slice-scoped transport cap: one full-budget video (~42.7 MB of base64) plus
+# envelope headroom. Upstream d3_server.py sets no total-body limit (its
+# budgets are per image and per video); this cap is a deliberate difference
+# recorded in the integration PR.
+MAX_BODY = 64 * 1024 * 1024
 REQUEST_FIELDS = {"model", "state", "questions", "images", "videos"}
 
 
@@ -45,12 +46,16 @@ class Request:
 
     ``model`` is accepted and ignored (upstream semantics). ``state`` passes
     through unchanged; the pinned runtime renders it. ``questions`` keeps the
-    request order for response reconstruction.
+    request order for response reconstruction. ``images``/``videos`` pass
+    through as the raw lists (``None`` for absent or null); the worker's
+    decode stage hands them to the pinned runtime's strict loading.
     """
 
     model: Any
     state: Any
     questions: tuple[tuple[str, Any], ...]
+    images: Any = None
+    videos: Any = None
 
 
 def _object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -70,7 +75,7 @@ def parse_body(raw: bytes) -> dict[str, Any]:
     """Decode a bounded JSON body and reject ambiguous JSON values."""
 
     if len(raw) > MAX_BODY:
-        raise RequestError("request body exceeds 8 MiB", 413)
+        raise RequestError("request body exceeds 64 MiB", 413)
     try:
         value = json.loads(
             raw.decode("utf-8"),
@@ -88,35 +93,40 @@ def parse_body(raw: bytes) -> dict[str, Any]:
     return value
 
 
-def _media(value: dict[str, Any], field: str) -> None:
-    """Admit an absent, null or empty media list; refuse anything else."""
+def _media(value: dict[str, Any], field: str) -> Any:
+    """Admit a media field as absent, null or a list; pass the list through.
+
+    Only the list shape is checked here, with the upstream server's message:
+    its ``decode_images``/``decode_videos`` reject anything else before any
+    decoding. Absent, null and empty lists all mean "no media of this kind";
+    a non-empty list is not inspected — per-item validation (format, byte and
+    pixel budgets) is the pinned runtime's strict loading.
+    """
 
     media = value.get(field)
     if media is None:
-        return
+        return None
     if not isinstance(media, list):
         raise RequestError(f"{field} must be a list of base64 data URLs")
-    if media:
-        raise RequestError(
-            f"this reference worker serves text state only; non-empty {field}"
-            " are not supported yet (stage 2)"
-        )
+    return media
 
 
 def parse_request(value: dict[str, Any]) -> Request:
     """Validate the system1-omni wire request envelope.
 
     Unknown fields are rejected with upstream's message; ``model`` is not
-    checked (upstream ignores it); per-question content validation is left
-    to the pinned runtime.
+    checked (upstream ignores it); per-question content and per-item media
+    validation are left to the pinned runtime.
     """
 
     unknown = set(value) - REQUEST_FIELDS
     if unknown:
         raise RequestError(f"Unknown request fields: {sorted(unknown)}")
 
-    for field in ("images", "videos"):
-        _media(value, field)
+    # Media shape first, mirroring the upstream decode order: a non-list
+    # images/videos field is refused before question validation runs.
+    images = _media(value, "images")
+    videos = _media(value, "videos")
 
     questions = value.get("questions")
     if not isinstance(questions, dict) or not questions:
@@ -124,4 +134,6 @@ def parse_request(value: dict[str, Any]) -> Request:
     if any(not isinstance(name, str) or not name for name in questions):
         raise RequestError("question IDs must be nonempty strings")
 
-    return Request(value.get("model"), value.get("state"), tuple(questions.items()))
+    return Request(
+        value.get("model"), value.get("state"), tuple(questions.items()), images, videos
+    )

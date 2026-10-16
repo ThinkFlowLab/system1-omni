@@ -42,6 +42,7 @@ def test_parse_body_enforces_the_slice_scoped_body_limit():
     with pytest.raises(RequestError) as excinfo:
         parse_body(padding)
     assert excinfo.value.status == 413
+    assert "64 MiB" in str(excinfo.value)
 
 
 def test_parse_rejects_unknown_fields_with_the_upstream_message():
@@ -66,18 +67,34 @@ def test_parse_passes_state_through_in_every_wire_shape():
         assert parsed.state == state
 
 
-def test_parse_admits_empty_media_lists_and_refuses_the_rest():
+def test_parse_admits_media_lists_and_checks_only_the_shape():
     for field in ("images", "videos"):
-        assert parse_request(body(**{field: []})) is not None
-        assert parse_request(body(**{field: None})) is not None
+        # Absent and null mean "no media of this kind".
+        assert getattr(parse_request(body()), field) is None
+        assert getattr(parse_request(body(**{field: None})), field) is None
+        assert getattr(parse_request(body(**{field: []})), field) == []
 
-        value = body(**{field: ["data:image/png;base64,AAAA"]})
-        with pytest.raises(RequestError, match="text state only"):
-            parse_request(value)
+        # A non-empty list passes through untouched — order and identity
+        # preserved, no data-URL inspection at the envelope layer.
+        items = ["data:image/png;base64,AAAA", "not a data url", 17]
+        parsed = parse_request(body(**{field: items}))
+        assert getattr(parsed, field) == items
+        assert getattr(parsed, field)[0] is items[0]
 
-        value = body(**{field: "data:image/png;base64,AAAA"})
-        with pytest.raises(RequestError, match="must be a list"):
-            parse_request(value)
+        # Anything but a list is refused with the upstream server's message.
+        for bad in ("data:image/png;base64,AAAA", 17, {}, True):
+            with pytest.raises(RequestError) as excinfo:
+                parse_request(body(**{field: bad}))
+            assert excinfo.value.status == 422
+            assert str(excinfo.value) == f"{field} must be a list of base64 data URLs"
+
+
+def test_parse_checks_media_shape_before_questions():
+    # Mirroring the upstream decode order: a non-list images field is
+    # refused even when the questions field is also broken.
+    value = body(images="data:image/png;base64,AAAA", questions={})
+    with pytest.raises(RequestError, match="must be a list"):
+        parse_request(value)
 
 
 def test_parse_rejects_empty_or_malformed_questions():

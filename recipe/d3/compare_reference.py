@@ -5,15 +5,18 @@ Runs each request through two paths that share one loaded pinned model, so
 the comparison isolates this repository's admission and orchestration from
 the checkpoint's own code:
 
-- reference: the decide() body of the upstream ``d3_server.py`` (prepare,
-  reject over-limit and invalid questions with 422, run, respond), driven
-  directly on the loaded runtime;
+- reference: the ``system_one`` body of the upstream ``d3_server.py``
+  (decode_images/decode_videos with their empty short-circuits and
+  capability gates, then the decide body: prepare with the media-aware
+  branches, reject over-limit and invalid questions with 422, run,
+  respond), driven directly on the loaded runtime;
 - worker: the production ``frontend.d3.decide`` pipeline (protocol envelope,
-  prepared-error admission, run, respond, response finishing).
+  decode stage, prepared-error admission, run, respond, response finishing).
 
 Both paths execute the same verified ``d3_runtime``, so the criteria are
 exact decision agreement (including embedded ``invalid_model_output``
-shapes), equal token accounting, and a probability tolerance of 1e-6
+shapes and agreed 422 rejections, media decode errors among them), equal
+token accounting, and a probability tolerance of 1e-6
 (``--tolerance``). ``--export`` additionally freezes the oracle fixture —
 token ids, probabilities and answers per question — for the future native
 worker, and writes it only after a passing, non-rejected comparison.
@@ -53,14 +56,57 @@ def parse_args(argv=None):
     return parser.parse_args(argv)
 
 
+def _decode_images(model, images):
+    """Upstream d3_server.py decode_images, verbatim."""
+
+    if not isinstance(images, list):
+        raise ValueError("images must be a list of base64 data URLs")
+    if not images:
+        return []
+    if getattr(model, "image_unavailable", "unknown") is not None:
+        raise ValueError("This model reads text only; images are not supported.")
+    return model.load_images(images, strict=True)
+
+
+def _decode_videos(model, videos):
+    """Upstream d3_server.py decode_videos, verbatim."""
+
+    if not isinstance(videos, list):
+        raise ValueError("videos must be a list of base64 data URLs")
+    if not videos:
+        return []
+    if getattr(model, "video_unavailable", "unknown") is not None:
+        raise ValueError("This model does not read videos.")
+    return model.load_videos(videos, strict=True)
+
+
+def decode_request_media(model, body):
+    """The media half of upstream system_one: images then videos."""
+
+    images = _decode_images(model, body["images"]) if body.get("images") is not None else []
+    videos = _decode_videos(model, body["videos"]) if body.get("videos") is not None else []
+    return images, videos
+
+
 def reference_decide(model, body):
-    """The upstream d3_server.py decide() body, without FastAPI.
+    """The upstream d3_server.py system_one body, without FastAPI.
 
     Returns the 200 response dict, or a ("422", detail) tuple when the
-    upstream server would have rejected the request before execution.
+    upstream server would have rejected the request before execution —
+    including media rejections from the decode stage, which upstream maps
+    to a plain-detail 422.
     """
 
-    prepared = model.prepare(body.get("state"), body.get("questions"))
+    try:
+        images, videos = decode_request_media(model, body)
+        if videos:
+            prepared = model.prepare(body.get("state"), body.get("questions"), images, videos)
+        elif images:
+            prepared = model.prepare(body.get("state"), body.get("questions"), images)
+        else:
+            prepared = model.prepare(body.get("state"), body.get("questions"))
+    except ValueError as exc:
+        return ("422", str(exc))
     over = [e for e in prepared.errors.values() if e["error"] == "max_length_exceeded"]
     if over:
         return ("422", over[0]["message"])
@@ -113,7 +159,7 @@ def compare_case(name, worker_response, reference, tolerance=PROBABILITY_TOLERAN
     Returns (report lines, passed).
     """
 
-    lines = [f"case: {name}", "reference path: d3_server decide()", "worker model: d3"]
+    lines = [f"case: {name}", "reference path: d3_server system_one()", "worker model: d3"]
     problems = []
     deltas: list[float] = []
     if isinstance(reference, tuple):
@@ -123,9 +169,16 @@ def compare_case(name, worker_response, reference, tolerance=PROBABILITY_TOLERAN
         else:
             detail = reference[1]
             body = rejection.get("body")
-            agreed = rejection.get("status") == 422 and body == (
-                detail if isinstance(detail, dict) else {"detail": detail}
-            )
+            if isinstance(detail, dict):
+                agreed = rejection.get("status") == 422 and body == detail
+            else:
+                # The worker deliberately wraps prepare-stage rejections in a
+                # fixed prefix (src/frontend/d3.py decide); upstream system_one
+                # surfaces the raw runtime message. Both forms agree here.
+                agreed = rejection.get("status") == 422 and body in (
+                    {"detail": detail},
+                    {"detail": "request rejected by the pinned runtime: " + detail},
+                )
             lines.append(f"worker rejection: {rejection.get('status')} {body}")
             lines.append("rejection agreement: " + ("PASS" if agreed else "FAIL"))
             return lines, bool(agreed)
@@ -220,7 +273,10 @@ def main(argv=None):
         lines, ok = compare_case(Path(args.fixture).name, worker_response, reference, args.tolerance)
         print("\n".join(lines))
         if args.export and export_allowed(ok, worker_response, reference):
-            prepared = executor.prepare(body.get("state"), dict(body["questions"]))
+            images, videos = decode_request_media(executor.model, body)
+            prepared = executor.prepare(
+                body.get("state"), dict(body["questions"]), images, videos
+            )
             probabilities, _ = executor.run(prepared)
             export_oracle(body, prepared, probabilities, worker_response, args.export)
             print(f"oracle exported: {args.export}")

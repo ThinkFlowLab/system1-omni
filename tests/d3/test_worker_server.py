@@ -3,19 +3,24 @@
 Starts the real WorkerServer on an ephemeral port with the FakeD3 from
 test_worker: no weights, no torch, no GPU. The 408 slow-client timeout is not
 covered because the handler's 15 s connection timeout is deliberately not
-configurable for tests.
+configurable for tests. Strict video decode (OpenCV against the pinned
+runtime) cannot run here; the media cases exercise the decode stage's
+admission, capability and rejection surface only.
 
     PYTHONPATH=src python -m pytest tests/d3 -q
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import threading
 from http.client import HTTPConnection
+from io import BytesIO
 
 import pytest
+from PIL import Image
 
 from frontend.d3 import WorkerServer
 from models.d3.protocol import MAX_BODY
@@ -24,10 +29,26 @@ from .test_protocol import body
 from .test_worker import FakeD3, three_kind_body
 
 
+def png_data_url():
+    """One small real PNG as an inline data URL (valen-test precedent)."""
+
+    stream = BytesIO()
+    Image.new("RGB", (2, 2), "white").save(stream, "PNG")
+    return f"data:image/png;base64,{base64.b64encode(stream.getvalue()).decode()}"
+
+
 class FailingExecutor:
     model_name = "d3"
     max_length = None
     modalities = ["text"]
+    image_unavailable = "the checkpoint has no vision tower (visual.* weights)"
+    video_unavailable = image_unavailable
+
+    def load_images(self, images):
+        raise RuntimeError("boom")
+
+    def load_videos(self, videos):
+        raise RuntimeError("boom")
 
     def prepare(self, state, questions):
         raise RuntimeError("boom")
@@ -101,6 +122,18 @@ def test_health_reports_model_limits_and_modalities(server):
     assert status == 404 and json.loads(raw) == {"detail": "unknown route"}
 
 
+def test_health_reports_three_modalities_for_a_vision_checkpoint():
+    vision = start(FakeD3(media=True))
+    try:
+        status, _, raw = request(vision, "GET", "/health")
+    finally:
+        stop(vision)
+    assert status == 200
+    health = json.loads(raw)
+    assert health["status"] == "ready"
+    assert health["modalities"] == ["text", "image", "video"]
+
+
 def test_valid_three_kind_decision_returns_200(server):
     status, ctype, raw = post(server, json.dumps(three_kind_body()).encode("utf-8"))
     assert status == 200 and ctype == "application/json"
@@ -108,6 +141,32 @@ def test_valid_three_kind_decision_returns_200(server):
     assert result["model"] == "d3"
     assert result["answers"]["urgent"] == {"type": "noul", "noul": 0.5}
     assert result["usage"]["output_tokens"] == 0
+
+
+def test_media_request_returns_200_on_a_vision_checkpoint():
+    vision = start(FakeD3(media=True))
+    try:
+        value = three_kind_body()
+        value["images"] = [png_data_url()]
+        status, ctype, raw = post(vision, json.dumps(value).encode("utf-8"))
+    finally:
+        stop(vision)
+    assert status == 200 and ctype == "application/json"
+    result = json.loads(raw)
+    assert result["model"] == "d3"
+    assert result["answers"]["urgent"] == {"type": "noul", "noul": 0.5}
+
+
+def test_undecodable_media_rejects_the_whole_request():
+    vision = start(FakeD3(media=True))
+    try:
+        value = three_kind_body()
+        value["images"] = ["data:image/png;base64,!!!!"]
+        status, _, raw = post(vision, json.dumps(value).encode("utf-8"))
+    finally:
+        stop(vision)
+    assert status == 422
+    assert json.loads(raw) == {"detail": "images[0]: invalid base64 image data"}
 
 
 def test_unknown_post_route_is_404(server):
@@ -178,6 +237,7 @@ def test_body_limit_and_content_type_are_enforced(server):
 
     status, _, raw = post(server, payload, headers=(("Content-Length", str(MAX_BODY + 1)),))
     assert status == 413 and "body limit" in json.loads(raw)["detail"]
+    assert "64 MiB" in json.loads(raw)["detail"]
 
     status, _, raw = post(server, payload, headers=(("Content-Type", "text/plain"),))
     assert status == 415 and "application/json" in json.loads(raw)["detail"]
@@ -191,10 +251,26 @@ def test_transport_errors_map_to_their_status_and_detail(server):
     status, _, raw = post(server, json.dumps(value).encode("utf-8"))
     assert status == 422 and "Unknown request fields" in json.loads(raw)["detail"]
 
+    # A non-list media field is refused with the upstream server's message.
     value = body()
-    value["images"] = ["data:image/png;base64,AAAA"]
+    value["images"] = "data:image/png;base64,AAAA"
     status, _, raw = post(server, json.dumps(value).encode("utf-8"))
-    assert status == 422 and "text state only" in json.loads(raw)["detail"]
+    assert status == 422
+    assert json.loads(raw)["detail"] == "images must be a list of base64 data URLs"
+
+    # Non-empty media on the text-only fixture is refused with the upstream
+    # capability messages (empty lists would take the text path).
+    value = body()
+    value["images"] = [png_data_url()]
+    status, _, raw = post(server, json.dumps(value).encode("utf-8"))
+    assert status == 422
+    assert json.loads(raw)["detail"] == "This model reads text only; images are not supported."
+
+    value = body()
+    value["videos"] = ["data:video/mp4;base64,AAAA"]
+    status, _, raw = post(server, json.dumps(value).encode("utf-8"))
+    assert status == 422
+    assert json.loads(raw)["detail"] == "This model does not read videos."
 
 
 def test_invalid_questions_return_the_upstream_422_body(server):

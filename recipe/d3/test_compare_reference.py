@@ -3,7 +3,8 @@
 
 Checks the pure comparison and export helpers without the pinned d3 package,
 weights or a GPU: the PASS/FAIL verdicts of compare_case, embedded-error
-shape agreement, the oracle export gate, and the oracle export structure.
+shape agreement, the reference arm's media decode stage, the oracle export
+gate, and the oracle export structure.
 
     python recipe/d3/test_compare_reference.py
 """
@@ -14,6 +15,7 @@ import json
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -180,6 +182,143 @@ def main() -> None:
         "non-422 worker rejection fails",
         not ok and "rejection agreement: FAIL" in "\n".join(lines),
         "\n".join(lines),
+    )
+
+    # 5b. The reference arm mirrors the upstream decode stage for media.
+    class FakeRuntime:
+        image_unavailable = None
+        video_unavailable = None
+
+        def __init__(self, unavailable=None):
+            if unavailable == "image":
+                self.image_unavailable = "the checkpoint has no vision tower (visual.* weights)"
+                self.video_unavailable = self.image_unavailable
+            elif unavailable == "video":
+                self.video_unavailable = "video inputs need a Qwen3.5 backbone"
+            self.image_calls = []
+            self.video_calls = []
+            self.prepared = []
+
+        def load_images(self, images, strict=False):
+            self.image_calls.append((list(images), strict))
+            return [("image", value) for value in images]
+
+        def load_videos(self, videos, strict=False):
+            self.video_calls.append((list(videos), strict))
+            return [("video", value) for value in videos]
+
+        def prepare(self, state, questions, images=None, videos=None):
+            self.prepared.append((images, videos))
+            return SimpleNamespace(errors={})
+
+        def run(self, prepared):
+            return {}, 5
+
+        def respond(self, prepared, probabilities, tokens):
+            return {
+                "model": "d3",
+                "answers": {},
+                "usage": {"input_tokens": tokens, "output_tokens": 0},
+            }
+
+    capable = FakeRuntime()
+    images, videos = tool.decode_request_media(
+        capable, {"images": ["data:image/png;base64,AAAA"], "videos": ["data:video/mp4;base64,AAAA"]}
+    )
+    check(
+        "decode passes media through strict loading",
+        images == [("image", "data:image/png;base64,AAAA")]
+        and videos == [("video", "data:video/mp4;base64,AAAA")]
+        and capable.image_calls == [(["data:image/png;base64,AAAA"], True)]
+        and capable.video_calls == [(["data:video/mp4;base64,AAAA"], True)],
+    )
+
+    empty = FakeRuntime()
+    images, videos = tool.decode_request_media(empty, {"images": [], "videos": None})
+    check(
+        "empty and absent media decode to nothing",
+        images == [] and videos == [] and empty.image_calls == [] and empty.video_calls == [],
+    )
+
+    text_only = FakeRuntime(unavailable="image")
+    try:
+        tool.decode_request_media(text_only, {"images": ["data:image/png;base64,AAAA"]})
+        check("text-only checkpoint refuses images", False, "no ValueError")
+    except ValueError as exc:
+        check(
+            "text-only checkpoint refuses images with the upstream message",
+            str(exc) == "This model reads text only; images are not supported.",
+            str(exc),
+        )
+
+    no_video = FakeRuntime(unavailable="video")
+    try:
+        tool.decode_request_media(no_video, {"videos": ["data:video/mp4;base64,AAAA"]})
+        check("video-incapable checkpoint refuses videos", False, "no ValueError")
+    except ValueError as exc:
+        check(
+            "video-incapable checkpoint refuses videos with the upstream message",
+            str(exc) == "This model does not read videos.",
+            str(exc),
+        )
+
+    for field, bad in (("images", "data:image/png;base64,AAAA"), ("videos", 17)):
+        try:
+            tool.decode_request_media(capable, {field: bad})
+            check(f"non-list {field} is refused", False, "no ValueError")
+        except ValueError as exc:
+            check(
+                f"non-list {field} is refused with the upstream message",
+                str(exc) == f"{field} must be a list of base64 data URLs",
+                str(exc),
+            )
+
+    media = FakeRuntime()
+    result = tool.reference_decide(
+        media,
+        {"state": "s", "questions": {"q": {"type": "noul"}}, "images": ["data:image/png;base64,AAAA"]},
+    )
+    check(
+        "reference_decide prepares decoded images on the image branch",
+        media.prepared == [([("image", "data:image/png;base64,AAAA")], None)]
+        and result["usage"] == {"input_tokens": 5, "output_tokens": 0},
+        str(media.prepared),
+    )
+
+    media = FakeRuntime()
+    tool.reference_decide(
+        media,
+        {
+            "state": "s",
+            "questions": {"q": {"type": "noul"}},
+            "images": ["data:image/png;base64,AAAA"],
+            "videos": ["data:video/mp4;base64,AAAA"],
+        },
+    )
+    check(
+        "reference_decide prepares both media on the video branch",
+        media.prepared
+        == [
+            (
+                [("image", "data:image/png;base64,AAAA")],
+                [("video", "data:video/mp4;base64,AAAA")],
+            )
+        ],
+        str(media.prepared),
+    )
+
+    class RejectingLoad(FakeRuntime):
+        def load_images(self, images, strict=False):
+            raise ValueError("images[0]: each image must be at most 8,000,000 bytes")
+
+    result = tool.reference_decide(
+        RejectingLoad(),
+        {"state": "s", "questions": {"q": {"type": "noul"}}, "images": ["data:image/png;base64,AAAA"]},
+    )
+    check(
+        "reference_decide maps decode rejections to plain-detail 422",
+        result == ("422", "images[0]: each image must be at most 8,000,000 bytes"),
+        str(result),
     )
 
     # 6. The oracle export freezes the full stage-3 comparison surface.
