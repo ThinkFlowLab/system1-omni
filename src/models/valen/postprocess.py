@@ -23,28 +23,67 @@ def _probabilities(logits: Sequence[float], temperature: float) -> list[float]:
     return [value / total for value in exponentials]
 
 
+def _choice_confidence(probabilities: Sequence[float]) -> float:
+    """Valen's original choice confidence formula (reference answer module)."""
+
+    n = len(probabilities)
+    if n == 1:
+        return 1.0
+    return max(0.0, (max(probabilities) - 1 / n) / (1 - 1 / n))
+
+
+def _noul_answer(
+    question: Question, probabilities: Sequence[float]
+) -> dict[str, Any]:
+    """The reference's noul answer (P(true)) plus the full candidate pair."""
+
+    pair = dict(zip(question.keys, probabilities))
+    return {
+        "type": "noul",
+        "noul": pair["true"],
+        "probabilities": pair,
+        "confidence": _choice_confidence(probabilities),
+    }
+
+
+def _score_answer(
+    question: Question, probabilities: Sequence[float]
+) -> dict[str, Any]:
+    """Valen's pinned score decoding: expected level and concentration."""
+
+    mode = max(range(len(probabilities)), key=probabilities.__getitem__)
+    count = len(probabilities)
+    distance = sum(p * abs(i - mode) for i, p in enumerate(probabilities))
+    uniform_mad = sum(abs(i - (count - 1) / 2) for i in range(count)) / count
+    return {
+        "type": "score",
+        "probabilities": dict(zip(question.keys, probabilities)),
+        "score": sum(i * p for i, p in enumerate(probabilities)),
+        "legend": dict(zip(question.keys, question.descriptions)),
+        "confidence": max(0.0, 1.0 - distance / uniform_mad),
+    }
+
+
 def answer(
     question: Question,
     logits: Sequence[float],
     temperature: float = 1.0,
 ) -> dict[str, Any]:
-    """Match Valen's pinned choice decoding and confidence formula."""
+    """Match Valen's pinned decoding and confidence formulas per type."""
 
     if len(logits) != len(question.keys):
-        raise ValueError("model returned one logit per candidate")
+        raise ValueError("model must return one logit per candidate")
     probabilities = _probabilities(logits, temperature)
+    if question.kind == "noul":
+        return _noul_answer(question, probabilities)
+    if question.kind == "score":
+        return _score_answer(question, probabilities)
     mode = max(range(len(probabilities)), key=probabilities.__getitem__)
-    n = len(probabilities)
-    confidence = (
-        1.0
-        if n == 1
-        else max(0.0, (max(probabilities) - 1 / n) / (1 - 1 / n))
-    )
     return {
         "type": "choice",
         "choice": question.keys[mode],
         "probabilities": dict(zip(question.keys, probabilities)),
-        "confidence": confidence,
+        "confidence": _choice_confidence(probabilities),
     }
 
 

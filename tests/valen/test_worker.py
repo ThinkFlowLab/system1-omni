@@ -1,4 +1,5 @@
 import json
+import math
 
 import pytest
 
@@ -35,6 +36,9 @@ class FakeExecutor:
     def execute(self, compiled):
         assert compiled.response_context.questions
         return self.output
+
+    def close(self):
+        pass
 
 
 def test_decide_keeps_http_adapter_outside_executor():
@@ -95,4 +99,54 @@ def test_decide_keeps_request_errors_unwrapped():
 
     assert excinfo.value.status == 422
     assert str(excinfo.value) == "wire problem"
+
+
+def test_decide_answers_mixed_type_questions_from_one_state():
+    value = body(
+        state="The card was charged twice for one order.",
+        questions={
+            "ask": {"type": "noul", "instructions": "Was the card charged twice?"},
+            "grade": {
+                "type": "score",
+                "instructions": "Grade the severity.",
+                "criteria": ["No error", "A minor error", "A major error"],
+            },
+            "act": {
+                "type": "choice",
+                "instructions": "Decide the refund action.",
+                "criteria": {"refund": None, "wait": "Wait for review"},
+            },
+        },
+    )
+    processor = FakeProcessor()
+    executor = FakeExecutor(
+        ExecutorOutput(
+            (
+                (math.log(3.0), 0.0),  # noul: true, false
+                (math.log(7.0), math.log(2.0), 0.0),  # score levels 0, 1, 2
+                (0.0, 1.0),  # choice: refund, wait
+            ),
+            61,
+            183,
+        )
+    )
+
+    result = decide(json.dumps(value).encode("utf-8"), processor, executor)
+
+    noul = result["answers"]["ask"]
+    assert noul["type"] == "noul"
+    assert noul["noul"] == pytest.approx(0.75)
+    assert noul["probabilities"]["true"] == pytest.approx(0.75)
+    assert noul["probabilities"]["false"] == pytest.approx(0.25)
+
+    score = result["answers"]["grade"]
+    assert score["type"] == "score"
+    assert score["probabilities"]["0"] == pytest.approx(0.7)
+    assert score["score"] == pytest.approx(0.4)
+    assert score["legend"] == {"0": "No error", "1": "A minor error", "2": "A major error"}
+    assert score["confidence"] == pytest.approx(0.4)
+
+    assert result["answers"]["act"]["choice"] == "wait"
+    assert result["usage"] == {"input_tokens": 61, "output_tokens": 0}
+    assert result["internal_usage"] == {"compute_tokens": 183}
 

@@ -1,0 +1,15 @@
+{
+  "model": "valen-preview-0923",
+  "state": "The card was charged twice for one order.",
+  "questions": {
+    "severity": {
+      "type": "score",
+      "instructions": "How severe is the billing error?",
+      "criteria": [
+        "No billing error: every charge is correct.",
+        "Minor error: a single duplicated charge.",
+        "Major error: repeated duplicated charges."
+      ]
+    }
+  }
+}

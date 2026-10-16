@@ -17,19 +17,21 @@ The validated slice is:
 - the Python reference worker behind the Rust frontend;
 - text state (a non-empty string; objects and arrays are serialized to JSON
   text) or one inline PNG or JPEG image in `state.image`;
-- textual instructions and criteria for `choice` questions;
+- textual instructions and criteria for `choice`, `noul`, and `score`
+  questions, freely mixed in one request against one shared state;
 - BF16 CUDA inference with the pinned Preview checkpoint. Image and text
   state are serving-validated on the GPU host, with recorded reference parity
-  for both.
+  for all three question types.
 
-The current worker does not implement `noul`, `score`, video, multiple images,
-remote image URLs, or a native Rust/CUDA Valen executor.
+The current worker does not implement video, multiple images, remote image
+URLs, or a native Rust/CUDA Valen executor.
 
 The current protocol limits requests to an 8 MiB JSON body, one PNG/JPEG image
 of at most 4 MiB, 2048 pixels per side, 1,048,576 pixels total, and a 200:1
 maximum aspect ratio. Text state is limited to 16,384 characters, the same
 limit as combined instruction and criterion text. A request may contain at
-most 8 questions and 255 candidates per question.
+most 8 questions, 255 named candidates per `choice` question, and an ordered
+list of 2 to 10 level descriptions per `score` question.
 
 The first slice follows
 [issue #84](https://github.com/ThinkFlowLab/system1-omni/issues/84): establish
@@ -99,7 +101,7 @@ Pillow: 12.3.0
 av: 16.1.0
 GPU capability: sm_120
 dtype: bfloat16
-system1-omni: 2fd8ce9 (GPU serving and smoke records); parity blocks re-verified verbatim at c9fb2d2
+system1-omni: 2fd8ce9 (GPU serving and smoke records); parity blocks re-verified verbatim at 507c448
 ~~~
 
 FP32 and BF16 small-operator checks passed. Startup memory was approximately
@@ -156,6 +158,8 @@ writes `valen_manifest.json`. Verify the final identity before serving:
 
 ~~~sh
 test "$(git -C "$VALEN_SRC" rev-parse HEAD)" = "$VALEN_SOURCE_REV"
+test -z "$(git -C "$VALEN_SRC" status --porcelain --untracked-files=no)"
+test -z "$(git -C "$VALEN_SRC" ls-files --others --exclude-standard | grep '\.py$')"
 test "$(sha256sum "$VALEN_CKPT/checkpoint.pt" | cut -d' ' -f1)" = "$VALEN_CHECKPOINT_SHA"
 .venv/bin/python - <<'PY'
 import json, os
@@ -173,6 +177,9 @@ print("artifact verification: PASS")
 print(manifest["versions"])
 PY
 ~~~
+
+The pinned checkpoint and base can also be exported to a manifest-described
+safetensors artifact set for non-Python consumers: [export.md](export.md).
 
 ## Start the worker
 
@@ -250,6 +257,60 @@ Observed response, same host as the image fixture:
 }
 ~~~
 
+A yes/no judgment uses `noul`, optionally replacing the reference's fixed
+true/false wording through `criteria`. The complete runnable request is in
+[`example-noul-request.json`](example-noul-request.json); it asks one
+fixed-wording and one custom-wording question against one state:
+
+~~~sh
+curl -sS http://127.0.0.1:8000/v1/systemone \
+  -H 'Content-Type: application/json' \
+  --data-binary @recipe/valen/example-noul-request.json
+~~~
+
+Expected response shape (the observed response for this fixture is recorded
+in the integration pull request):
+
+~~~json
+{
+  "model": "valen-preview-0923",
+  "answers": {
+    "duplicate": {"type": "noul", "noul": "<p(true)>", "probabilities": {"true": "<p(true)>", "false": "<p(false)>"}, "confidence": "<confidence>"},
+    "authorized": {"type": "noul", "noul": "<p(true)>", "probabilities": {"true": "<p(true)>", "false": "<p(false)>"}, "confidence": "<confidence>"}
+  },
+  "usage": {"input_tokens": "<count>", "output_tokens": 0},
+  "internal_usage": {"compute_tokens": "<count>"}
+}
+~~~
+
+A graded assessment uses `score` with an ordered list of 2 to 10 level
+descriptions. The complete runnable request is in
+[`example-score-request.json`](example-score-request.json):
+
+~~~sh
+curl -sS http://127.0.0.1:8000/v1/systemone \
+  -H 'Content-Type: application/json' \
+  --data-binary @recipe/valen/example-score-request.json
+~~~
+
+Expected response shape (the observed response for this fixture is recorded
+in the integration pull request):
+
+~~~json
+{
+  "model": "valen-preview-0923",
+  "answers": {"severity": {
+    "type": "score",
+    "probabilities": {"0": "<p(0)>", "1": "<p(1)>", "2": "<p(2)>"},
+    "score": "<expected level>",
+    "legend": {"0": "<level 0 text>", "1": "<level 1 text>", "2": "<level 2 text>"},
+    "confidence": "<confidence>"
+  }},
+  "usage": {"input_tokens": "<count>", "output_tokens": 0},
+  "internal_usage": {"compute_tokens": "<count>"}
+}
+~~~
+
 ## Start and verify the Rust frontend
 
 ~~~sh
@@ -267,8 +328,8 @@ curl -sS http://127.0.0.1:8080/v1/systemone \
   --data-binary @recipe/valen/example-request.json
 ~~~
 
-The generic `recipe/compare_with_backend.py` also sends `score`/`noul` cases,
-which this worker rejects, so compare the Valen fixture directly:
+The generic `recipe/compare_with_backend.py` also covers `score`/`noul`
+cases; the byte-identical comparison below uses the Valen fixture directly:
 
 ~~~sh
 curl -fsS http://127.0.0.1:8000/v1/systemone \
@@ -282,7 +343,9 @@ cmp /tmp/valen-worker.json /tmp/valen-frontend.json
 
 The validated runs returned 200 from both endpoints with matching JSON content
 types and byte-identical response bodies, for the image fixture above and for
-the text-only example.
+the text-only example. The noul and score fixtures were re-checked the same
+way on the same host: byte-identical through the frontend for all three
+fixtures.
 
 ## Error behavior
 
@@ -309,7 +372,7 @@ python recipe/valen/test_compare_reference.py
 Validated results:
 
 ~~~text
-pytest tests/valen: 29 passed in 0.67s
+pytest tests/valen: 47 passed in 1.21s (at 2192c27, before the export battery)
 compileall: passed
 cargo fmt --all --check: passed
 frontend integration: 12 passed; 0 failed
@@ -335,6 +398,7 @@ max probability delta: 2.7810645453e-08
 confidence delta: 5.5621290906e-08
 decision agreement: PASS
 probability tolerance <= 1e-06: PASS
+confidence tolerance <= 1e-06: PASS
 token accounting: PASS
 ~~~
 
@@ -351,18 +415,24 @@ max probability delta: 2.6866340819e-08
 confidence delta: 5.3732681637e-08
 decision agreement: PASS
 probability tolerance <= 1e-06: PASS
+confidence tolerance <= 1e-06: PASS
 token accounting: PASS
 ~~~
 
 The reference model field is `Valen`; the system1-omni worker deliberately
 uses `valen-preview-0923` as its stable serving identity.
 
-Reproduce with [`compare_reference.py`](compare_reference.py). The script loads
-one pinned model instance and drives each request through two paths: a
-Valen-native record compiled by the pinned `Compiler` and decoded with a plain
-softmax, and the production `frontend.valen.decide` pipeline. The decision
-criteria are exact choice agreement, equal token accounting and the declared
-probability tolerance (default `1e-6`, `--tolerance` to override):
+Reproduce with [`compare_reference.py`](compare_reference.py). Both paths
+share one pinned model instance: a Valen-native record compiled by the pinned
+`Compiler` from the worker's own record rules, against the production
+`frontend.valen.decide` pipeline; `noul` and `score` answers are decoded by
+the pinned reference answer module (`valen.evaluation.inference.answer`). The
+criteria are exact discrete agreement (candidate order, the requested answer
+type, chosen key, score legend), equal token accounting, and the declared
+tolerance (default `1e-6`, `--tolerance` to override) on probabilities,
+confidences and the scalar answer fields (`noul` P(true), `score` expected
+level). An answer whose public `type` drifts from the requested question
+type fails the run instead of skipping the noul/score checks:
 
 ~~~sh
 PYTHONPATH=src .venv/bin/python recipe/valen/compare_reference.py \
@@ -372,11 +442,106 @@ PYTHONPATH=src .venv/bin/python recipe/valen/compare_reference.py \
 PYTHONPATH=src .venv/bin/python recipe/valen/compare_reference.py \
   --valen-source "$VALEN_SRC" --checkpoint "$VALEN_CKPT" \
   --base "$VALEN_BASE" --device cuda --dtype bf16 --case text
+
+PYTHONPATH=src .venv/bin/python recipe/valen/compare_reference.py \
+  --valen-source "$VALEN_SRC" --checkpoint "$VALEN_CKPT" \
+  --base "$VALEN_BASE" --device cuda --dtype bf16 --case noul
+
+PYTHONPATH=src .venv/bin/python recipe/valen/compare_reference.py \
+  --valen-source "$VALEN_SRC" --checkpoint "$VALEN_CKPT" \
+  --base "$VALEN_BASE" --device cuda --dtype bf16 --case score
 ~~~
 
 The image case uses [`example-request.json`](example-request.json); the text
 case uses the recipe's text example unless `--text-body` points elsewhere.
-Both blocks above are verbatim output of the committed tool.
+The `noul` and `score` cases use [`example-noul-request.json`](example-noul-request.json)
+and [`example-score-request.json`](example-score-request.json) unless
+`--noul-body`/`--score-body` point elsewhere; `--case all` runs all four in
+one model load. Both blocks above are verbatim output of the committed tool;
+the `noul` and `score` blocks are recorded in the integration pull request.
+
+## Export parity
+
+The exported artifact set ([`export.md`](export.md)) was compared against the
+original pinned checkpoint stack with
+[`verify_export_parity.py`](verify_export_parity.py) on the same host as the
+records above. The two stacks are loaded serially, each in its own subprocess
+(the ~6.6 GiB BF16 stack does not fit twice in 8 GiB VRAM):
+
+- original: the worker's own `ValenExecutor` build — pinned base,
+  PEFT-wrapped language model with the FP32 LoRA applied unmerged, trained
+  vision-top blocks, merger and head from `checkpoint.pt`;
+- exported: the consumption path the export manifest documents —
+  `Qwen3_5ForConditionalGeneration.from_pretrained(weights/valen-export,
+  dtype=bf16, eager).model`, the language LoRA re-applied through the same
+  peft build the pinned reference uses (every language Linear wrapped at the
+  manifest-declared rank 32 / alpha 64, the 372 FP32 tensors of
+  `lora.safetensors` loaded by key, adapters kept FP32), plus the decision
+  head rebuilt from `head.safetensors` (DecisionHead 2048→256, FP32, no
+  bias), run through the pinned `Valen` class.
+
+Both stacks answer the text example and the image fixture compiled by the
+pinned `Compiler`; the declared gate is exact answer agreement with
+probability deltas ≤ 1e-6. The block below is the verbatim tool output
+(device `cuda:0`, NVIDIA GeForce RTX 5060 Laptop GPU, sm_120, 7.96 GiB,
+torch 2.11.0+cu128; recorded 2026-10-15):
+
+~~~text
+case: text
+logical tokens: 48
+compute tokens: 48
+max probability delta: 0.0000000000e+00
+answer agreement: PASS
+probability tolerance <= 1e-06: PASS
+token accounting: PASS
+
+case: image
+logical tokens: 108
+compute tokens: 108
+max probability delta: 0.0000000000e+00
+answer agreement: PASS
+probability tolerance <= 1e-06: PASS
+token accounting: PASS
+
+device: cuda:0 (NVIDIA GeForce RTX 5060 Laptop GPU (sm_120, 7.96 GiB))
+parity slot filled: weights/valen-export/valen_export.json
+verify_export_parity: ok
+~~~
+
+Per-candidate probabilities (original stack → exported stack, printed by the
+tool's own stage runner):
+
+~~~text
+text/refund: 0.5159630775 0.4840368927 -> 0.5159630775 0.4840368927  (both choose refund)
+image/color: 0.4459854066 0.5540145636 -> 0.4459854066 0.5540145636  (both choose black)
+~~~
+
+Verdict: **the parity gate passes at bit level**. The unmerged export
+answers both fixtures with probabilities identical to the original stack's
+(max delta exactly 0.0 on every candidate), the discrete answers and token
+accounting agree exactly, and the original side matches the committed
+serving records above (0.5159631044… / 0.5540145914…) within the ~3e-8
+worker-vs-reference spread. Both stacks apply the LoRA through
+the same peft 0.18.1 unmerged `Linear.forward` with FP32 adapters, and the
+exported backbone differs from the reference's `from_pretrained` state only
+in tensors that are bit-equal by construction (the trained vision-top and
+merger replacements, and the 36 FP32→BF16 downcasts the reference's own
+BF16 runtime performs at load), so the two forward graphs are numerically
+identical. The verdict — per-case deltas, device, tolerance — is recorded
+with `parity.status = "passed"` in
+`weights/valen-export/valen_export.json`.
+
+Reproduce (the export itself per [`export.md`](export.md) first):
+
+~~~sh
+PYTHONPATH=src .venv/bin/python recipe/valen/verify_export_parity.py \
+  --valen-source "$VALEN_SRC" --checkpoint "$VALEN_CKPT" \
+  --base "$VALEN_BASE" --export weights/valen-export --device cuda
+~~~
+
+The script validates the artifact set and its recorded source pins before
+loading, refuses to overwrite an existing manifest parity record unless
+`--force` is given, and exits 0 only when the gate passes.
 
 ## Troubleshooting and limits
 
@@ -392,4 +557,4 @@ Both blocks above are verbatim output of the committed tool.
 - `/health` is exposed only after model loading and real warmup complete.
 - The memory and smoke-response observations are host-specific; they are not
   general accuracy or performance claims.
-- Video, native execution, `noul`, and `score` remain outside this recipe.
+- Video and native execution remain outside this recipe.
