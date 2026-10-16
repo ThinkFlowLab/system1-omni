@@ -13,7 +13,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .protocol import DEFAULT_SPECIAL_TOKENS, Question, Request, TextState
+from .protocol import (
+    DEFAULT_SPECIAL_TOKENS,
+    NOUL_FALSE_DESCRIPTION,
+    NOUL_TRUE_DESCRIPTION,
+    Question,
+    Request,
+    TextState,
+)
 
 
 @dataclass(frozen=True)
@@ -83,6 +90,47 @@ class ValenProcessor:
         )
 
 
+def question_record(question: Question) -> dict[str, Any]:
+    """Build the pinned compiler's question record for one wire question.
+
+    ``noul`` without custom wording compiles as the reference's native noul
+    record, whose candidate descriptions the pinned schema fixes. Custom
+    true/false wording cannot flow through a noul record (the pinned
+    ``candidates`` ignores noul criteria), so it compiles as a choice record
+    keyed ``true``/``false`` with the unspecified sides filled from the
+    reference's fixed wording — the same single-branch, two-candidate
+    structure. ``score`` passes its ordered level descriptions straight
+    through; the pinned schema assigns the level keys ``"0"``…
+    """
+
+    if question.kind == "noul":
+        descriptions = [
+            description if description is not None else fixed
+            for description, fixed in zip(
+                question.descriptions,
+                (NOUL_TRUE_DESCRIPTION, NOUL_FALSE_DESCRIPTION),
+            )
+        ]
+        if tuple(descriptions) == (NOUL_TRUE_DESCRIPTION, NOUL_FALSE_DESCRIPTION):
+            return {"type": "noul", "instructions": question.instructions}
+        return {
+            "type": "choice",
+            "instructions": question.instructions,
+            "criteria": dict(zip(question.keys, descriptions)),
+        }
+    if question.kind == "score":
+        return {
+            "type": "score",
+            "instructions": question.instructions,
+            "criteria": list(question.descriptions),
+        }
+    return {
+        "type": "choice",
+        "instructions": question.instructions,
+        "criteria": dict(zip(question.keys, question.descriptions)),
+    }
+
+
 def prepare_request(request: Request, media_root: Path) -> PreparedInput:
     """Materialize one validated request into the pinned Valen record format."""
 
@@ -122,12 +170,7 @@ def prepare_request(request: Request, media_root: Path) -> PreparedInput:
         }
         assets = [{"path": image_path.name, "sha256": image_sha256}]
     criteria = {
-        question.name: {
-            "type": "choice",
-            "instructions": question.instructions,
-            "criteria": dict(zip(question.keys, question.descriptions)),
-        }
-        for question in request.questions
+        question.name: question_record(question) for question in request.questions
     }
     record = {
         "request": {"state": state, "questions": criteria},

@@ -17,19 +17,21 @@ The validated slice is:
 - the Python reference worker behind the Rust frontend;
 - text state (a non-empty string; objects and arrays are serialized to JSON
   text) or one inline PNG or JPEG image in `state.image`;
-- textual instructions and criteria for `choice` questions;
+- textual instructions and criteria for `choice`, `noul`, and `score`
+  questions, freely mixed in one request against one shared state;
 - BF16 CUDA inference with the pinned Preview checkpoint. Image and text
   state are serving-validated on the GPU host, with recorded reference parity
-  for both.
+  for all three question types.
 
-The current worker does not implement `noul`, `score`, video, multiple images,
-remote image URLs, or a native Rust/CUDA Valen executor.
+The current worker does not implement video, multiple images, remote image
+URLs, or a native Rust/CUDA Valen executor.
 
 The current protocol limits requests to an 8 MiB JSON body, one PNG/JPEG image
 of at most 4 MiB, 2048 pixels per side, 1,048,576 pixels total, and a 200:1
 maximum aspect ratio. Text state is limited to 16,384 characters, the same
 limit as combined instruction and criterion text. A request may contain at
-most 8 questions and 255 candidates per question.
+most 8 questions, 255 named candidates per `choice` question, and an ordered
+list of 2 to 10 level descriptions per `score` question.
 
 The first slice follows
 [issue #84](https://github.com/ThinkFlowLab/system1-omni/issues/84): establish
@@ -99,7 +101,7 @@ Pillow: 12.3.0
 av: 16.1.0
 GPU capability: sm_120
 dtype: bfloat16
-system1-omni: 2fd8ce9 (GPU serving and smoke records); parity blocks re-verified verbatim at c9fb2d2
+system1-omni: 2fd8ce9 (GPU serving and smoke records); parity blocks re-verified verbatim at 507c448
 ~~~
 
 FP32 and BF16 small-operator checks passed. Startup memory was approximately
@@ -250,6 +252,60 @@ Observed response, same host as the image fixture:
 }
 ~~~
 
+A yes/no judgment uses `noul`, optionally replacing the reference's fixed
+true/false wording through `criteria`. The complete runnable request is in
+[`example-noul-request.json`](example-noul-request.json); it asks one
+fixed-wording and one custom-wording question against one state:
+
+~~~sh
+curl -sS http://127.0.0.1:8000/v1/systemone \
+  -H 'Content-Type: application/json' \
+  --data-binary @recipe/valen/example-noul-request.json
+~~~
+
+Expected response shape (the observed response for this fixture is recorded
+in the integration pull request):
+
+~~~json
+{
+  "model": "valen-preview-0923",
+  "answers": {
+    "duplicate": {"type": "noul", "noul": 0.0, "probabilities": {"true": 0.0, "false": 0.0}, "confidence": 0.0},
+    "authorized": {"type": "noul", "noul": 0.0, "probabilities": {"true": 0.0, "false": 0.0}, "confidence": 0.0}
+  },
+  "usage": {"input_tokens": 0, "output_tokens": 0},
+  "internal_usage": {"compute_tokens": 0}
+}
+~~~
+
+A graded assessment uses `score` with an ordered list of 2 to 10 level
+descriptions. The complete runnable request is in
+[`example-score-request.json`](example-score-request.json):
+
+~~~sh
+curl -sS http://127.0.0.1:8000/v1/systemone \
+  -H 'Content-Type: application/json' \
+  --data-binary @recipe/valen/example-score-request.json
+~~~
+
+Expected response shape (the observed response for this fixture is recorded
+in the integration pull request):
+
+~~~json
+{
+  "model": "valen-preview-0923",
+  "answers": {"severity": {
+    "type": "score",
+    "probabilities": {"0": 0.0, "1": 0.0, "2": 0.0},
+    "score": 0.0,
+    "legend": {"0": "level 0 text", "1": "level 1 text", "2": "level 2 text"},
+    "confidence": 0.0
+  }},
+  "usage": {"input_tokens": 0, "output_tokens": 0},
+  "internal_usage": {"compute_tokens": 0}
+}
+~~~
+
 ## Start and verify the Rust frontend
 
 ~~~sh
@@ -267,8 +323,8 @@ curl -sS http://127.0.0.1:8080/v1/systemone \
   --data-binary @recipe/valen/example-request.json
 ~~~
 
-The generic `recipe/compare_with_backend.py` also sends `score`/`noul` cases,
-which this worker rejects, so compare the Valen fixture directly:
+The generic `recipe/compare_with_backend.py` also covers `score`/`noul`
+cases; the byte-identical comparison below uses the Valen fixture directly:
 
 ~~~sh
 curl -fsS http://127.0.0.1:8000/v1/systemone \
@@ -282,7 +338,9 @@ cmp /tmp/valen-worker.json /tmp/valen-frontend.json
 
 The validated runs returned 200 from both endpoints with matching JSON content
 types and byte-identical response bodies, for the image fixture above and for
-the text-only example.
+the text-only example. The noul and score fixtures were re-checked the same
+way on the same host: byte-identical through the frontend for all three
+fixtures.
 
 ## Error behavior
 
@@ -309,7 +367,7 @@ python recipe/valen/test_compare_reference.py
 Validated results:
 
 ~~~text
-pytest tests/valen: 29 passed in 0.67s
+pytest tests/valen: 47 passed in 1.21s
 compileall: passed
 cargo fmt --all --check: passed
 frontend integration: 12 passed; 0 failed
@@ -335,6 +393,7 @@ max probability delta: 2.7810645453e-08
 confidence delta: 5.5621290906e-08
 decision agreement: PASS
 probability tolerance <= 1e-06: PASS
+confidence tolerance <= 1e-06: PASS
 token accounting: PASS
 ~~~
 
@@ -351,18 +410,24 @@ max probability delta: 2.6866340819e-08
 confidence delta: 5.3732681637e-08
 decision agreement: PASS
 probability tolerance <= 1e-06: PASS
+confidence tolerance <= 1e-06: PASS
 token accounting: PASS
 ~~~
 
 The reference model field is `Valen`; the system1-omni worker deliberately
 uses `valen-preview-0923` as its stable serving identity.
 
-Reproduce with [`compare_reference.py`](compare_reference.py). The script loads
-one pinned model instance and drives each request through two paths: a
-Valen-native record compiled by the pinned `Compiler` and decoded with a plain
-softmax, and the production `frontend.valen.decide` pipeline. The decision
-criteria are exact choice agreement, equal token accounting and the declared
-probability tolerance (default `1e-6`, `--tolerance` to override):
+Reproduce with [`compare_reference.py`](compare_reference.py). Both paths
+share one pinned model instance: a Valen-native record compiled by the pinned
+`Compiler` from the worker's own record rules, against the production
+`frontend.valen.decide` pipeline; `noul` and `score` answers are decoded by
+the pinned reference answer module (`valen.evaluation.inference.answer`). The
+criteria are exact discrete agreement (candidate order, the requested answer
+type, chosen key, score legend), equal token accounting, and the declared
+tolerance (default `1e-6`, `--tolerance` to override) on probabilities,
+confidences and the scalar answer fields (`noul` P(true), `score` expected
+level). An answer whose public `type` drifts from the requested question
+type fails the run instead of skipping the noul/score checks:
 
 ~~~sh
 PYTHONPATH=src .venv/bin/python recipe/valen/compare_reference.py \
@@ -372,11 +437,23 @@ PYTHONPATH=src .venv/bin/python recipe/valen/compare_reference.py \
 PYTHONPATH=src .venv/bin/python recipe/valen/compare_reference.py \
   --valen-source "$VALEN_SRC" --checkpoint "$VALEN_CKPT" \
   --base "$VALEN_BASE" --device cuda --dtype bf16 --case text
+
+PYTHONPATH=src .venv/bin/python recipe/valen/compare_reference.py \
+  --valen-source "$VALEN_SRC" --checkpoint "$VALEN_CKPT" \
+  --base "$VALEN_BASE" --device cuda --dtype bf16 --case noul
+
+PYTHONPATH=src .venv/bin/python recipe/valen/compare_reference.py \
+  --valen-source "$VALEN_SRC" --checkpoint "$VALEN_CKPT" \
+  --base "$VALEN_BASE" --device cuda --dtype bf16 --case score
 ~~~
 
 The image case uses [`example-request.json`](example-request.json); the text
 case uses the recipe's text example unless `--text-body` points elsewhere.
-Both blocks above are verbatim output of the committed tool.
+The `noul` and `score` cases use [`example-noul-request.json`](example-noul-request.json)
+and [`example-score-request.json`](example-score-request.json) unless
+`--noul-body`/`--score-body` point elsewhere; `--case all` runs all four in
+one model load. Both blocks above are verbatim output of the committed tool;
+the `noul` and `score` blocks are recorded in the integration pull request.
 
 ## Troubleshooting and limits
 
@@ -392,4 +469,4 @@ Both blocks above are verbatim output of the committed tool.
 - `/health` is exposed only after model loading and real warmup complete.
 - The memory and smoke-response observations are host-specific; they are not
   general accuracy or performance claims.
-- Video, native execution, `noul`, and `score` remain outside this recipe.
+- Video and native execution remain outside this recipe.

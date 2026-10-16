@@ -1,0 +1,18 @@
+{
+  "model": "valen-preview-0923",
+  "state": "The card was charged twice for one order.",
+  "questions": {
+    "duplicate": {
+      "type": "noul",
+      "instructions": "Was the card charged twice for one order?"
+    },
+    "authorized": {
+      "type": "noul",
+      "instructions": "Did the customer authorize both charges?",
+      "criteria": {
+        "true": "Both charges were authorized by the customer.",
+        "false": "At least one charge was unauthorized."
+      }
+    }
+  }
+}

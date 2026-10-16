@@ -11,6 +11,7 @@ deliberately not configurable for tests.
 from __future__ import annotations
 
 import json
+import math
 import threading
 from http.client import HTTPConnection
 
@@ -162,6 +163,43 @@ def test_client_errors_map_to_their_status_and_detail(server):
     value["questions"]["move"]["instructions"] = "  "
     status, _, raw = post(server, json.dumps(value).encode("utf-8"))
     assert status == 422 and "nonempty" in json.loads(raw)["detail"]
+
+
+def test_noul_and_score_questions_are_served_over_http():
+    executor = FakeExecutor(
+        ExecutorOutput(((0.0, 1.0), (math.log(7.0), math.log(2.0), 0.0)), 5, 11)
+    )
+    mixed = start(executor)
+    try:
+        value = body(
+            state="The card was charged twice for one order.",
+            questions={
+                "ask": {"type": "noul", "instructions": "Was the card charged twice?"},
+                "grade": {
+                    "type": "score",
+                    "instructions": "Grade the severity.",
+                    "criteria": ["No error", "A minor error", "A major error"],
+                },
+            },
+        )
+        status, _, raw = post(mixed, json.dumps(value).encode("utf-8"))
+        assert status == 200
+        result = json.loads(raw)
+        assert result["answers"]["ask"]["type"] == "noul"
+        assert result["answers"]["grade"]["type"] == "score"
+        assert result["internal_usage"] == {"compute_tokens": 11}
+    finally:
+        stop(mixed)
+
+
+def test_invalid_score_levels_map_to_422(server):
+    value = body(
+        questions={
+            "grade": {"type": "score", "instructions": "Grade.", "criteria": ["only"]}
+        }
+    )
+    status, _, raw = post(server, json.dumps(value).encode("utf-8"))
+    assert status == 422 and "2 to 10" in json.loads(raw)["detail"]
 
 
 def test_busy_worker_returns_503(server):

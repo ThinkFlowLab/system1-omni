@@ -25,6 +25,17 @@ MAX_ASPECT_RATIO = 200
 MAX_QUESTIONS = 8
 MAX_OPTIONS = 255
 MAX_TEXT = 16384
+MIN_SCORE_LEVELS = 2
+MAX_SCORE_LEVELS = 10
+
+QUESTION_TYPES = ("choice", "noul", "score")
+
+# Verbatim from the pinned valen.data.schema.candidates noul wording at
+# revision 750bfcfbb48a5275534a9c912257ebe83ca57a97; the compiler emits these
+# descriptions for every noul question, so the worker reuses them whenever the
+# wire leaves a side unspecified.
+NOUL_TRUE_DESCRIPTION = "True / 是：满足问题中的条件。"
+NOUL_FALSE_DESCRIPTION = "False / 否：不满足问题中的条件。"
 
 DEFAULT_SPECIAL_TOKENS = (
     "<|image_pad|>",
@@ -68,10 +79,19 @@ class TextState:
 
 @dataclass(frozen=True)
 class Question:
+    """One validated wire question.
+
+    ``keys`` are the candidate names the pinned compiler assigns: wire option
+    keys for ``choice``, ``true``/``false`` for ``noul``, and the level
+    indices ``"0"``.. for ``score``. A ``None`` description marks a ``noul``
+    side left to the reference's fixed wording.
+    """
+
     name: str
     instructions: str
     keys: tuple[str, ...]
-    descriptions: tuple[str, ...]
+    descriptions: tuple[str | None, ...]
+    kind: str = "choice"
 
 
 @dataclass(frozen=True)
@@ -225,8 +245,11 @@ def parse_request(value: dict[str, Any], special_tokens=DEFAULT_SPECIAL_TOKENS) 
             "criteria",
         }:
             raise RequestError(f"question {name!r} contains unsupported fields")
-        if question.get("type") != "choice":
-            raise RequestError(f"question {name!r}: only choice is supported")
+        kind = question.get("type")
+        if kind not in QUESTION_TYPES:
+            raise RequestError(
+                f"question {name!r}: type must be one of {', '.join(QUESTION_TYPES)}"
+            )
         if "instructions" not in question:
             raise RequestError(f"question {name!r}: instructions is required")
         instructions = _text(
@@ -234,34 +257,83 @@ def parse_request(value: dict[str, Any], special_tokens=DEFAULT_SPECIAL_TOKENS) 
         )
         if not instructions.strip():
             raise RequestError(f"question {name!r}: instructions must be nonempty")
-        criteria = question.get("criteria")
-        if not isinstance(criteria, dict) or not 1 <= len(criteria) <= MAX_OPTIONS:
-            raise RequestError(
-                f"question {name!r}: choice requires 1 to {MAX_OPTIONS} options"
-            )
         keys: list[str] = []
-        descriptions: list[str] = []
-        for key, label in criteria.items():
-            if not isinstance(key, str) or not key.strip() or len(key) > 256:
-                raise RequestError("option keys must be nonempty and at most 256 characters")
-            if any(token in key for token in special_tokens):
-                # Candidate names enter the prompt, so keys get the same
-                # control-token guard as instructions and descriptions.
+        descriptions: list[str | None] = []
+        if kind == "noul":
+            keys = ["true", "false"]
+            criteria = question.get("criteria")
+            if criteria is not None:
+                if not isinstance(criteria, dict) or not criteria:
+                    raise RequestError(
+                        f"question {name!r}: noul criteria must describe true and/or false"
+                    )
+                if set(criteria) - {"true", "false"}:
+                    raise RequestError(
+                        f"question {name!r}: noul criteria must describe true and/or false"
+                    )
+            for key in ("true", "false"):
+                label = (criteria or {}).get(key)
+                # None keeps the reference's fixed candidate wording; the
+                # preprocess layer substitutes it when building the record.
+                description = None
+                if label is not None:
+                    description = _text(
+                        label, f"question {name!r} criteria {key!r}", special_tokens
+                    )
+                    if not description.strip():
+                        raise RequestError(
+                            f"question {name!r}: criterion {key!r} must be nonempty"
+                        )
+                descriptions.append(description)
+        elif kind == "score":
+            criteria = question.get("criteria")
+            if (
+                not isinstance(criteria, list)
+                or not MIN_SCORE_LEVELS <= len(criteria) <= MAX_SCORE_LEVELS
+            ):
                 raise RequestError(
-                    f"question {name!r}: option key {key!r} contains an"
-                    " unsupported tokenizer control token"
+                    f"question {name!r}: score requires an ordered list of"
+                    f" {MIN_SCORE_LEVELS} to {MAX_SCORE_LEVELS} level descriptions"
                 )
-            keys.append(key)
-            description = (
-                key
-                if label is None
-                else _text(label, f"question {name!r} criteria {key!r}", special_tokens)
-            )
-            if not description.strip():
-                raise RequestError(f"question {name!r}: criterion {key!r} must be nonempty")
-            descriptions.append(description)
-        if len(instructions) + sum(map(len, descriptions)) > MAX_TEXT:
+            keys = [str(index) for index in range(len(criteria))]
+            for index, label in enumerate(criteria):
+                description = _text(
+                    label, f"question {name!r} level {index}", special_tokens
+                )
+                if not description.strip():
+                    raise RequestError(
+                        f"question {name!r}: level {index} must be nonempty"
+                    )
+                descriptions.append(description)
+        else:
+            criteria = question.get("criteria")
+            if not isinstance(criteria, dict) or not 1 <= len(criteria) <= MAX_OPTIONS:
+                raise RequestError(
+                    f"question {name!r}: choice requires 1 to {MAX_OPTIONS} options"
+                )
+            for key, label in criteria.items():
+                if not isinstance(key, str) or not key.strip() or len(key) > 256:
+                    raise RequestError("option keys must be nonempty and at most 256 characters")
+                if any(token in key for token in special_tokens):
+                    # Candidate names enter the prompt, so keys get the same
+                    # control-token guard as instructions and descriptions.
+                    raise RequestError(
+                        f"question {name!r}: option key {key!r} contains an"
+                        " unsupported tokenizer control token"
+                    )
+                keys.append(key)
+                description = (
+                    key
+                    if label is None
+                    else _text(label, f"question {name!r} criteria {key!r}", special_tokens)
+                )
+                if not description.strip():
+                    raise RequestError(f"question {name!r}: criterion {key!r} must be nonempty")
+                descriptions.append(description)
+        if len(instructions) + sum(len(d) for d in descriptions if d is not None) > MAX_TEXT:
             raise RequestError("combined question text exceeds 16384 characters")
-        parsed.append(Question(name, instructions, tuple(keys), tuple(descriptions)))
+        parsed.append(
+            Question(name, instructions, tuple(keys), tuple(descriptions), kind)
+        )
 
     return Request(MODEL_NAME, _state(value["state"], special_tokens), tuple(parsed))
