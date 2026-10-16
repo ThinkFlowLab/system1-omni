@@ -81,6 +81,10 @@ def main():
                         records.flush()
                         assert got["rows"] == baseline[i]["rows"], (mode["name"], cases[i]["name"], "measured rows")
                         compare(reference[i]["response"], got["response"])
+                if mode.get("require_replays"):
+                    assert got["graph"]["enabled"] and got["graph"]["captures"] > 0
+                    assert got["graph"]["replays"] >= len(samples)
+                    assert got["graph"]["fallbacks"] == 0
                 memory = subprocess.check_output(["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"], text=True).strip()
                 summary = {"name": mode["name"], "startup_to_empty_diagnostic_ms": startup_ms,
                            "checks": checks, "samples": samples, "device_used_mib_at_end": int(memory),

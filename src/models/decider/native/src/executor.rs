@@ -8,7 +8,7 @@ use anyhow::{Context, Result, ensure};
 use half::bf16;
 use omni_qwen3_5_native::{
     cuda::{self, DeviceBuffer, Stream},
-    model::Model,
+    model::{GraphStats, Model},
 };
 use omni_runtime::SerialScheduler;
 use std::{
@@ -188,6 +188,7 @@ pub struct Executor {
     loaded: Arc<Mutex<Option<Loaded>>>,
     labels: Vec<u32>,
     ready: Arc<AtomicBool>,
+    graph_stats: Arc<Mutex<GraphStats>>,
 }
 impl Executor {
     pub(crate) async fn load(
@@ -196,14 +197,11 @@ impl Executor {
         checkpoint: Checkpoint,
         labels: Vec<u32>,
         batching: BatchLimits,
+        graph: bool,
     ) -> Result<Self> {
-        ensure!(
-            std::env::var("CUA_S1_GRAPH").as_deref() != Ok("1"),
-            "Decider eager execution requires CUA_S1_GRAPH unset or 0"
-        );
         let (dir, library) = (dir.to_owned(), library.to_owned());
         let loaded = tokio::task::spawn_blocking(move || -> Result<Loaded> {
-            let model = Model::load(&dir, &library)?;
+            let model = Model::load_with_graph(&dir, &library, graph)?;
             let head = Head::new(&checkpoint.head, batching.max_rows())?;
             Ok(Loaded {
                 model,
@@ -212,11 +210,19 @@ impl Executor {
             })
         })
         .await??;
+        let graph_stats = Arc::new(Mutex::new(loaded.model.graph_stats()));
         Ok(Self {
+            graph_stats,
             loaded: Arc::new(Mutex::new(Some(loaded))),
             labels,
             ready: Arc::new(AtomicBool::new(true)),
         })
+    }
+    pub fn graph_stats(&self) -> GraphStats {
+        *self
+            .graph_stats
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
     }
     pub fn is_ready(&self) -> bool {
         self.ready.load(Ordering::Acquire)
@@ -234,20 +240,31 @@ impl Executor {
         if rows.is_empty() {
             return Ok(Vec::new());
         }
-        let (loaded, ready) = (self.loaded.clone(), self.ready.clone());
+        let (loaded, ready, stats) = (
+            self.loaded.clone(),
+            self.ready.clone(),
+            self.graph_stats.clone(),
+        );
         scheduler
             .run(move || {
                 let mut guard = match loaded.lock() {
                     Ok(guard) => guard,
                     Err(_) => {
+                        let mut snapshot = stats.lock().unwrap_or_else(|error| error.into_inner());
+                        snapshot.enabled = false;
+                        snapshot.cached_shapes = 0;
                         ready.store(false, Ordering::Release);
                         return Err(anyhow::anyhow!("poisoned executor"));
                     }
                 };
-                let result = guard
-                    .as_mut()
-                    .context("executor unavailable")?
-                    .execute(&rows);
+                let loaded = guard.as_mut().context("executor unavailable")?;
+                let result = loaded.execute(&rows);
+                let mut snapshot = loaded.model.graph_stats();
+                if result.is_err() {
+                    snapshot.enabled = false;
+                    snapshot.cached_shapes = 0;
+                }
+                *stats.lock().unwrap_or_else(|error| error.into_inner()) = snapshot;
                 if result.is_err() {
                     ready.store(false, Ordering::Release);
                     // Loaded::execute synchronized both streams, including failure paths.

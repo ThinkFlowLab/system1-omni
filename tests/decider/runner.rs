@@ -28,7 +28,7 @@ async fn main() -> Result<()> {
         let response = prepared.context.finish(logits.clone())?;
         println!(
             "{}",
-            json!({"rows":rows,"logits":logits,"response":response})
+            json!({"rows":rows,"logits":logits,"response":response,"graph":engine.health()["graph"]})
         );
     }
     Ok(())

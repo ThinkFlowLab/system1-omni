@@ -554,6 +554,18 @@ impl Scratch {
     }
 }
 
+/// Cumulative backbone capture/replay evidence, distinct from the decision response.
+#[derive(Clone, Copy, Debug, Default, serde::Serialize)]
+pub struct GraphStats {
+    pub requested: bool,
+    pub enabled: bool,
+    pub captures: u64,
+    pub replays: u64,
+    pub fallbacks: u64,
+    pub invalidations: u64,
+    pub cached_shapes: usize,
+}
+
 /// The cached device-side state of one token prefix (rows `[0, len)`) for the R2d
 /// hybrid path: per full-attention layer the post-prep K rows plus the pre-GEMM V
 /// rows, per Gated DeltaNet layer the float32 recurrent state and the three
@@ -600,6 +612,7 @@ pub struct Model {
     scratch: Option<Scratch>,
     /// Opt-in replay with at most 64 captures per mode, keyed by sequence lengths.
     graph_enabled: bool,
+    graph_stats: GraphStats,
     graphs: VecDeque<(Vec<usize>, cuda::Graph)>,
     mm_graphs: VecDeque<(Vec<usize>, cuda::Graph)>,
 }
@@ -610,16 +623,30 @@ unsafe impl Send for Model {}
 
 impl Drop for Model {
     fn drop(&mut self) {
+        let _ = cuda::set_device(0);
+        let _ = cuda::synchronize(self.stream);
         self.graphs.clear();
         self.mm_graphs.clear();
         // SAFETY: created by cs1_gemm_create and not destroyed before.
-        unsafe { (cuda::api().cs1_gemm_destroy)(self.gemm) };
+        unsafe {
+            (cuda::api().cs1_gemm_destroy)(self.gemm);
+            (cuda::api().cs1_stream_destroy)(self.stream);
+        };
     }
 }
 
 impl Model {
     /// Load the CUDA library and the weights.
     pub fn load(dir: &Path, library: &Path) -> Result<Self> {
+        Self::load_with_graph(
+            dir,
+            library,
+            std::env::var("CUA_S1_GRAPH").as_deref() == Ok("1"),
+        )
+    }
+
+    /// Explicit mode for model adapters; does not read another worker's switch.
+    pub fn load_with_graph(dir: &Path, library: &Path, graph: bool) -> Result<Self> {
         let cfg = Config::load(dir)?;
         cuda::load(library)?;
         cuda::set_device(0)?;
@@ -692,11 +719,23 @@ impl Model {
             stream,
             gemm,
             scratch: None,
-            graph_enabled: std::env::var("CUA_S1_GRAPH").as_deref() == Ok("1"),
+            graph_enabled: graph,
+            graph_stats: GraphStats {
+                requested: graph,
+                ..GraphStats::default()
+            },
             graphs: VecDeque::new(),
             mm_graphs: VecDeque::new(),
         };
         Ok(model)
+    }
+
+    pub fn graph_stats(&self) -> GraphStats {
+        GraphStats {
+            enabled: self.graph_enabled,
+            cached_shapes: self.graphs.len() + self.mm_graphs.len(),
+            ..self.graph_stats
+        }
     }
 
     fn gemm(&self, s: &Scratch, x: usize, w: &Tensor, y: usize, m: usize) -> Result<()> {
@@ -747,6 +786,10 @@ impl Model {
     fn prepare_scratch(&mut self, t: usize) -> Result<()> {
         cuda::set_device(0)?;
         if self.scratch.as_ref().is_none_or(|s| t > s.cap) {
+            cuda::synchronize(self.stream)?;
+            if !self.graphs.is_empty() || !self.mm_graphs.is_empty() {
+                self.graph_stats.invalidations += 1;
+            }
             self.graphs.clear();
             self.mm_graphs.clear();
             self.scratch = None;
@@ -797,6 +840,7 @@ impl Model {
         if self.graph_enabled {
             if let Some((_, graph)) = self.graphs.iter().find(|(shape, _)| *shape == lengths) {
                 graph.launch(self.stream)?;
+                self.graph_stats.replays += 1;
                 if std::env::var("CUA_S1_GRAPH_TRACE").as_deref() == Ok("1") {
                     eprintln!("CUA_S1_GRAPH mode=text event=replay tokens={t}");
                 }
@@ -806,7 +850,7 @@ impl Model {
                 self.run(s, &lengths, false)?;
                 cuda::synchronize(self.stream)?;
                 let captured = cuda::Graph::capture(self.stream, || self.run(s, &lengths, false));
-                self.cache_graph(&lengths, false, captured);
+                self.cache_graph(&lengths, false, captured)?;
             }
         } else {
             self.run(s, &lengths, false)?;
@@ -849,6 +893,7 @@ impl Model {
                 .find(|(shape, _)| shape.as_slice() == [t])
             {
                 graph.launch(self.stream)?;
+                self.graph_stats.replays += 1;
                 if std::env::var("CUA_S1_GRAPH_TRACE").as_deref() == Ok("1") {
                     eprintln!("CUA_S1_GRAPH mode=multimodal event=replay tokens={t}");
                 }
@@ -858,7 +903,7 @@ impl Model {
                 self.run(s, &[t], true)?;
                 cuda::synchronize(self.stream)?;
                 let captured = cuda::Graph::capture(self.stream, || self.run(s, &[t], true));
-                self.cache_graph(&[t], true, captured);
+                self.cache_graph(&[t], true, captured)?;
             }
         } else {
             self.run(s, &[t], true)?;
@@ -867,16 +912,23 @@ impl Model {
     }
 
     /// Both modes retain the eager miss result; capture records without executing.
-    fn cache_graph(&mut self, lengths: &[usize], multimodal: bool, captured: Result<cuda::Graph>) {
+    fn cache_graph(
+        &mut self,
+        lengths: &[usize],
+        multimodal: bool,
+        captured: Result<cuda::Graph>,
+    ) -> Result<()> {
         let mode = if multimodal { "multimodal" } else { "text" };
         match captured {
             Ok(graph) => {
+                self.graph_stats.captures += 1;
                 let cache = if multimodal {
                     &mut self.mm_graphs
                 } else {
                     &mut self.graphs
                 };
                 if cache.len() == 64 {
+                    cuda::synchronize(self.stream)?;
                     cache.pop_front();
                 }
                 cache.push_back((lengths.to_vec(), graph));
@@ -889,11 +941,13 @@ impl Model {
                 eprintln!(
                     "CUDA Graph capture failed in {mode} mode; using eager execution: {error:#}"
                 );
+                self.graph_stats.fallbacks += 1;
                 self.graph_enabled = false;
                 self.graphs.clear();
                 self.mm_graphs.clear();
             }
         }
+        Ok(())
     }
 
     fn upload_positions(&self, s: &Scratch, positions: [&[i64]; 3]) -> Result<()> {

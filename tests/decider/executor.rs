@@ -85,3 +85,30 @@ fn batched_head_preserves_rows_counts_and_bf16_rounding() {
     b[0] = f32::NAN;
     assert!(head.project_batch(&[&a, &b], &[2, 2]).is_err());
 }
+
+#[test]
+fn graph_snapshot_does_not_wait_for_model_lock_and_survives_retirement() {
+    let executor = std::sync::Arc::new(Executor {
+        loaded: Arc::new(Mutex::new(None)),
+        labels: vec![],
+        ready: Arc::new(AtomicBool::new(false)),
+        graph_stats: Arc::new(Mutex::new(GraphStats {
+            requested: true,
+            captures: 2,
+            replays: 3,
+            ..GraphStats::default()
+        })),
+    });
+    let lock = executor.loaded.lock().unwrap();
+    let copy = executor.clone();
+    let (send, recv) = std::sync::mpsc::channel();
+    let reader = std::thread::spawn(move || send.send(copy.graph_stats()).unwrap());
+    let result = recv.recv_timeout(std::time::Duration::from_secs(1));
+    drop(lock);
+    reader.join().unwrap();
+    let stats = result.expect("health waited on the execution lock");
+    assert!(stats.requested);
+    assert!(!stats.enabled);
+    assert_eq!(stats.captures, 2);
+    assert_eq!(stats.replays, 3);
+}

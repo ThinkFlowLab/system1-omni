@@ -16,12 +16,26 @@ pub struct Engine {
 }
 impl Engine {
     pub async fn load(dir: &Path, library: &Path) -> Result<Self> {
-        Self::load_with_batch(dir, library, BatchLimits::from_env()?).await
+        Self::load_with_options(
+            dir,
+            library,
+            BatchLimits::from_env()?,
+            crate::options::graph_env()?,
+        )
+        .await
     }
     pub async fn load_with_batch(
         dir: &Path,
         library: &Path,
         batching: BatchLimits,
+    ) -> Result<Self> {
+        Self::load_with_options(dir, library, batching, false).await
+    }
+    pub async fn load_with_options(
+        dir: &Path,
+        library: &Path,
+        batching: BatchLimits,
+        graph: bool,
     ) -> Result<Self> {
         let directory = dir.to_owned();
         let (processor,checkpoint,mut metadata) = tokio::task::spawn_blocking(move || -> Result<_> {
@@ -33,7 +47,7 @@ impl Engine {
             Ok((processor,checkpoint,metadata))
         }).await??;
         let labels = processor.labels().iter().map(|label| label.id).collect();
-        let executor = Executor::load(dir, library, checkpoint, labels, batching).await?;
+        let executor = Executor::load(dir, library, checkpoint, labels, batching, graph).await?;
         metadata["batch_limits"] =
             json!({"rows":batching.max_rows(),"tokens":batching.max_tokens()});
         let engine = Self {
@@ -56,6 +70,15 @@ impl Engine {
     }
     pub fn health(&self) -> Value {
         let mut metadata = self.metadata.clone();
+        let stats = self.executor.graph_stats();
+        metadata["execution"] = json!(if !self.executor.is_ready() {
+            "unavailable"
+        } else if stats.enabled {
+            "graph"
+        } else {
+            "eager"
+        });
+        metadata["graph"] = json!(stats);
         metadata["status"] = json!(if self.executor.is_ready() {
             "ready"
         } else {

@@ -16,13 +16,14 @@ spec.loader.exec_module(module)
 
 
 class WorkerLaunch(unittest.TestCase):
-    def run_cli(self, batched, inherited):
+    def run_cli(self, batched, inherited, options=(), retired_health=None):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory)
             args = ["verify_retirement.py", "--worker", "worker", "--model", "model",
                     "--wrapper", "wrapper.so", "--output", str(output)]
             if batched:
                 args.append("--batched")
+            args.extend(options)
 
             def launch(*args, **kwargs):
                 # Simulate external GPU evidence so this host-only test can
@@ -36,7 +37,7 @@ class WorkerLaunch(unittest.TestCase):
 
             child = mock.Mock(pid=123)
             replies = [(503, b'{"detail":"model inference failed"}'),
-                       (503, b'{"status":"unavailable"}'),
+                       (503, json.dumps(retired_health or {"status": "unavailable"}).encode()),
                        (503, b'{"detail":"model unavailable"}'),
                        (503, b'{"detail":"model unavailable"}')]
             with mock.patch.dict(os.environ, inherited, clear=True), \
@@ -74,6 +75,17 @@ class WorkerLaunch(unittest.TestCase):
                      "CUA_S1_GRAPH": "1", "DECIDER_GRAPH": "1",
                      "DECIDER_PREFIX": "1", "DECIDER_FIXED": "1"}
         self.assert_mode(self.run_cli(False, inherited), 1)
+
+    def test_explicit_graph_mode_preserves_batched_limits(self):
+        health = {"status": "unavailable", "execution": "unavailable",
+                  "graph": {"requested": True, "enabled": False, "captures": 1}}
+        env = self.run_cli(True, {"DECIDER_PREFIX": "auto", "DECIDER_FIXED": "1"},
+                           options=["--graph"], retired_health=health)
+        self.assertEqual(env["DECIDER_GRAPH"], "1")
+        self.assertEqual(env["DECIDER_BATCH_MAX_ROWS"], "2")
+        self.assertEqual(env["DECIDER_BATCH_MAX_TOKENS"], "4096")
+        for name in ("CUA_S1_GRAPH", "DECIDER_PREFIX", "DECIDER_FIXED"):
+            self.assertEqual(env[name], "0", name)
 
 
 if __name__ == "__main__":
