@@ -39,6 +39,7 @@ def main():
               "timing": "wall roundtrip: request JSON encoding/write through diagnostic stdout JSON decode; includes CPU preparation, GPU synchronization and serialization; excludes startup and one workload warmup; concurrency=1"}
     (args.output / "protocol.json").write_text(json.dumps(frozen, indent=2) + "\n")
     summaries = []
+    control_records = {}
     for mode in plan["modes"]:
         directory = args.output / mode["name"]
         directory.mkdir()
@@ -68,6 +69,10 @@ def main():
                     records.write(json.dumps({"phase": "parity", "name": case["name"], "elapsed_ms": ms, "record": got}, ensure_ascii=False) + "\n")
                     records.flush()
                     assert got["rows"] == baseline[i]["rows"], (mode["name"], case["name"], "prepared rows")
+                    if mode.get("exact_control"):
+                        control = control_records[mode["exact_control"]][case["name"]]
+                        assert got["logits"] == control["logits"] and got["response"] == control["response"], (mode["name"], case["name"], "fixed/shared exact equality")
+                    control_records.setdefault(mode["name"], {})[case["name"]] = got
                     checks.append({"name": case["name"], **compare(reference[i]["response"], got["response"])})
                 for i in selected:
                     got, ms = run(cases[i]["request"])
@@ -80,7 +85,16 @@ def main():
                         records.write(json.dumps({"phase": "measured", **sample, "record": got}, ensure_ascii=False) + "\n")
                         records.flush()
                         assert got["rows"] == baseline[i]["rows"], (mode["name"], cases[i]["name"], "measured rows")
+                        if mode.get("exact_control"):
+                            control = control_records[mode["exact_control"]][cases[i]["name"]]
+                            assert got["logits"] == control["logits"] and got["response"] == control["response"], (mode["name"], cases[i]["name"], "measured fixed/shared equality")
                         compare(reference[i]["response"], got["response"])
+                if mode.get("require_shared"):
+                    assert got["prefix"]["shared_requests"] > 0 and got["prefix"]["saved_tokens"] > 0
+                if mode.get("require_replays"):
+                    assert got["graph"]["enabled"] and got["graph"]["captures"] > 0
+                    assert got["graph"]["replays"] >= len(samples)
+                    assert got["graph"]["fallbacks"] == 0
                 memory = subprocess.check_output(["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"], text=True).strip()
                 summary = {"name": mode["name"], "startup_to_empty_diagnostic_ms": startup_ms,
                            "checks": checks, "samples": samples, "device_used_mib_at_end": int(memory),

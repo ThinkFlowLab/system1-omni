@@ -38,6 +38,14 @@ path = "../../../../tests/decider/config.rs"
 name = "batching"
 path = "../../../../tests/decider/batching.rs"
 
+[[test]]
+name = "options"
+path = "../../../../tests/decider/options.rs"
+
+[[test]]
+name = "prefix"
+path = "../../../../tests/decider/prefix.rs"
+
 [[example]]
 name = "decider-run"
 path = "../../../../tests/decider/runner.rs"

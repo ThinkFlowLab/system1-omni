@@ -1,6 +1,6 @@
 {
   "name": "qwen3_5",
-  "abi_version": 6,
+  "abi_version": 7,
   "status": "experimental",
   "sources": [
     "ops.h",
@@ -17,7 +17,8 @@
   "models": [
     "src/models/cua_s1/native/",
     "src/models/open_jev/native/",
-    "src/models/jev_vl/native/"
+    "src/models/jev_vl/native/",
+    "src/models/decider/native/"
   ],
   "build": {
     "script": "build.sh",

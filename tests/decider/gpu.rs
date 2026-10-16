@@ -135,3 +135,120 @@ async fn packed_mixed_rows_preserve_order_usage_and_recovery() {
     );
     assert_eq!(engine.predict(raw.as_bytes()).await.unwrap(), first);
 }
+
+#[tokio::test]
+#[ignore = "requires pinned Decider checkpoint and ABI7 CUDA prefix execution"]
+async fn shared_request_prefix_matches_fixed_rows_and_never_survives_request() {
+    use omni_decider_native::{batching::BatchLimits, prefix::PrefixMode};
+    use serde_json::json;
+    let dir = std::env::var("DECIDER_MODEL").unwrap();
+    let library = std::env::var("DECIDER_CUDA_LIB").unwrap();
+    let fixed = Engine::load_with_modes(
+        Path::new(&dir),
+        Path::new(&library),
+        BatchLimits::new(4, 4096).unwrap(),
+        false,
+        PrefixMode::Fixed,
+    )
+    .await
+    .unwrap();
+    let shared = Engine::load_with_modes(
+        Path::new(&dir),
+        Path::new(&library),
+        BatchLimits::new(4, 4096).unwrap(),
+        false,
+        PrefixMode::Shared,
+    )
+    .await
+    .unwrap();
+    let request = |state: String| {
+        json!({"state":state,"questions":{"route":{"criteria":["refund","shipping"],"instructions":"Choose."},"score":{"type":"score","instructions":"Severity.","criteria":["low","medium","high"]},"last":{"type":"noul","instructions":"The item is damaged."}}}).to_string()
+    };
+    let raw = request("The item is damaged. ".repeat(200));
+    let first = shared.predict(raw.as_bytes()).await.unwrap();
+    assert_eq!(first, fixed.predict(raw.as_bytes()).await.unwrap());
+    assert!(shared.executor.prefix_stats().shared_requests > 0);
+    assert!(shared.executor.prefix_stats().saved_tokens > 0);
+    assert_eq!(shared.health()["execution"], "shared");
+    let changed = request("The item is shipped. ".repeat(200));
+    assert_eq!(
+        shared.predict(changed.as_bytes()).await.unwrap(),
+        fixed.predict(changed.as_bytes()).await.unwrap()
+    );
+    let long = request("The item is damaged. ".repeat(1000));
+    assert_eq!(
+        shared.predict(long.as_bytes()).await.unwrap(),
+        fixed.predict(long.as_bytes()).await.unwrap()
+    );
+    assert_eq!(shared.predict(raw.as_bytes()).await.unwrap(), first);
+    assert!(
+        shared
+            .predict(br#"{"state":0,"questions":{"bad":{"criteria":["one"]}}}"#)
+            .await
+            .is_err()
+    );
+    assert_eq!(shared.predict(raw.as_bytes()).await.unwrap(), first);
+    assert!(shared.executor.is_ready());
+}
+
+#[tokio::test]
+#[ignore = "requires pinned Decider checkpoint and ABI7 CUDA auto-prefix execution"]
+async fn auto_prefix_keeps_short_packed_outputs_and_isolates_long_shared_state() {
+    use omni_decider_native::{batching::BatchLimits, prefix::PrefixMode};
+    use serde_json::json;
+    let dir = std::env::var("DECIDER_MODEL").unwrap();
+    let library = std::env::var("DECIDER_CUDA_LIB").unwrap();
+    let load = |mode| {
+        Engine::load_with_modes(
+            Path::new(&dir),
+            Path::new(&library),
+            BatchLimits::new(4, 4096).unwrap(),
+            false,
+            mode,
+        )
+    };
+    let eager = load(PrefixMode::Off).await.unwrap();
+    let fixed = load(PrefixMode::Fixed).await.unwrap();
+    let auto = load(PrefixMode::Auto).await.unwrap();
+    assert_eq!(auto.health()["prefix_mode"], "auto");
+    assert_eq!(auto.executor.prefix_stats().auto_independent_requests, 1);
+    let request = |state: String| {
+        json!({"state":state,"questions":{
+            "route":{"criteria":["refund","shipping"],"instructions":"Choose."},
+            "score":{"type":"score","instructions":"Severity.","criteria":["low","medium","high"]},
+            "last":{"type":"noul","instructions":"The item is damaged."}
+        }})
+        .to_string()
+    };
+    let short = request("The item is damaged.".into());
+    let first = auto.predict(short.as_bytes()).await.unwrap();
+    assert_eq!(first, eager.predict(short.as_bytes()).await.unwrap());
+    assert_eq!(auto.executor.prefix_stats().shared_requests, 0);
+    let long = request("The item is damaged. ".repeat(800));
+    assert_eq!(
+        auto.predict(long.as_bytes()).await.unwrap(),
+        fixed.predict(long.as_bytes()).await.unwrap()
+    );
+    assert_eq!(auto.executor.prefix_stats().shared_requests, 1);
+    assert!(auto.executor.prefix_stats().saved_tokens >= 4096);
+    let changed = request("The item is shipped. ".repeat(800));
+    assert_eq!(
+        auto.predict(changed.as_bytes()).await.unwrap(),
+        fixed.predict(changed.as_bytes()).await.unwrap()
+    );
+    assert_eq!(
+        auto.predict(long.as_bytes()).await.unwrap(),
+        fixed.predict(long.as_bytes()).await.unwrap()
+    );
+    assert_eq!(auto.predict(short.as_bytes()).await.unwrap(), first);
+    assert_eq!(auto.health()["execution"], "auto");
+    assert_eq!(auto.executor.prefix_stats().shared_requests, 3);
+    assert!(auto.executor.prefix_stats().auto_independent_requests >= 3);
+    assert!(
+        auto.predict(br#"{"state":0,"questions":{"bad":{"criteria":["one"]}}}"#)
+            .await
+            .is_err()
+    );
+    assert_eq!(auto.predict(short.as_bytes()).await.unwrap(), first);
+    assert!(auto.executor.is_ready());
+}

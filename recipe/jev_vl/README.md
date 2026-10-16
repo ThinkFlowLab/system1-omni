@@ -39,7 +39,7 @@ The author measured the worker on one H800 80 GB (`sm_90`). A maintainer also
 on an earlier revision. These runs do not validate later code changes or maximum
 context lengths. Use an allocated GPU on
 scheduled hosts. Build the CUDA library and Rust workers from the same revision;
-the integrated backend uses **ABI 6** and older libraries must be rebuilt.
+the integrated backend uses **ABI 7** and older libraries must be rebuilt.
 
 ```sh
 src/backends/cuda/qwen3_5/build.sh target/release 90
@@ -141,7 +141,7 @@ The image-prefix tokenizer check requires the exported checkpoint. First
 [restore the frozen corpus](validation.md#restore-the-frozen-corpus).
 It uses the corpus's fixed `[1, 60, 60]` grid and synthetic embedding
 rows, so it checks token/position splitting rather than the vision encoder.
-CUDA kernel tests require an allocated GPU and rebuilt ABI 6 library:
+CUDA kernel tests require an allocated GPU and rebuilt ABI 7 library:
 
 ```sh
 JEV_VL_EXPORT=$PWD/weights/jev-vl-merged \

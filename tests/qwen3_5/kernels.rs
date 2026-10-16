@@ -773,78 +773,81 @@ fn device_copy_helpers_roundtrip() {
 fn gdn_conv_continuation_uses_cached_history() {
     let st = setup();
     let prefix = 64usize;
-    let (key_dim, value_dim, heads) = (16 * 128usize, 48 * 128usize, 48usize);
-    let channels = 2 * key_dim + value_dim;
-    let ld = channels + value_dim + 2 * heads;
-    let weights = to_device(&vec![bf16::from_f32(0.25); channels * 4], st);
-    let conv = |source: &DeviceBuffer, start: usize, rows: usize| {
-        let q = DeviceBuffer::new(rows * key_dim * 2).unwrap();
-        let k = DeviceBuffer::new(rows * key_dim * 2).unwrap();
-        let v = DeviceBuffer::new(rows * value_dim * 2).unwrap();
-        // SAFETY: source contains start + rows complete pitched rows; outputs
-        // contain rows of the corresponding Q/K/V widths.
-        unsafe {
-            check(
-                (api().cs1_gdn_conv)(
-                    source.at(start * ld * 2),
-                    ld as i32,
-                    weights.at(0),
-                    q.at(0),
-                    k.at(0),
-                    v.at(0),
-                    rows as i32,
-                    key_dim as i32,
-                    value_dim as i32,
+    // Decider2B uses sixteen key/value heads; preserve the 27B control too.
+    for (key_dim, value_dim, heads) in [(2048usize, 2048usize, 16usize), (2048, 6144, 48)] {
+        let channels = 2 * key_dim + value_dim;
+        let ld = channels + value_dim + 2 * heads;
+        let weights = to_device(&vec![bf16::from_f32(0.25); channels * 4], st);
+        let conv = |source: &DeviceBuffer, start: usize, rows: usize| {
+            let q = DeviceBuffer::new(rows * key_dim * 2).unwrap();
+            let k = DeviceBuffer::new(rows * key_dim * 2).unwrap();
+            let v = DeviceBuffer::new(rows * value_dim * 2).unwrap();
+            // SAFETY: source contains start + rows complete pitched rows; outputs
+            // contain rows of the corresponding Q/K/V widths.
+            unsafe {
+                check(
+                    (api().cs1_gdn_conv)(
+                        source.at(start * ld * 2),
+                        ld as i32,
+                        weights.at(0),
+                        q.at(0),
+                        k.at(0),
+                        v.at(0),
+                        rows as i32,
+                        key_dim as i32,
+                        value_dim as i32,
+                        st,
+                    ),
+                    "gdn conv continuation",
+                )
+                .unwrap();
+            }
+            [
+                from_device(&q, rows * key_dim, st),
+                from_device(&k, rows * key_dim, st),
+                from_device(&v, rows * value_dim, st),
+            ]
+        };
+        for rows in [1usize, 2, 3, 4, 65] {
+            let total = prefix + rows;
+            // Positive inputs and taps make omission of any history row observable.
+            let projection: Vec<bf16> = random(total * ld, 37, 0.5)
+                .iter()
+                .map(|x| bf16::from_f32(x.to_f32().abs() + 0.25))
+                .collect();
+            let source = to_device(&projection, st);
+            let full = conv(&source, 0, total);
+            let tail = DeviceBuffer::new(3 * ld * 2).unwrap();
+            let window = DeviceBuffer::new((rows + 3) * ld * 2).unwrap();
+            // SAFETY: capture three prefix rows, restore them ahead of the suffix,
+            // and copy the suffix into the remaining non-overlapping window rows.
+            unsafe {
+                cuda::copy_dd(tail.at(0), source.at((prefix - 3) * ld * 2), 3 * ld * 2, st)
+                    .unwrap();
+                cuda::copy_dd(window.at(0), tail.at(0), 3 * ld * 2, st).unwrap();
+                cuda::copy_dd(
+                    window.at(3 * ld * 2),
+                    source.at(prefix * ld * 2),
+                    rows * ld * 2,
                     st,
-                ),
-                "gdn conv continuation",
-            )
-            .unwrap();
-        }
-        [
-            from_device(&q, rows * key_dim, st),
-            from_device(&k, rows * key_dim, st),
-            from_device(&v, rows * value_dim, st),
-        ]
-    };
-    for rows in [1usize, 2, 3, 4, 65] {
-        let total = prefix + rows;
-        // Positive inputs and taps make omission of any history row observable.
-        let projection: Vec<bf16> = random(total * ld, 37, 0.5)
-            .iter()
-            .map(|x| bf16::from_f32(x.to_f32().abs() + 0.25))
-            .collect();
-        let source = to_device(&projection, st);
-        let full = conv(&source, 0, total);
-        let tail = DeviceBuffer::new(3 * ld * 2).unwrap();
-        let window = DeviceBuffer::new((rows + 3) * ld * 2).unwrap();
-        // SAFETY: capture three prefix rows, restore them ahead of the suffix,
-        // and copy the suffix into the remaining non-overlapping window rows.
-        unsafe {
-            cuda::copy_dd(tail.at(0), source.at((prefix - 3) * ld * 2), 3 * ld * 2, st).unwrap();
-            cuda::copy_dd(window.at(0), tail.at(0), 3 * ld * 2, st).unwrap();
-            cuda::copy_dd(
-                window.at(3 * ld * 2),
-                source.at(prefix * ld * 2),
-                rows * ld * 2,
-                st,
-            )
-            .unwrap();
-        }
-        let restored = conv(&window, 0, rows + 3);
-        let missing_history = conv(&window, 3, rows);
-        for (i, width) in [key_dim, key_dim, value_dim].into_iter().enumerate() {
-            let expected = &full[i][prefix * width..];
-            assert_eq!(
-                &restored[i][3 * width..],
-                expected,
-                "cached conv history diverges for output {i}, suffix rows={rows}"
-            );
-            assert_ne!(
-                &missing_history[i][..rows.min(3) * width],
-                &expected[..rows.min(3) * width],
-                "fixture must detect the old suffix-only conv call"
-            );
+                )
+                .unwrap();
+            }
+            let restored = conv(&window, 0, rows + 3);
+            let missing_history = conv(&window, 3, rows);
+            for (i, width) in [key_dim, key_dim, value_dim].into_iter().enumerate() {
+                let expected = &full[i][prefix * width..];
+                assert_eq!(
+                    &restored[i][3 * width..],
+                    expected,
+                    "cached conv history diverges for output {i}, suffix rows={rows}"
+                );
+                assert_ne!(
+                    &missing_history[i][..rows.min(3) * width],
+                    &expected[..rows.min(3) * width],
+                    "fixture must detect the old suffix-only conv call"
+                );
+            }
         }
     }
 }
@@ -853,77 +856,81 @@ fn gdn_conv_continuation_uses_cached_history() {
 #[ignore = "needs a GPU and CUA_S1_CUDA_LIB"]
 fn windowed_attention_matches_full_pass_bit_for_bit() {
     let st = setup();
-    let (hq, hk, dh) = (24usize, 4usize, 256usize);
-    for (t, bases) in [
-        (139usize, vec![64usize]),
-        (712, vec![64, 128]),
-        (972, vec![64, 896]),
-        (2048, vec![64, 1024]),
-    ] {
-        // gated path with a strided V buffer, exactly the model's shape
-        let ldv = hk * dh + 16;
-        let q = to_device(&random(t * hq * dh, 1, 2.0), st);
-        let k = to_device(&random(t * hk * dh, 2, 2.0), st);
-        let v = to_device(&random(t * ldv, 3, 1.0), st);
-        let gate = to_device(&random(t * hq * dh, 4, 3.0), st);
-        let full = DeviceBuffer::new(t * hq * dh * 2).unwrap();
-        // SAFETY: every buffer has complete rows of the shapes above.
-        unsafe {
-            check(
-                (api().cs1_attention_gated)(
-                    q.at(0),
-                    k.at(0),
-                    v.at(0),
-                    ldv as i32,
-                    gate.at(0),
-                    full.at(0),
-                    t as i32,
-                    hq as i32,
-                    hk as i32,
-                    dh as i32,
-                    0.0625,
-                    st,
-                ),
-                "full pass",
-            )
-            .unwrap();
-        }
-        let full_rows = from_device(&full, t * hq * dh, st);
-        for qb in &bases {
-            let win = DeviceBuffer::new(t * hq * dh * 2).unwrap();
-            // SAFETY: the window reads the same buffers; rows < q_base stay unwritten.
+    // Canonical window indexing covers Decider2B and the existing 27B shape.
+    for (hq, hk, dh) in [(8usize, 2usize, 256usize), (24, 4, 256)] {
+        for (t, bases) in [
+            (139usize, vec![64usize]),
+            (712, vec![64, 128]),
+            (972, vec![64, 896]),
+            (2048, vec![64, 1024]),
+        ] {
+            // gated path with a strided V buffer, exactly the model's shape
+            let ldv = hk * dh + 16;
+            let q = to_device(&random(t * hq * dh, 1, 2.0), st);
+            let k = to_device(&random(t * hk * dh, 2, 2.0), st);
+            let v = to_device(&random(t * ldv, 3, 1.0), st);
+            let gate = to_device(&random(t * hq * dh, 4, 3.0), st);
+            let full = DeviceBuffer::new(t * hq * dh * 2).unwrap();
+            // SAFETY: every buffer has complete rows of the shapes above.
             unsafe {
                 check(
-                    (api().cs1_attention_gated_prefix)(
+                    (api().cs1_attention_gated)(
                         q.at(0),
                         k.at(0),
                         v.at(0),
                         ldv as i32,
                         gate.at(0),
-                        win.at(0),
+                        full.at(0),
                         t as i32,
                         hq as i32,
                         hk as i32,
                         dh as i32,
                         0.0625,
-                        *qb as i32,
                         st,
                     ),
-                    "windowed pass",
+                    "full pass",
                 )
                 .unwrap();
             }
-            let win_rows = from_device(&win, t * hq * dh, st);
-            let mut bad = 0usize;
-            for row in *qb..t {
-                for e in 0..hq * dh {
-                    if full_rows[row * hq * dh + e] != win_rows[row * hq * dh + e] {
-                        bad += 1;
+            let full_rows = from_device(&full, t * hq * dh, st);
+            for qb in &bases {
+                let win = DeviceBuffer::new(t * hq * dh * 2).unwrap();
+                // SAFETY: the window reads the same buffers; rows < q_base stay unwritten.
+                unsafe {
+                    check(
+                        (api().cs1_attention_gated_prefix)(
+                            q.at(0),
+                            k.at(0),
+                            v.at(0),
+                            ldv as i32,
+                            gate.at(0),
+                            win.at(0),
+                            t as i32,
+                            hq as i32,
+                            hk as i32,
+                            dh as i32,
+                            0.0625,
+                            *qb as i32,
+                            st,
+                        ),
+                        "windowed pass",
+                    )
+                    .unwrap();
+                }
+                let win_rows = from_device(&win, t * hq * dh, st);
+                let mut bad = 0usize;
+                for row in *qb..t {
+                    for e in 0..hq * dh {
+                        if full_rows[row * hq * dh + e] != win_rows[row * hq * dh + e] {
+                            bad += 1;
+                        }
                     }
                 }
+                assert_eq!(bad, 0, "t = {t}, q_base = {qb}: {bad} values differ");
+                eprintln!(
+                    "windowed attention t = {t}, q_base = {qb}: rows >= q_base bitwise equal"
+                );
             }
-            assert_eq!(bad, 0, "t = {t}, q_base = {qb}: {bad} values differ");
-            eprintln!("windowed attention t = {t}, q_base = {qb}: rows >= q_base bitwise equal");
         }
     }
 }
@@ -935,6 +942,8 @@ fn gdn_prefill_two_phase_matches_one_shot_bit_for_bit() {
     let d = 128usize;
     for (t, h, hk, qk_amp, decay_scale) in [
         (107usize, 4usize, 2usize, 1.0f32, 1.0f32),
+        (129, 16, 16, 0.01, 1.0),
+        (936, 16, 16, 0.01, 1.0),
         (936, 4, 2, 0.01, 1.0),
         (3399, 3, 1, 0.01, 1.0),
         (65, 4, 2, 0.01, 1e-9),
@@ -1085,4 +1094,126 @@ fn gdn_prefill_two_phase_matches_one_shot_bit_for_bit() {
             "T = 0 must copy the state through"
         );
     }
+}
+
+#[test]
+#[ignore = "needs a GPU and CUA_S1_CUDA_LIB"]
+fn fixed_gemm_rows_do_not_depend_on_m() {
+    let st = setup();
+    // Every projection of the 2B, 4B, 9B and 27B backbones as (N, K): the GDN input and
+    // output, the attention input and output, and the MLP's gate|up and down.
+    let shapes = [
+        (8224usize, 2048usize),
+        (2048, 2048),
+        (5120, 2048),
+        (12288, 2048),
+        (2048, 6144),
+        (12352, 2560),
+        (2560, 4096),
+        (10240, 2560),
+        (18432, 2560),
+        (2560, 9216),
+        (12352, 4096),
+        (4096, 4096),
+        (10240, 4096),
+        (24576, 4096),
+        (4096, 12288),
+        (16480, 5120),
+        (5120, 6144),
+        (14336, 5120),
+        (34816, 5120),
+        (5120, 17408),
+    ];
+    let max_m = 4096usize;
+    // SAFETY: plain handle creation; checked for null below.
+    let fixed = unsafe { (api().cs1_gemm_create_fixed)(32 << 20, 64) };
+    assert!(!fixed.is_null());
+    // SAFETY: a non-positive reference M is refused before anything is allocated.
+    assert!(unsafe { (api().cs1_gemm_create_fixed)(32 << 20, 0) }.is_null());
+    let nan = vec![0xffu8; max_m * 34816 * 2];
+    for (i, (n, k)) in shapes.into_iter().enumerate() {
+        let x = random(max_m * k, 70 + i as u64, 2.0);
+        let w = random(n * k, 90 + i as u64, 0.05);
+        let (xd, wd) = (to_device(&x, st), to_device(&w, st));
+        let y = DeviceBuffer::new(max_m * n * 2).unwrap();
+        // the bfloat16 output of m rows starting at input row `at`, over a NaN-filled buffer
+        let rows = |at: usize, m: usize| {
+            let mut out = vec![0u8; m * n * 2];
+            // SAFETY: x holds max_m rows of k, w is [n, k], y has room for max_m rows of n,
+            // and at + m <= max_m.
+            unsafe {
+                cuda::upload(y.at(0), &nan[..max_m * n * 2], st).unwrap();
+                check(
+                    (api().cs1_gemm)(
+                        fixed,
+                        xd.at(at * k * 2),
+                        wd.at(0),
+                        y.at(0),
+                        m as i32,
+                        n as i32,
+                        k as i32,
+                        n as i32,
+                        st,
+                    ),
+                    "fixed gemm",
+                )
+                .unwrap();
+                cuda::download(&mut out, y.at(0), st).unwrap();
+            }
+            out
+        };
+        let all = rows(0, max_m);
+        // every output was written (the comparisons below are byte for byte against this)
+        let (values, _) = all.as_chunks::<2>();
+        assert!(values.iter().all(|b| !bf16::from_le_bytes(*b).is_nan()));
+        let row = |r: usize| &all[r * n * 2..(r + 1) * n * 2];
+        // fewer rows, and rows that sit lower in the full call, as a branch's tokens do
+        for (at, m) in [
+            (0usize, 1usize),
+            (0, 2),
+            (0, 3),
+            (0, 8),
+            (0, 63),
+            (0, 64),
+            (0, 65),
+            (0, 256),
+            (0, 1000),
+            (0, 1024),
+            (0, 3109),
+            (1, 2),
+            (37, 64),
+            (64, 65),
+            (1000, 200),
+            (3000, 1096),
+        ] {
+            assert!(
+                rows(at, m) == all[at * n * 2..(at + m) * n * 2],
+                "rows {at}..{} changed at {n} x {k}",
+                at + m
+            );
+        }
+        // the first and last rows against float64, so the product itself is right
+        for r in [0, max_m - 1] {
+            let want: Vec<f64> = (0..n)
+                .map(|j| {
+                    (0..k)
+                        .map(|c| x[r * k + c].to_f64() * w[j * k + c].to_f64())
+                        .sum()
+                })
+                .collect();
+            let (got, _) = row(r).as_chunks::<2>();
+            let scale = want.iter().fold(0f64, |m, v| m.max(v.abs()));
+            let worst = got
+                .iter()
+                .zip(&want)
+                .map(|(b, v)| (bf16::from_le_bytes(*b).to_f64() - v).abs())
+                .fold(0f64, f64::max);
+            assert!(
+                worst <= 1e-2 * scale,
+                "{n} x {k}, row {r}: {worst} vs {scale}"
+            );
+        }
+    }
+    // SAFETY: created above and not destroyed before.
+    unsafe { (api().cs1_gemm_destroy)(fixed) };
 }

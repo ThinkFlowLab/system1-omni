@@ -7,25 +7,46 @@ design. Concrete input/output types follow each executor's supported layout.
 ## Implementation status
 
 The [Rust frontend](../src/frontend/README.md) currently forwards HTTP requests
-to separately running workers. Cua-S1 and Open-Jev have native Rust/CUDA workers
+to separately running workers. Cua-S1, Open-Jev and Decider have native Rust/CUDA workers
 that share the [Qwen3.5/3.8 executor](../src/models/qwen3_5/native/), which accepts
 single prompts and bounded packed prefill. Cua-S1 and Open-Jev-9B use
 single-prompt calls; Open-Jev-27B-v1.1 packs candidates within one request for
 input and gate/up GEMMs while preserving per-sequence mixers and output/down GEMM
-shapes.
+shapes. Decider optionally packs up to four complete rows and 4096 tokens within
+one request, or selects request-local shared prefixes through the same canonical
+continuation path used by JEV-VL (below). Both optimizations default off.
 [Laya's native worker](../src/models/laya/README.md)
-uses a separate Hopper CUDA backend for one complete padded request. All three
+uses a separate Hopper CUDA backend for one complete padded request. These workers
 coordinate independent processors and executors through
 `prepare` → `execute` → `finish` and use the
 [native runtime](../src/runtime/README.md) for FIFO admission and blocking dispatch
 per loaded executor. Shared processing orchestration, batch budgets,
 compatibility grouping and dynamic batching are planned.
 
-Qwen workers compute their decision heads on the CPU after downloading the final
-hidden state. Laya computes its scorer and action head on CUDA. Its fixed-shape
+Cua-S1 and Open-Jev compute their decision heads on the CPU after downloading the
+final hidden state. Decider projects selected tied-embedding rows on CUDA with
+BF16 output rounding before FP32 calibration and CPU response assembly. Laya
+computes its scorer and action head on CUDA. Its fixed-shape
 Graph captures Encoder/Decision; gather, scorer/action head and synchronized
 readback remain outside capture. Native Metal remains planned; Python workers
 retain their documented reference/serving roles.
+
+The Qwen executor's `forward_shared` takes a request prefix, group prefixes and
+branches, ends each prefix at its last multiple of 64 tokens, and returns one final
+hidden state per branch in order
+([#85](https://github.com/ThinkFlowLab/system1-omni/issues/85)). It runs on the
+prefix continuation that JEV-VL's cache uses: each prefix is captured once (per
+linear-attention layer the float32 recurrent state and the last three conv inputs,
+per full-attention layer the prefix keys and values), and each branch then runs as
+its own pass from that state. The two prefix states persist across calls and grow only for a
+longer prefix; their contents are valid only within one call, which runs eagerly and
+synchronizes its stream before returning, also on error. Its GEMMs keep one
+algorithm per weight shape, so on GPUs where that keeps rows independent of M
+(checked by `fixed_gemm_rows_do_not_depend_on_m`, so far on sm_89) each result equals
+`forward_fixed` on the full prompt bit for bit; it differs from `forward` by
+rounding. Each prefix state takes about 50 MiB on Qwen3.5-4B and 9B, plus 32 KiB per
+position of its prefix rounded up to 1,024 positions, and the GEMM handle a 32 MiB
+workspace.
 
 ## Native worker boundaries
 
@@ -39,6 +60,7 @@ and candidate identity, usage, and response metadata outside the executor.
 | --- | --- | --- | --- |
 | Cua-S1 | One unpadded token-ID vector and option count per question, in request order. | One FP32 answer-letter logit vector per question. | Per-question softmax, choice/confidence, ordered answers, and token usage. |
 | Open-Jev | Token-ID vectors grouped by question, then independent candidate, in request order. | One FP32 learned scalar per candidate in the same grouping. | Add the `noul` false logit of zero, calibrate across each complete question, and restore typed answers, usage, and metadata. |
+| Decider | Complete independent token-ID rows in question order; Score expands one no/yes row per level. | One BF16-projection-rounded FP32 selected-label logit vector per row. | Per-type calibration, whole-Score normalization, ordered typed answers and unique-prefix token usage. |
 | Laya | One padded request: token IDs, true lengths, question types and ordered option markers; at most 16 questions, 512 tokens per row and 2048 markers. | Per-question FP32 option logits and two action logits copied back after GPU heads. | Calibrate and decode ordered `choice`, `score` and `noul` answers, usage and metadata. |
 
 Cua-S1 and Open-Jev-9B input collections are serial work. For Open-Jev-27B-v1.1,
@@ -47,16 +69,18 @@ Open-Jev's model-specific batch adapter packs up to 16 independent candidates an
 execute alone. It restores question/candidate grouping before normalization.
 Laya batches questions within one request. Shared runtime
 admission precedes blocking dispatch: Cua-S1 admits one question forward at a
-time; Open-Jev and Laya admit one complete request. Cua-S1's CPU letter projection
+time; Open-Jev, Decider and Laya admit one complete request. Cua-S1's CPU letter projection
 stays outside admission; Open-Jev's scalar heads and Laya's GPU heads and
-synchronized readback remain inside their request unit. Qwen model mutexes guard
+synchronized readback remain inside their request unit. Decider includes every
+backbone row and CUDA head projection, synchronizes both streams and retires
+failed state before releasing admission. Qwen model mutexes guard
 mutable state. Laya's dedicated owning thread confines its non-Send CUDA state
 and receives admitted work over a rendezvous channel. Cancellation after
 dispatch retains the scheduler permit until execution completes. Laya
 synchronizes and disposes a failed model before returning an inference error
 and reports unavailable health thereafter.
 
-Qwen executors own loaded models and CPU head weights, preserving FP64 accumulation and
+Cua-S1/Open-Jev executors own loaded models and CPU head weights, preserving FP64 accumulation and
 the existing FP32 rounding and bias order. Finishing checks output cardinality
 before reconstruction. HTTP validation, error status/body conventions, and real
 warmup before readiness remain model-specific and unchanged.

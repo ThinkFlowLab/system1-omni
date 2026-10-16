@@ -36,6 +36,15 @@ def wait_ready(base, child, log):
     raise TimeoutError("readiness timeout")
 
 
+def concurrency_request(cases):
+    if not cases:
+        raise ValueError("empty HTTP corpus")
+    for case in cases:
+        if case["name"] == "mixed" and case["request"]["questions"]:
+            return case["request"]
+    return next((case["request"] for case in cases if case["request"]["questions"]), cases[0]["request"])
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--worker", type=Path, required=True)
@@ -96,7 +105,7 @@ def main():
         oversized = request(worker_base, "/v1/systemone", b" " * (8 * 1024 * 1024 + 1))
         assert oversized[0] == 413
         checks.append({"name": "body_limit", "status": 413})
-        raw = json.dumps(protocol["cases"][13]["request"]).encode()
+        raw = json.dumps(concurrency_request(protocol["cases"])).encode()
         baseline = request(worker_base, "/v1/systemone", raw)
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
             concurrent_results = list(pool.map(lambda i: request(frontend_base if i % 2 else worker_base, "/v1/systemone", raw), range(12)))

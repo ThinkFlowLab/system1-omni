@@ -3,12 +3,13 @@ use crate::{
     Limits, RowInput,
     batching::BatchLimits,
     checkpoint::{Checkpoint, HIDDEN, LABELS, PADDED_LABELS, VOCAB},
+    prefix::{PrefixMode, PrefixPlan, PrefixStats},
 };
 use anyhow::{Context, Result, ensure};
 use half::bf16;
 use omni_qwen3_5_native::{
     cuda::{self, DeviceBuffer, Stream},
-    model::Model,
+    model::{GraphStats, Model},
 };
 use omni_runtime::SerialScheduler;
 use std::{
@@ -146,12 +147,51 @@ struct Loaded {
     model: Model,
     head: Head,
     batching: BatchLimits,
+    prefix_mode: PrefixMode,
+    prefix_stats: PrefixStats,
 }
 impl Loaded {
     fn execute(&mut self, rows: &[RowInput]) -> Result<Vec<Vec<f32>>> {
         cuda::set_device(0)?;
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let lengths: Vec<usize> = rows.iter().map(|row| row.ids.len()).collect();
+            let plan = match self.prefix_mode {
+                PrefixMode::Shared => PrefixPlan::new(rows),
+                PrefixMode::Auto => PrefixPlan::new(rows).filter(|plan| plan.worth_auto(rows)),
+                _ => None,
+            };
+            if self.prefix_mode == PrefixMode::Fixed
+                || self.prefix_mode == PrefixMode::Shared
+                || plan.is_some()
+            {
+                let hidden = if let Some(plan) = plan {
+                    let hidden = self
+                        .model
+                        .forward_shared(&plan.prompts)?
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>();
+                    self.prefix_stats.shared_requests += 1;
+                    self.prefix_stats.saved_tokens += plan.saved_tokens as u64;
+                    hidden
+                } else {
+                    rows.iter()
+                        .map(|row| self.model.forward_fixed(&row.ids))
+                        .collect::<Result<Vec<_>>>()?
+                };
+                ensure!(
+                    hidden.len() == rows.len(),
+                    "shared backbone output count mismatch"
+                );
+                let mut logits = Vec::with_capacity(rows.len());
+                for range in self.batching.ranges(&lengths) {
+                    let batch = &rows[range.clone()];
+                    let hidden: Vec<&[f32]> = hidden[range].iter().map(Vec::as_slice).collect();
+                    let counts: Vec<_> = batch.iter().map(|row| row.candidate_ids.len()).collect();
+                    logits.extend(self.head.project_batch(&hidden, &counts)?);
+                }
+                return Ok(logits);
+            }
             let mut logits = Vec::with_capacity(rows.len());
             for range in self.batching.ranges(&lengths) {
                 let batch = &rows[range];
@@ -171,6 +211,9 @@ impl Loaded {
                     logits.extend(self.head.project_batch(&hidden, &counts)?);
                 }
             }
+            if self.prefix_mode == PrefixMode::Auto {
+                self.prefix_stats.auto_independent_requests += 1;
+            }
             Ok(logits)
         }))
         .map_err(|_| anyhow::anyhow!("Decider execution panicked"))
@@ -188,6 +231,8 @@ pub struct Executor {
     loaded: Arc<Mutex<Option<Loaded>>>,
     labels: Vec<u32>,
     ready: Arc<AtomicBool>,
+    graph_stats: Arc<Mutex<GraphStats>>,
+    prefix_stats: Arc<Mutex<PrefixStats>>,
 }
 impl Executor {
     pub(crate) async fn load(
@@ -196,27 +241,46 @@ impl Executor {
         checkpoint: Checkpoint,
         labels: Vec<u32>,
         batching: BatchLimits,
+        graph: bool,
+        prefix_mode: PrefixMode,
     ) -> Result<Self> {
         ensure!(
-            std::env::var("CUA_S1_GRAPH").as_deref() != Ok("1"),
-            "Decider eager execution requires CUA_S1_GRAPH unset or 0"
+            !graph || prefix_mode == PrefixMode::Off,
+            "shared/fixed execution requires Graph off"
         );
         let (dir, library) = (dir.to_owned(), library.to_owned());
         let loaded = tokio::task::spawn_blocking(move || -> Result<Loaded> {
-            let model = Model::load(&dir, &library)?;
+            let model = Model::load_with_graph(&dir, &library, graph)?;
             let head = Head::new(&checkpoint.head, batching.max_rows())?;
             Ok(Loaded {
                 model,
                 head,
                 batching,
+                prefix_mode,
+                prefix_stats: PrefixStats::default(),
             })
         })
         .await??;
+        let graph_stats = Arc::new(Mutex::new(loaded.model.graph_stats()));
         Ok(Self {
+            graph_stats,
+            prefix_stats: Arc::new(Mutex::new(PrefixStats::default())),
             loaded: Arc::new(Mutex::new(Some(loaded))),
             labels,
             ready: Arc::new(AtomicBool::new(true)),
         })
+    }
+    pub fn graph_stats(&self) -> GraphStats {
+        *self
+            .graph_stats
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+    }
+    pub fn prefix_stats(&self) -> PrefixStats {
+        *self
+            .prefix_stats
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
     }
     pub fn is_ready(&self) -> bool {
         self.ready.load(Ordering::Acquire)
@@ -234,20 +298,35 @@ impl Executor {
         if rows.is_empty() {
             return Ok(Vec::new());
         }
-        let (loaded, ready) = (self.loaded.clone(), self.ready.clone());
+        let (loaded, ready, stats) = (
+            self.loaded.clone(),
+            self.ready.clone(),
+            self.graph_stats.clone(),
+        );
+        let prefix_stats = self.prefix_stats.clone();
         scheduler
             .run(move || {
                 let mut guard = match loaded.lock() {
                     Ok(guard) => guard,
                     Err(_) => {
+                        let mut snapshot = stats.lock().unwrap_or_else(|error| error.into_inner());
+                        snapshot.enabled = false;
+                        snapshot.cached_shapes = 0;
                         ready.store(false, Ordering::Release);
                         return Err(anyhow::anyhow!("poisoned executor"));
                     }
                 };
-                let result = guard
-                    .as_mut()
-                    .context("executor unavailable")?
-                    .execute(&rows);
+                let loaded = guard.as_mut().context("executor unavailable")?;
+                let result = loaded.execute(&rows);
+                *prefix_stats
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner()) = loaded.prefix_stats;
+                let mut snapshot = loaded.model.graph_stats();
+                if result.is_err() {
+                    snapshot.enabled = false;
+                    snapshot.cached_shapes = 0;
+                }
+                *stats.lock().unwrap_or_else(|error| error.into_inner()) = snapshot;
                 if result.is_err() {
                     ready.store(false, Ordering::Release);
                     // Loaded::execute synchronized both streams, including failure paths.

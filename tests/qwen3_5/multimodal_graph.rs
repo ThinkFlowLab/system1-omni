@@ -52,6 +52,8 @@ fn multimodal_graph_replays_current_inputs_and_clears_on_growth() -> Result<()> 
         "capture miss must retain the eager result",
     );
     assert_eq!(model.mm_graphs.len(), 1, "miss must cache a graph");
+    assert_eq!(model.graph_stats().captures, 1);
+    assert_eq!(model.graph_stats().cached_shapes, 1);
     assert!(model.graphs.is_empty(), "text cache must remain separate");
     assert!(model.graph_enabled, "capture must remain enabled");
     assert_hidden_eq(
@@ -59,6 +61,8 @@ fn multimodal_graph_replays_current_inputs_and_clears_on_growth() -> Result<()> 
         &eager,
         "replay must equal eager exactly",
     );
+
+    assert_eq!(model.graph_stats().replays, 1);
 
     let changed_ids = [text[2], image_token, image_token, text[3]];
     let changed_features: Vec<bf16> = (0..2 * model.cfg.hidden)
@@ -328,7 +332,7 @@ fn graph_recording_failure_keeps_eager_result_and_disables_both_modes() -> Resul
                 .contains("injected record failure"),
             "must exercise the actual recording-error path"
         );
-        model.cache_graph(&[text.len()], multimodal, captured);
+        model.cache_graph(&[text.len()], multimodal, captured)?;
         assert_hidden_eq(
             &model.last_hidden(model.scratch.as_ref().unwrap(), text.len())?,
             &prior_eager,

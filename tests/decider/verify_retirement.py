@@ -25,6 +25,8 @@ def main():
     parser.add_argument("--wrapper", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--batched", action="store_true")
+    parser.add_argument("--graph", action="store_true")
+    parser.add_argument("--prefix", action="store_true")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     log = args.output / "worker.log"
@@ -34,6 +36,10 @@ def main():
         DECIDER_BATCH_MAX_ROWS="2" if args.batched else "1", DECIDER_BATCH_MAX_TOKENS="4096",
         CUA_S1_GRAPH="0", DECIDER_GRAPH="0", DECIDER_PREFIX="0", DECIDER_FIXED="0",
     )
+    if args.graph:
+        environment["DECIDER_GRAPH"] = "1"
+    if args.prefix:
+        environment["DECIDER_PREFIX"] = "1"
     with log.open("w") as output:
         child = subprocess.Popen([str(args.worker)], env=environment, stdout=output, stderr=subprocess.STDOUT)
         try:
@@ -44,10 +50,21 @@ def main():
             raw = b'{"state":"The item is damaged.","questions":{"q":{"instructions":"Choose a category.","criteria":["refund","shipping"]}}}'
             if args.batched:
                 raw = b'{"state":"The item is damaged.","questions":{"q":{"type":"score","instructions":"Severity.","criteria":["low","high"]}}}'
+            if args.prefix:
+                raw = json.dumps({"state": "The item is damaged. " * 200, "questions": {"q": {"type":"score", "instructions":"Severity.", "criteria":["low","high"]}}}).encode()
             status, body = request(base, "/v1/systemone", raw)
             assert status == 503 and json.loads(body)["detail"] == "model inference failed"
             status, body = request(base, "/health")
-            assert status == 503 and json.loads(body)["status"] == "unavailable"
+            retired_health = json.loads(body)
+            assert status == 503 and retired_health["status"] == "unavailable"
+            if args.graph:
+                assert retired_health["execution"] == "unavailable"
+                assert retired_health["graph"]["requested"] and not retired_health["graph"]["enabled"]
+                assert retired_health["graph"]["captures"] > 0
+            if args.prefix:
+                assert retired_health["execution"] == "unavailable"
+                assert retired_health["prefix_mode"] == "shared"
+                assert retired_health["prefix"]["shared_requests"] == 1 and retired_health["prefix"]["saved_tokens"] > 0
             for _ in range(2):
                 status, body = request(base, "/v1/systemone", raw)
                 assert status == 503 and json.loads(body)["detail"] == "model unavailable"
@@ -60,7 +77,7 @@ def main():
             if args.batched:
                 assert "Decider test projection 2 rows 2" in text
             result = {"passed": True, "projection_calls": 2, "health_after": "unavailable", "response_status": 503,
-                      "sampled_before_mib": before, "sampled_after_mib": after, "later_requests_refused": 2}
+                      "sampled_before_mib": before, "sampled_after_mib": after, "later_requests_refused": 2, "retired_health": retired_health}
             (args.output / "summary.json").write_text(json.dumps(result, indent=2) + "\n")
             print(json.dumps(result), flush=True)
         finally:
