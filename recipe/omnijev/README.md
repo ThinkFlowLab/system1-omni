@@ -1,10 +1,10 @@
 # OmniJev-4B v1.1 preparation
 
 This recipe prepares OmniJev-4B v1.1 ([#114](https://github.com/ThinkFlowLab/system1-omni/issues/114))
-for the native worker: it exports the checkpoint and regenerates the CPU fixtures
-that the contract and preparation tests use. The native worker itself is not
-available yet; [the model README](../../src/models/omnijev/README.md) describes what
-is implemented. Run the commands from the repository root.
+for [the native worker](native.md): it exports the checkpoint and regenerates the CPU
+fixtures that the contract, preparation and pixel tests use. [The model
+README](../../src/models/omnijev/README.md) describes what is implemented. Run the
+commands from the repository root.
 
 ## Reference environment
 
@@ -65,8 +65,8 @@ OMNIJEV_CHECKPOINT=$PWD/omnijev-v1.1 OMNIJEV_EXPORT=$PWD/omnijev-export \
     cargo test --locked -p omni-omnijev-native -- --include-ignored
 ```
 
-The generator runs the reference's preparation, layout, rotary positions, heads and
-finishing without loading the backbone. The ordinary tests need only the committed
+The generator runs the reference's image loading and processor, preparation, layout,
+rotary positions, heads and finishing without loading the backbone. The ordinary tests need only the committed
 fixtures; the opt-in ones compare token ids with the checkpoint's tokenizer and the
 heads with the export. Cargo runs the tests from the crate's directory, so the two
 paths must be absolute.

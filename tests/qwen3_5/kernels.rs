@@ -1086,3 +1086,120 @@ fn gdn_prefill_two_phase_matches_one_shot_bit_for_bit() {
         );
     }
 }
+
+#[test]
+#[ignore = "needs a GPU and CUA_S1_CUDA_LIB"]
+fn fixed_gemm_rows_do_not_depend_on_m() {
+    let st = setup();
+    // Every projection of the 4B, 9B and 27B backbones as (N, K): the GDN input and
+    // output, the attention input and output, and the MLP's gate|up and down.
+    let shapes = [
+        (12352usize, 2560usize),
+        (2560, 4096),
+        (10240, 2560),
+        (18432, 2560),
+        (2560, 9216),
+        (12352, 4096),
+        (4096, 4096),
+        (10240, 4096),
+        (24576, 4096),
+        (4096, 12288),
+        (16480, 5120),
+        (5120, 6144),
+        (14336, 5120),
+        (34816, 5120),
+        (5120, 17408),
+    ];
+    let max_m = 4096usize;
+    // SAFETY: plain handle creation; checked for null below.
+    let fixed = unsafe { (api().cs1_gemm_create_fixed)(32 << 20, 64) };
+    assert!(!fixed.is_null());
+    // SAFETY: a non-positive reference M is refused before anything is allocated.
+    assert!(unsafe { (api().cs1_gemm_create_fixed)(32 << 20, 0) }.is_null());
+    let nan = vec![0xffu8; max_m * 34816 * 2];
+    for (i, (n, k)) in shapes.into_iter().enumerate() {
+        let x = random(max_m * k, 70 + i as u64, 2.0);
+        let w = random(n * k, 90 + i as u64, 0.05);
+        let (xd, wd) = (to_device(&x, st), to_device(&w, st));
+        let y = DeviceBuffer::new(max_m * n * 2).unwrap();
+        // the bfloat16 output of m rows starting at input row `at`, over a NaN-filled buffer
+        let rows = |at: usize, m: usize| {
+            let mut out = vec![0u8; m * n * 2];
+            // SAFETY: x holds max_m rows of k, w is [n, k], y has room for max_m rows of n,
+            // and at + m <= max_m.
+            unsafe {
+                cuda::upload(y.at(0), &nan[..max_m * n * 2], st).unwrap();
+                check(
+                    (api().cs1_gemm)(
+                        fixed,
+                        xd.at(at * k * 2),
+                        wd.at(0),
+                        y.at(0),
+                        m as i32,
+                        n as i32,
+                        k as i32,
+                        n as i32,
+                        st,
+                    ),
+                    "fixed gemm",
+                )
+                .unwrap();
+                cuda::download(&mut out, y.at(0), st).unwrap();
+            }
+            out
+        };
+        let all = rows(0, max_m);
+        // every output was written (the comparisons below are byte for byte against this)
+        let (values, _) = all.as_chunks::<2>();
+        assert!(values.iter().all(|b| !bf16::from_le_bytes(*b).is_nan()));
+        let row = |r: usize| &all[r * n * 2..(r + 1) * n * 2];
+        // fewer rows, and rows that sit lower in the full call, as a branch's tokens do
+        for (at, m) in [
+            (0usize, 1usize),
+            (0, 2),
+            (0, 3),
+            (0, 8),
+            (0, 63),
+            (0, 64),
+            (0, 65),
+            (0, 256),
+            (0, 1000),
+            (0, 1024),
+            (0, 3109),
+            (1, 2),
+            (37, 64),
+            (64, 65),
+            (1000, 200),
+            (3000, 1096),
+        ] {
+            assert!(
+                rows(at, m) == all[at * n * 2..(at + m) * n * 2],
+                "rows {at}..{} changed at {n} x {k}",
+                at + m
+            );
+        }
+        // the first and last rows against float64, so the product itself is right
+        for r in [0, max_m - 1] {
+            let want: Vec<f64> = (0..n)
+                .map(|j| {
+                    (0..k)
+                        .map(|c| x[r * k + c].to_f64() * w[j * k + c].to_f64())
+                        .sum()
+                })
+                .collect();
+            let (got, _) = row(r).as_chunks::<2>();
+            let scale = want.iter().fold(0f64, |m, v| m.max(v.abs()));
+            let worst = got
+                .iter()
+                .zip(&want)
+                .map(|(b, v)| (bf16::from_le_bytes(*b).to_f64() - v).abs())
+                .fold(0f64, f64::max);
+            assert!(
+                worst <= 1e-2 * scale,
+                "{n} x {k}, row {r}: {worst} vs {scale}"
+            );
+        }
+    }
+    // SAFETY: created above and not destroyed before.
+    unsafe { (api().cs1_gemm_destroy)(fixed) };
+}
