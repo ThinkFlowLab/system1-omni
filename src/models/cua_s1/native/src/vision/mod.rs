@@ -477,6 +477,5 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for UniqueMap<T> {
     }
 }
 
-mod geometry;
 mod model;
 pub use model::VisionModel;

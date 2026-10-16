@@ -9,7 +9,7 @@ use std::sync::OnceLock;
 use anyhow::{Context, Result, bail, ensure};
 
 /// `CS1_ABI_VERSION` in ops.h.
-const ABI_VERSION: u32 = 6;
+const ABI_VERSION: u32 = 7;
 pub const LIBRARY: &str = "libqwen3_5_cuda.so";
 
 /// A `cudaStream_t`.
@@ -21,15 +21,65 @@ pub struct Stream(*mut c_void);
 // from one thread at a time.
 unsafe impl Send for Stream {}
 
+/// Additive dimension-aware vision entry points. Libraries at the required ABI may omit these optional symbols.
+pub struct VisionV2 {
+    pub position: unsafe extern "C" fn(
+        *mut c_void,
+        *const c_void,
+        *const i32,
+        *const f32,
+        c_int,
+        c_int,
+        Stream,
+    ) -> c_int,
+    pub rope: unsafe extern "C" fn(
+        *const c_void,
+        *const f32,
+        *const f32,
+        *mut c_void,
+        *mut c_void,
+        c_int,
+        c_int,
+        c_int,
+        Stream,
+    ) -> c_int,
+    pub attention: unsafe extern "C" fn(
+        *const c_void,
+        *const c_void,
+        *const c_void,
+        *mut c_void,
+        c_int,
+        c_int,
+        c_int,
+        *mut c_void,
+        Stream,
+    ) -> c_int,
+}
+impl VisionV2 {
+    fn resolve(lib: &libloading::Library) -> Option<Self> {
+        // SAFETY: additive signatures are declared alongside legacy entry points in ops.h.
+        unsafe {
+            Some(Self {
+                position: *lib.get(b"cs1_vision_position_v2\0").ok()?,
+                rope: *lib.get(b"cs1_vision_rope_v2\0").ok()?,
+                attention: *lib.get(b"cs1_vision_attention_v2\0").ok()?,
+            })
+        }
+    }
+}
 macro_rules! api {
     ($($name:ident($($arg:ident: $ty:ty),* $(,)?) $(-> $ret:ty)?;)*) => {
         /// The functions of the library, as declared in ops.h.
         pub struct Api {
             _lib: libloading::Library,
+            vision_v2: Option<VisionV2>,
             $(pub $name: unsafe extern "C" fn($($ty),*) $(-> $ret)?,)*
         }
 
         impl Api {
+            pub fn vision_v2(&self) -> Result<&VisionV2> {
+                self.vision_v2.as_ref().context("27B vision needs additive v2 CUDA symbols; rebuild libqwen3_5_cuda.so")
+            }
             fn resolve(lib: libloading::Library) -> Result<Self> {
                 $(
                     // SAFETY: the signature is the one ops.h declares for this symbol.
@@ -41,7 +91,8 @@ macro_rules! api {
                     }
                     .with_context(|| format!("{} has no {}", LIBRARY, stringify!($name)))?;
                 )*
-                Ok(Self { _lib: lib, $($name,)* })
+                let vision_v2=VisionV2::resolve(&lib);
+                Ok(Self { _lib: lib, vision_v2, $($name,)* })
             }
         }
     };
@@ -125,6 +176,7 @@ api! {
     cs1_sigmoid_gate(x: *mut c_void, gate: *const c_void, n: usize, stream: Stream) -> c_int;
     cs1_silu_mul(gate_up: *const c_void, ld: c_int, out: *mut c_void, t: c_int, i: c_int, stream: Stream) -> c_int;
     cs1_gemm_create(workspace_bytes: usize) -> *mut c_void;
+    cs1_gemm_create_fixed(workspace_bytes: usize, reference_m: c_int) -> *mut c_void;
     cs1_gemm_destroy(gemm: *mut c_void);
     cs1_gemm(
         gemm: *mut c_void, x: *const c_void, w: *const c_void, y: *mut c_void, m: c_int, n: c_int, k: c_int,

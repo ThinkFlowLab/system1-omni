@@ -4,6 +4,11 @@
 use std::path::Path;
 
 use anyhow::{Context, Result, ensure};
+use omni_qwen3_5_native::image_decode::{DecodeLimits, decode_rgb8};
+use omni_qwen3_5_native::image_preprocess::{
+    ImageLimits, ProcessedImage, preprocess_rgb8_with_limits,
+};
+use omni_qwen3_5_native::inputs::image_positions;
 use tokenizers::Tokenizer;
 
 use crate::contract::{self, Image, Question, Request};
@@ -14,30 +19,47 @@ pub const OPTION_CLOSE: u32 = 248_078;
 /// `MSO1`'s default image budget, which overrides the processor config's 401,408.
 pub const MAX_PIXELS: usize = 768 * 28 * 28;
 pub const MIN_PIXELS: usize = 65_536;
-const FACTOR: usize = 32; // patch 16 × spatial merge 2
 /// A single question's tokens: prompt, image and every option.
 pub const MAX_SEQUENCE: usize = 8192;
 /// Tokens the reference processes for a request: its prefix once, then every row.
 pub const MAX_PROCESSED: usize = 65_536;
+/// Option-text tokens whose log-probabilities a request reads; each takes a log-softmax
+/// over the vocabulary on the CPU.
+pub const MAX_TARGETS: usize = 16_384;
 
 const PAD: &str = "<|image_pad|>";
 
-/// `[1, height / 16, width / 16]` after the processor's resize: Transformers'
-/// `Qwen2VLImageProcessor` smart resize (Apache-2.0; see ../../README.md), as Cua-S1's.
-pub fn image_grid(width: usize, height: usize) -> [usize; 3] {
-    // Python's round uses ties-to-even.
-    let mut w = (width as f64 / FACTOR as f64).round_ties_even() as usize * FACTOR;
-    let mut h = (height as f64 / FACTOR as f64).round_ties_even() as usize * FACTOR;
-    if w * h > MAX_PIXELS {
-        let beta = ((width * height) as f64 / MAX_PIXELS as f64).sqrt();
-        w = ((width as f64 / beta / FACTOR as f64).floor() as usize * FACTOR).max(FACTOR);
-        h = ((height as f64 / beta / FACTOR as f64).floor() as usize * FACTOR).max(FACTOR);
-    } else if w * h < MIN_PIXELS {
-        let beta = (MIN_PIXELS as f64 / (width * height) as f64).sqrt();
-        w = (width as f64 * beta / FACTOR as f64).ceil() as usize * FACTOR;
-        h = (height as f64 * beta / FACTOR as f64).ceil() as usize * FACTOR;
-    }
-    [1, h / 16, w / 16]
+/// The processor's resize and patches for `MSO1`'s budget; the source limits are the
+/// contract's.
+const IMAGE_LIMITS: ImageLimits = ImageLimits {
+    max_source_side: contract::MAX_IMAGE_SIDE,
+    max_source_pixels: contract::MAX_IMAGE_SIDE * contract::MAX_IMAGE_SIDE,
+    min_pixels: MIN_PIXELS,
+    max_pixels: MAX_PIXELS,
+    max_patches: MAX_PIXELS / 256,
+};
+
+/// Decode the request's image to RGB as Pillow's `convert("RGB")` does, then
+/// `preprocess` it.
+pub fn pixels(image: &Image) -> Result<ProcessedImage> {
+    let decoded = decode_rgb8(
+        &image.bytes,
+        image.format,
+        &DecodeLimits {
+            max_side: contract::MAX_IMAGE_SIDE,
+            max_pixels: contract::MAX_IMAGE_SIDE * contract::MAX_IMAGE_SIDE,
+            max_aspect: 200,
+            // a 16-bit RGBA image at the largest size
+            max_alloc: (contract::MAX_IMAGE_SIDE * contract::MAX_IMAGE_SIDE * 8) as u64,
+        },
+    )?;
+    preprocess(decoded.width, decoded.height, &decoded.rgb)
+}
+
+/// Resize, normalize and pack interleaved RGB8 as the reference's
+/// `Qwen2VLImageProcessor` does with `MSO1`'s budget.
+pub fn preprocess(width: usize, height: usize, rgb: &[u8]) -> Result<ProcessedImage> {
+    preprocess_rgb8_with_limits(width, height, rgb, &IMAGE_LIMITS)
 }
 
 /// Image tokens after the 2×2 spatial merge.
@@ -87,8 +109,6 @@ pub struct Row {
 pub struct PreparedQuestion {
     /// The single-question sequence: prompt, image and every option block.
     pub token_ids: Vec<u32>,
-    /// `[3, sequence]` T/H/W rotary positions of `token_ids`.
-    pub positions: [Vec<i64>; 3],
     pub rows: Vec<Row>,
 }
 
@@ -157,7 +177,7 @@ pub fn layout(sequences: &[Vec<u32>], grid: [usize; 3]) -> Result<(Layout, Vec<V
         processed += question_rows.iter().map(|r| r.tokens.len()).sum::<usize>();
         rows.push(question_rows);
     }
-    let positions = image_positions(&sequences[0], grid)?;
+    let positions = image_positions(&sequences[0], IMAGE_TOKEN, grid)?;
     let next_position = positions
         .iter()
         .map(|axis| axis[prefix - 1])
@@ -174,56 +194,20 @@ pub fn layout(sequences: &[Vec<u32>], grid: [usize; 3]) -> Result<(Layout, Vec<V
     ))
 }
 
-/// Qwen3.5's T/H/W rotary positions (Transformers' `get_rope_index`, Apache-2.0; see
-/// ../../README.md) for a sequence with one contiguous image span:
-/// text before it counts up, the image's patches take the position of its first token
-/// plus their row (H) and column (W), and text after it continues from the image's
-/// largest position plus one.
-pub fn image_positions(ids: &[u32], grid: [usize; 3]) -> Result<[Vec<i64>; 3]> {
-    let start = ids
-        .iter()
-        .position(|&id| id == IMAGE_TOKEN)
-        .context("missing image placeholders")?;
-    let count = ids[start..]
-        .iter()
-        .take_while(|&&id| id == IMAGE_TOKEN)
-        .count();
-    let end = start + count;
-    ensure!(
-        !ids[end..].contains(&IMAGE_TOKEN),
-        "image placeholders must be one contiguous span"
-    );
-    let [t, h, w] = grid;
-    ensure!(
-        t == 1 && h > 0 && w > 0 && h % 2 == 0 && w % 2 == 0 && h / 2 * (w / 2) == count,
-        "image span does not match its grid"
-    );
-    let mut positions: [Vec<i64>; 3] = std::array::from_fn(|_| (0..start as i64).collect());
-    for y in 0..h / 2 {
-        for x in 0..w / 2 {
-            positions[0].push(start as i64);
-            positions[1].push((start + y) as i64);
-            positions[2].push((start + x) as i64);
-        }
-    }
-    let next = start + h.max(w) / 2;
-    for axis in &mut positions {
-        axis.extend((next..next + ids.len() - end).map(|p| p as i64));
-    }
-    Ok(positions)
-}
-
 pub struct Processor {
     tokenizer: Tokenizer,
 }
 
 /// A request ready for execution; `questions` keeps identity and order for finishing.
 pub struct PreparedRequest {
-    pub image: Image,
+    pub pixels: ProcessedImage,
     pub grid: [usize; 3],
     pub questions: Vec<Question>,
     pub inputs: Vec<PreparedQuestion>,
     pub layout: Layout,
+    /// Time spent decoding, preprocessing and tokenizing, which the reference's latency
+    /// includes.
+    pub preparation_seconds: f64,
 }
 
 impl Processor {
@@ -264,8 +248,10 @@ impl Processor {
 
     /// Validate and lay out the whole request before any device work.
     pub fn prepare(&self, raw: &[u8]) -> Result<PreparedRequest> {
+        let start = std::time::Instant::now();
         let Request { image, questions } = contract::compile(raw)?;
-        let grid = image_grid(image.width, image.height);
+        let pixels = pixels(&image)?;
+        let grid = pixels.image_grid_thw;
         let sequences = questions
             .iter()
             .map(|q| {
@@ -285,23 +271,30 @@ impl Processor {
             "request needs {} tokens, above {MAX_PROCESSED}",
             layout.processed_tokens
         );
+        // Score's ordinal head reads no log-probabilities.
+        let targets: usize = questions
+            .iter()
+            .zip(&rows)
+            .filter(|(q, _)| q.kind != contract::Kind::Score)
+            .flat_map(|(_, rows)| rows)
+            .map(|r| r.targets.len() + usize::from(r.first.is_some()))
+            .sum();
+        ensure!(
+            targets <= MAX_TARGETS,
+            "request reads {targets} option-text tokens, above {MAX_TARGETS}"
+        );
         let inputs = sequences
             .into_iter()
             .zip(rows)
-            .map(|(token_ids, rows)| {
-                Ok(PreparedQuestion {
-                    positions: image_positions(&token_ids, grid)?,
-                    token_ids,
-                    rows,
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
+            .map(|(token_ids, rows)| PreparedQuestion { token_ids, rows })
+            .collect();
         Ok(PreparedRequest {
-            image,
+            pixels,
             grid,
             questions,
             inputs,
             layout,
+            preparation_seconds: start.elapsed().as_secs_f64(),
         })
     }
 }
