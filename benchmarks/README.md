@@ -181,3 +181,14 @@ metadata and environment-based bearer authentication.
 [`laya_mps/`](laya_mps/README.md) holds the scripts behind the numbers of the
 [Apple Silicon recipe](../recipe/laya/apple-silicon.md): in-process and HTTP latency, paired comparisons,
 profiling and the report with its output-parity section.
+
+### Score wire precision
+
+`bench.py run --score-decimals {2,3,4}` declares the model's scalar Score
+rounding contract (default: four decimals; Decider: two). Probability precision
+remains four decimals. The validator bounds independent scalar and weighted
+probability rounding, requires the exact level range, and preserves wire values.
+The same optional `score_decimals` argument is accepted by `read_answers`,
+`request_one` and `replay`; run configuration records it for reproducibility.
+Decider's isolated all-zero Score distribution requires complete consistent
+zero-fit metadata; other non-normalized distributions remain invalid.

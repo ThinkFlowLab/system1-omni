@@ -82,7 +82,34 @@ def sum_allowance(count):
     return count * 0.5 * 10**-WIRE_DECIMALS + 1e-9
 
 
-def read_answers(case, payload):
+def score_allowance(count, score_decimals=4):
+    """Bound independent rounding of the scalar and its weighted probabilities."""
+    return (
+        0.5 * 10**-score_decimals
+        + 0.5 * 10**-WIRE_DECIMALS * count * (count - 1) / 2
+        + 1e-9
+    )
+
+
+def zero_score_fit(answer, probabilities):
+    """Recognize Decider's isolated Score response when no level has any fit."""
+    level_fit = answer.get("level_fit")
+    return (
+        answer.get("type") == "score"
+        and all(p == 0 for p in probabilities.values())
+        and isinstance(level_fit, dict)
+        and set(level_fit) == set(probabilities)
+        and all(v == 0 and number(v) for v in level_fit.values())
+        and all(
+            answer.get(key) == 0 and number(answer[key])
+            for key in ("score", "confidence", "x_p_max", "fit_mass")
+        )
+        and answer.get("certainty") == 1
+        and number(answer["certainty"])
+    )
+
+
+def read_answers(case, payload, score_decimals=4):
     """Validate wire results and normalize probabilities by label, never by order."""
     answers = payload["answers"]
     if set(answers) != set(case["request"]["questions"]):
@@ -109,7 +136,9 @@ def read_answers(case, payload):
         if any(not number(p) or not 0 <= p <= 1 for p in probabilities.values()):
             raise ValueError("probabilities must be finite and in [0, 1]")
         total = math.fsum(probabilities.values())
-        if abs(total - 1) > sum_allowance(len(probabilities)):
+        if abs(total - 1) > sum_allowance(len(probabilities)) and not (
+            kind == "score" and total == 0 and zero_score_fit(answer, probabilities)
+        ):
             raise ValueError("probabilities must sum to one")
         if kind == "choice":
             if value not in probabilities or probabilities[value] != max(
@@ -119,8 +148,15 @@ def read_answers(case, payload):
         elif not number(value):
             raise ValueError("decision value must be finite")
         if kind == "score":
-            expected = sum(int(k) * p for k, p in probabilities.items())
-            if not math.isclose(value, expected, abs_tol=1e-4):
+            if not 0 <= value <= len(probabilities) - 1:
+                raise ValueError("score must be in the level range")
+            expected = math.fsum(int(k) * p for k, p in probabilities.items())
+            if not math.isclose(
+                value,
+                expected,
+                rel_tol=0,
+                abs_tol=score_allowance(len(probabilities), score_decimals),
+            ):
                 raise ValueError("score must equal the expected level")
         normalized[qid] = {"value": value, "probabilities": probabilities}
     return normalized
@@ -173,7 +209,7 @@ def summarize(cases, records, elapsed):
     }
 
 
-async def request_one(client, endpoint, case, model, timeout):
+async def request_one(client, endpoint, case, model, timeout, score_decimals=4):
     started = time.perf_counter()
     record = {
         "id": case["id"],
@@ -191,7 +227,7 @@ async def request_one(client, endpoint, case, model, timeout):
         record["status"] = response.status_code
         record["response"] = response.text
         response.raise_for_status()
-        record["answers"] = read_answers(case, response.json())
+        record["answers"] = read_answers(case, response.json(), score_decimals)
     except httpx.HTTPStatusError as exc:
         record.update(error=str(exc), error_kind=f"http_{record['status']}")
     except (TimeoutError, httpx.TimeoutException) as exc:
@@ -206,13 +242,17 @@ async def request_one(client, endpoint, case, model, timeout):
     return record
 
 
-async def replay(client, endpoint, cases, model, concurrency, timeout):
+async def replay(
+    client, endpoint, cases, model, concurrency, timeout, score_decimals=4
+):
     pending = iter(enumerate(cases))
     records = [None] * len(cases)
 
     async def worker():
         for index, case in pending:
-            records[index] = await request_one(client, endpoint, case, model, timeout)
+            records[index] = await request_one(
+                client, endpoint, case, model, timeout, score_decimals
+            )
 
     started = time.perf_counter()
     await asyncio.gather(*(worker() for _ in range(concurrency)))
@@ -241,6 +281,8 @@ async def run(args, cases):
         {
             "manifest_sha256": digest(args.manifest),
             "runner_sha256": digest(Path(__file__)),
+            "validation_protocol": "probabilities-4dp-model-score-v1",
+            "score_decimals": getattr(args, "score_decimals", 4),
             "metadata": metadata,
             "endpoint": args.endpoint,
             "model": args.model,
@@ -274,6 +316,7 @@ async def run(args, cases):
                     cases[i % len(cases)],
                     args.model,
                     args.timeout,
+                    getattr(args, "score_decimals", 4),
                 )
             )
             if warmup[-1]["error"]:
@@ -281,7 +324,13 @@ async def run(args, cases):
                 raise ValueError("readiness/warmup failed; see warmup.json")
         write_json(args.output / "warmup.json", warmup)
         records, elapsed = await replay(
-            client, args.endpoint, cases, args.model, args.concurrency, args.timeout
+            client,
+            args.endpoint,
+            cases,
+            args.model,
+            args.concurrency,
+            args.timeout,
+            getattr(args, "score_decimals", 4),
         )
     (args.output / "responses.jsonl").write_text(
         "".join(json.dumps(r, allow_nan=False) + "\n" for r in records)
@@ -375,6 +424,7 @@ def main():
         "--model", required=True, help="backend's alias for the pinned checkpoint"
     )
     runner.add_argument("--metadata", type=Path, required=True)
+    runner.add_argument("--score-decimals", type=int, choices=(2, 3, 4), default=4)
     runner.add_argument(
         "--output", type=Path, required=True, help="new directory; never overwritten"
     )
