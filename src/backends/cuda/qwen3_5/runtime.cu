@@ -12,6 +12,8 @@ const char* cs1_error_string(int code) { return cudaGetErrorString(static_cast<c
 
 int cs1_set_device(int device) { return cudaSetDevice(device); }
 
+int cs1_get_device(int* device) { return cudaGetDevice(device); }
+
 int cs1_malloc(void** ptr, size_t bytes) { return cudaMalloc(ptr, bytes); }
 
 int cs1_free(void* ptr) { return cudaFree(ptr); }

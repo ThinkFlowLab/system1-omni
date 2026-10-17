@@ -13,7 +13,7 @@
 #include <stdint.h>
 
 // Bumped whenever the required interface below changes.
-#define CS1_ABI_VERSION 6
+#define CS1_ABI_VERSION 8
 
 #ifdef __cplusplus
 extern "C" {
@@ -24,6 +24,9 @@ extern "C" {
 uint32_t cs1_abi_version(void);
 const char* cs1_error_string(int code);
 int cs1_set_device(int device);
+int cs1_get_device(int* device);
+// Set flag to zero, then atomically set to one if any BF16 value is non-finite.
+int cs1_bf16_finite(const void* x, size_t n, uint32_t* flag, void* stream);
 int cs1_malloc(void** ptr, size_t bytes);
 int cs1_free(void* ptr);
 int cs1_stream_create(void** stream);
@@ -131,6 +134,11 @@ int cs1_vision_position(void* x, const void* table, const int* indices, const fl
 int cs1_vision_rope(const void* qkv, const float* co, const float* si, void* q, void* k, int n, void* stream);
 // q/k [N,1024], V is a slice in qkv [N,3072]. No causal mask, O(N) memory.
 int cs1_vision_attention(const void* q, const void* k, const void* v, void* out, int n, void* stream);
+// Additive vision endpoints, optional within the required CUDA ABI. Supports the exact 4B/27B layouts.
+// Rotary cos/sin [N,head_dim/2]. Attention workspace: 4*N*16*80 BF16 elements for head72.
+int cs1_vision_position_v2(void* x, const void* table, const int* indices, const float* weights, int n, int hidden, void* stream);
+int cs1_vision_rope_v2(const void* qkv, const float* co, const float* si, void* q, void* k, int n, int hidden, int head_dim, void* stream);
+int cs1_vision_attention_v2(const void* q, const void* k, const void* v, void* out, int n, int heads, int head_dim, void* workspace, void* stream);
 int cs1_vision_bias(void* x, const void* bias, size_t n, int d, void* stream);
 int cs1_vision_gelu(void* x, size_t n, int exact, void* stream);
 int cs1_vision_add(void* x, const void* delta, size_t n, void* stream);

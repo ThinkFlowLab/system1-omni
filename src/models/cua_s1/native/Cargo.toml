@@ -34,3 +34,7 @@ path = "src/vision_main.rs"
 [[example]]
 name = "vision_graph_bench"
 path = "../../../../tests/cua_s1/vision_graph_bench.rs"
+
+[[test]]
+name = "device_controls"
+path = "../../../../tests/cua_s1/device_controls.rs"

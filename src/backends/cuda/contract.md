@@ -13,12 +13,14 @@ engine" is the older word for the second of those. A backend does not need
 identical internal structures to another backend, and no universal tensor
 abstraction is introduced here.
 
-Status: proposed. The checker is [`check_contract.py`](check_contract.py); wiring it
-into CI is a separate change, so nothing here is enforced yet.
+The checker is [`check_contract.py`](check_contract.py). The `cuda-contract` job
+in [CI](../../../.github/workflows/ci.yml) runs its tests, backend tests and the
+metadata check on CPU. Those checks do not compile CUDA or establish device
+numerical parity; compilation and model-specific GPU qualification are separate.
 
 ## Why this exists
 
-Three CUDA efforts are now in flight, each with its own build path:
+The original proposal compared three CUDA efforts with different build paths:
 
 | Effort | Kernels | Produces | Built by |
 | --- | --- | --- | --- |
@@ -26,10 +28,8 @@ Three CUDA efforts are now in flight, each with its own build path:
 | Cua-S1 native (#19) | CUDA C++ | `libqwen3_5_cuda.so` | `build.sh` |
 | Cua-S1 multimodal (#12) | Triton / cuTile | (Python) | — |
 
-That is three build systems, three library names and three C ABIs. None of it
-conflicts today, because nothing links against anything else yet. It conflicts
-as soon as one model reuses another's kernels — which has already happened:
-Cua-S1's and Open-Jev's native workers share the Qwen3.5/3.8 executor under
+That comparison motivated a shared build and ABI contract as models began
+reusing kernels. Cua-S1's and Open-Jev's native workers share the Qwen3.5/3.8 executor under
 `src/models/qwen3_5/native/`, and `#9` asks for CUDA paths for further models.
 
 `#6` says to extract shared code once two implementations exist. Two exist now.
@@ -44,7 +44,9 @@ src/backends/cuda/<name>/<name>.backend.json
 ```
 
 The checker discovers backends by that path, so adding a backend needs no CI
-change. Schema:
+change. The following schema example is illustrative, not the current Qwen
+manifest or a device-qualification claim. Read that backend's checked-in
+`qwen3_5.backend.json` and `ops.h` for its actual ABI, sources and status:
 
 ```json
 {
@@ -135,8 +137,10 @@ reference for the shape. The contract fixes four points:
    `uint32_t <prefix>_abi_version(void)` returning it; a loader refuses a library
    whose value it does not know. The manifest's `abi_version` is **that number**,
    not a version of this document, and the checker reads the macro out of the
-   declared sources and requires the two to agree. `#19`'s `ops.h` says
-   `CS1_ABI_VERSION 4` today, so a `qwen3_5` manifest declares 4.
+   declared sources and requires the two to agree. For `qwen3_5`, read the
+   current `CS1_ABI_VERSION` from `ops.h` and use that value in its manifest
+   and Rust loader. A historical PR's ABI number is not the current build's
+   requirement; rebuild the library and its consumers together after a change.
 
    Two backends may declare different values. They are independent libraries, and
    the repository layout says CUDA and Metal implementations need not share

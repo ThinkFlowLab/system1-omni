@@ -66,6 +66,7 @@ nav:
       - Cua-S1 text worker: recipe/cua_s1/text.md
       - Cua-S1 native text worker: recipe/cua_s1/native.md
       - Valen reference worker: recipe/valen/reference.md
+      - Cua-S1 native screenshots: recipe/cua_s1/native_screenshot.md
       - Cua-S1 vision CUDA Graph: recipe/cua_s1/native_vision_graph.md
       - Open-Jev native text worker: recipe/open_jev/native.md
       - Open-Jev-27B H200 validation: recipe/open_jev/validation.md

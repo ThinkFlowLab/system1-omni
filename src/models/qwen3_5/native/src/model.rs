@@ -18,7 +18,7 @@ use anyhow::{Context, Result, bail, ensure};
 use serde_json::Value as Json;
 
 use crate::cuda::{self, DeviceBuffer, Stream, check};
-use crate::inputs::{MultimodalInput, rotary_tables};
+use crate::inputs::{DeviceMultimodalInput, MultimodalInput, rotary_tables};
 
 const ALIGN: usize = 256;
 const BF16: usize = 2;
@@ -894,6 +894,60 @@ impl Model {
                 self.mm_graphs.clear();
             }
         }
+    }
+
+    /// Eager multimodal execution using borrowed device-resident image rows.
+    /// The producer must finish writes before entry. All queued consumer work is
+    /// completed on every exit path, before the external allocation can be reused.
+    pub fn forward_multimodal_device(
+        &mut self,
+        input: &DeviceMultimodalInput<'_>,
+    ) -> Result<Vec<f32>> {
+        let result = (|| {
+            cuda::set_device(0)?;
+            let image_token = self
+                .cfg
+                .image_token_id
+                .context("checkpoint has no image_token_id")?;
+            input.validate(
+                self.cfg.hidden,
+                self.embed.shape[0],
+                image_token,
+                self.cfg.max_positions,
+                0,
+            )?;
+            input.image_embeddings.validate_finite(self.stream)?;
+            let t = input.token_ids.len();
+            self.prepare_scratch(t)?;
+            let s = self.scratch.as_ref().unwrap();
+            self.upload_positions(s, input.position_ids)?;
+            self.embed_tokens(s, input.token_ids)?;
+            let indices = input.image_token_indices;
+            let row_bytes = self.cfg.hidden * BF16;
+            let mut begin = 0;
+            while begin < indices.len() {
+                let mut end = begin + 1;
+                while end < indices.len() && indices[end] == indices[end - 1] + 1 {
+                    end += 1;
+                }
+                // SAFETY: metadata validates source rows, device and allocation
+                // extent and indices exactly match placeholders inside s.res.
+                unsafe {
+                    cuda::copy_dd(
+                        s.at(s.res + indices[begin] * row_bytes),
+                        input.image_embeddings.at(begin * row_bytes),
+                        (end - begin) * row_bytes,
+                        self.stream,
+                    )?;
+                }
+                begin = end;
+            }
+            self.run(s, &[t], true)?;
+            self.last_hidden(s, t)
+        })();
+        let synced = self.synchronize();
+        synced?;
+        result
     }
 
     fn upload_positions(&self, s: &Scratch, positions: [&[i64]; 3]) -> Result<()> {

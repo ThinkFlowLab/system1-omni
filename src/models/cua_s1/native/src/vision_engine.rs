@@ -3,8 +3,9 @@ pub use crate::vision_processing::PreparedRequest;
 use crate::vision_processing::{VisionProcessor, probabilities};
 use crate::{
     contract::{LETTERS, Question},
+    cuda::DeviceBf16Matrix,
     image_request::ImageRequest,
-    inputs::MultimodalInput,
+    inputs::{DeviceMultimodalInput, MultimodalInput},
     model::Model,
     multimodal::ImagePrompt,
     vision::VisionModel,
@@ -22,6 +23,7 @@ pub struct VisionEngine {
     pub vision: VisionModel,
     language: Model,
     letters: Vec<f32>,
+    device_features: bool,
 }
 
 pub struct Readout {
@@ -32,6 +34,13 @@ pub struct Readout {
 
 impl VisionEngine {
     pub fn load(base: &Path, adapter: &Path, language: &Path, library: &Path) -> Result<Self> {
+        let device_features = match std::env::var("CUA_S1_DEVICE_FEATURES") {
+            Ok(value) => device_features_enabled(Some(&value))?,
+            Err(std::env::VarError::NotPresent) => false,
+            Err(std::env::VarError::NotUnicode(_)) => {
+                anyhow::bail!("CUA_S1_DEVICE_FEATURES must be unset, 0, or 1")
+            }
+        };
         let marker: Value = serde_json::from_slice(
             &std::fs::read(language.join("cua_s1_language_export.json"))
                 .context("export the multimodal language checkpoint first")?,
@@ -72,6 +81,7 @@ impl VisionEngine {
             vision,
             language: model,
             letters,
+            device_features,
         })
     }
 
@@ -103,13 +113,17 @@ impl VisionEngine {
                 &prompt.position_ids[2],
             ],
         })?;
-        let logits: Vec<f32> = self
-            .letters
+        let logits = Self::letter_logits(&self.letters, &hidden, options)?;
+        Ok((hidden, logits))
+    }
+
+    fn letter_logits(letters: &[f32], hidden: &[f32], options: usize) -> Result<Vec<f32>> {
+        let logits: Vec<f32> = letters
             .chunks_exact(hidden.len())
             .take(options)
             .map(|w| {
                 w.iter()
-                    .zip(&hidden)
+                    .zip(hidden)
                     .map(|(&a, &b)| a as f64 * b as f64)
                     .sum::<f64>() as f32
             })
@@ -118,7 +132,46 @@ impl VisionEngine {
             logits.iter().all(|x| x.is_finite()),
             "non-finite candidate logits"
         );
+        Ok(logits)
+    }
+
+    fn raw_score_device(
+        language: &mut Model,
+        letters: &[f32],
+        prompt: &ImagePrompt,
+        features: &DeviceBf16Matrix<'_>,
+        options: usize,
+    ) -> Result<(Vec<f32>, Vec<f32>)> {
+        ensure!((1..=26).contains(&options), "expected 1 to 26 options");
+        let hidden = language.forward_multimodal_device(&DeviceMultimodalInput {
+            token_ids: &prompt.token_ids,
+            image_token_indices: &prompt.image_token_indices,
+            image_embeddings: *features,
+            position_ids: [
+                &prompt.position_ids[0],
+                &prompt.position_ids[1],
+                &prompt.position_ids[2],
+            ],
+        })?;
+        let logits = Self::letter_logits(letters, &hidden, options)?;
         Ok((hidden, logits))
+    }
+
+    /// Diagnostic parity readout from externally produced, synchronized device rows.
+    pub fn score_device(
+        &mut self,
+        prompt: &ImagePrompt,
+        features: &DeviceBf16Matrix<'_>,
+        options: usize,
+    ) -> Result<Readout> {
+        let (hidden, logits) =
+            Self::raw_score_device(&mut self.language, &self.letters, prompt, features, options)?;
+        let probabilities = probabilities(&logits)?;
+        Ok(Readout {
+            hidden,
+            logits,
+            probabilities,
+        })
     }
 
     /// Diagnostic readout, including processor normalization of raw model logits.
@@ -156,16 +209,37 @@ impl VisionEngine {
                 prepared.prompts.len() == counts.len() && !counts.is_empty(),
                 "question/prompt count mismatch"
             );
-            let features = self.vision.forward(&prepared.image)?;
-            prepared
-                .prompts
-                .iter()
-                .zip(counts)
-                .map(|(p, count)| {
-                    self.raw_score(p, &features, count)
+            if self.device_features {
+                let features = self.vision.forward_device(&prepared.image)?;
+                // Each consumer synchronizes before returning, including errors;
+                // the view remains borrowed across all questions in this request.
+                prepared
+                    .prompts
+                    .iter()
+                    .zip(counts)
+                    .map(|(p, count)| {
+                        Self::raw_score_device(
+                            &mut self.language,
+                            &self.letters,
+                            p,
+                            &features,
+                            count,
+                        )
                         .map(|(_, logits)| logits)
-                })
-                .collect()
+                    })
+                    .collect()
+            } else {
+                let features = self.vision.forward(&prepared.image)?;
+                prepared
+                    .prompts
+                    .iter()
+                    .zip(counts)
+                    .map(|(p, count)| {
+                        self.raw_score(p, &features, count)
+                            .map(|(_, logits)| logits)
+                    })
+                    .collect()
+            }
         })();
         // Also finish queued work on an error before releasing runtime admission.
         let vision_sync = self.vision.synchronize();
@@ -178,6 +252,15 @@ impl VisionEngine {
     pub fn predict_prepared(&mut self, prepared: &PreparedRequest) -> Result<Value> {
         let rows = self.execute_prepared(prepared)?;
         prepared.context.finish(rows)
+    }
+}
+
+/// Serving opt-in: unset/0 selects host; 1 selects resident features.
+pub fn device_features_enabled(value: Option<&str>) -> Result<bool> {
+    match value {
+        None | Some("0") => Ok(false),
+        Some("1") => Ok(true),
+        Some(_) => anyhow::bail!("CUA_S1_DEVICE_FEATURES must be unset, 0, or 1"),
     }
 }
 
@@ -229,3 +312,11 @@ fn letter_rows(dir: &Path, ids: &[u32], hidden: usize) -> Result<Vec<f32>> {
     }
     Ok(result)
 }
+
+#[cfg(test)]
+#[path = "../../../../../tests/cua_s1/device_features_gpu.rs"]
+mod device_feature_tests;
+
+#[cfg(test)]
+#[path = "../../../../../tests/cua_s1/device_copy_failure_gpu.rs"]
+mod device_copy_failure_tests;

@@ -1086,3 +1086,6 @@ fn gdn_prefill_two_phase_matches_one_shot_bit_for_bit() {
         );
     }
 }
+
+#[path = "vision_v2_kernels.rs"]
+mod vision_v2;

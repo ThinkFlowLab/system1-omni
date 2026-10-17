@@ -5,13 +5,14 @@
 namespace cs1 { namespace vision {
 namespace flash {
 
-constexpr int D = 64, BM = 64, BN = 32, THREADS = 128;
-constexpr int LDS = D + 8;  // shared row stride in elements: 528 bytes keeps ldmatrix conflict-free
-constexpr int SMEM_BYTES = (BM + 2 * BN) * LDS * 2;
+constexpr int BM = 64, BN = 32, THREADS = 128;
+template<int D> constexpr int SMEM_BYTES = (BM + 2 * BN) * (D + 8) * 2;
 
+template<int D>
 __global__ void __launch_bounds__(THREADS)
     flash_kernel(const bf16* __restrict__ q, const bf16* __restrict__ k, const bf16* __restrict__ v, int ldv,
                  bf16* __restrict__ out, int T, int Hq, int Hk, float scale_log2) {
+    constexpr int LDS = D + 8;
     extern __shared__ __align__(16) unsigned char smem[];
     bf16* qs = reinterpret_cast<bf16*>(smem);
     bf16* ks = qs + BM * LDS;
@@ -229,7 +230,7 @@ extern "C" int cs1_vision_rope(const void* qkv,const float* co,const float* si,v
 extern "C" int cs1_vision_attention(const void* q,const void* k,const void* v,void* out,int n,void* stream) {
     if(n<=0) return cudaErrorInvalidValue;
     namespace f=vision::flash;
-    f::flash_kernel<<<dim3((n+f::BM-1)/f::BM,16),f::THREADS,f::SMEM_BYTES,(cudaStream_t)stream>>>(
+    f::flash_kernel<64><<<dim3((n+f::BM-1)/f::BM,16),f::THREADS,f::SMEM_BYTES<64>,(cudaStream_t)stream>>>(
         (const bf16*)q,(const bf16*)k,(const bf16*)v,3072,(bf16*)out,n,16,16,0.125f*1.4426950408889634f);
     return cudaGetLastError();
 }
@@ -255,4 +256,66 @@ extern "C" int cs1_vision_bias(void* x,const void* bias,size_t n,int d,void* str
     if(d<=0) return cudaErrorInvalidValue;
     if(n==0) return cudaSuccess;
     vision::bias_kernel<<<(n+255)/256,256,0,(cudaStream_t)stream>>>((bf16*)x,(const bf16*)bias,n,d); return cudaGetLastError();
+}
+
+namespace cs1 { namespace vision {
+__global__ void position_v2_kernel(bf16* x,const bf16* table,const int* indices,const float* weights,size_t n,int hidden) {
+    size_t i=(size_t)blockIdx.x*blockDim.x+threadIdx.x;
+    if(i>=n) return;
+    const int token=i/hidden,d=i%hidden;
+    float pos=0.f;
+    for(int j=0;j<4;j++) pos=__fadd_rn(pos,__fmul_rn(f32(table[(size_t)indices[token*4+j]*hidden+d]),weights[token*4+j]));
+    x[i]=to_bf16(f32(x[i])+round_bf16(pos));
+}
+__global__ void rope_v2_kernel(const bf16* qkv,const float* co,const float* si,bf16* q,bf16* k,size_t n,int hidden,int dh) {
+    size_t i=(size_t)blockIdx.x*blockDim.x+threadIdx.x;
+    if(i>=n) return;
+    const int token=i/hidden,d=i%dh,channel=i%hidden,half=dh/2;
+    const float c=co[(size_t)token*half+d%half],s=si[(size_t)token*half+d%half];
+    const int partner=channel+(d<half?half:-half);
+    const float sign=d<half?-1.f:1.f;
+    q[i]=to_bf16(__fadd_rn(__fmul_rn(f32(qkv[(size_t)token*hidden*3+channel]),c),__fmul_rn(sign*f32(qkv[(size_t)token*hidden*3+partner]),s)));
+    k[i]=to_bf16(__fadd_rn(__fmul_rn(f32(qkv[(size_t)token*hidden*3+hidden+channel]),c),__fmul_rn(sign*f32(qkv[(size_t)token*hidden*3+hidden+partner]),s)));
+}
+// Q/K are compact; V points into interleaved QKV. Every padded column is explicitly zero.
+__global__ void pad_attention_kernel(const bf16* q,const bf16* k,const bf16* v,bf16* pq,bf16* pk,bf16* pv,size_t size,int heads,int dh) {
+    const size_t i=(size_t)blockIdx.x*blockDim.x+threadIdx.x;
+    if(i>=size) return;
+    const int d=i%80,head=(i/80)%heads;
+    const size_t token=i/(heads*80),compact=(token*heads+head)*dh+d;
+    pq[i]=d<dh?q[compact]:to_bf16(0.f);
+    pk[i]=d<dh?k[compact]:to_bf16(0.f);
+    pv[i]=d<dh?v[token*heads*dh*3+head*dh+d]:to_bf16(0.f);
+}
+__global__ void unpack_attention_kernel(const bf16* padded,bf16* out,size_t size,int dh) {
+    const size_t i=(size_t)blockIdx.x*blockDim.x+threadIdx.x;
+    if(i<size) out[i]=padded[(i/dh)*80+i%dh];
+}
+} }
+extern "C" int cs1_vision_position_v2(void* x,const void* table,const int* indices,const float* weights,int n,int hidden,void* stream) {
+    if(n<=0 || (hidden!=1024 && hidden!=1152)) return cudaErrorInvalidValue;
+    const size_t count=(size_t)n*hidden;
+    vision::position_v2_kernel<<<(count+255)/256,256,0,(cudaStream_t)stream>>>((bf16*)x,(const bf16*)table,indices,weights,count,hidden);
+    return cudaGetLastError();
+}
+extern "C" int cs1_vision_rope_v2(const void* qkv,const float* co,const float* si,void* q,void* k,int n,int hidden,int dh,void* stream) {
+    if(n<=0 || !((hidden==1024 && dh==64)||(hidden==1152 && dh==72))) return cudaErrorInvalidValue;
+    const size_t count=(size_t)n*hidden;
+    vision::rope_v2_kernel<<<(count+255)/256,256,0,(cudaStream_t)stream>>>((const bf16*)qkv,co,si,(bf16*)q,(bf16*)k,count,hidden,dh);
+    return cudaGetLastError();
+}
+extern "C" int cs1_vision_attention_v2(const void* q,const void* k,const void* v,void* out,int n,int heads,int dh,void* workspace,void* stream) {
+    if(n<=0 || heads!=16 || (dh!=64 && dh!=72)) return cudaErrorInvalidValue;
+    if(dh==64) return cs1_vision_attention(q,k,v,out,n,stream);
+    if(!workspace) return cudaErrorInvalidValue;
+    const size_t count=(size_t)n*heads*80;
+    bf16* pq=(bf16*)workspace; bf16* pk=pq+count; bf16* pv=pk+count; bf16* po=pv+count;
+    vision::pad_attention_kernel<<<(count+255)/256,256,0,(cudaStream_t)stream>>>((const bf16*)q,(const bf16*)k,(const bf16*)v,pq,pk,pv,count,heads,dh);
+    cudaError_t status=cudaGetLastError(); if(status!=cudaSuccess) return status;
+    namespace f=vision::flash;
+    f::flash_kernel<80><<<dim3((n+f::BM-1)/f::BM,heads),f::THREADS,f::SMEM_BYTES<80>,(cudaStream_t)stream>>>(
+        pq,pk,pv,heads*80,po,n,heads,heads,rsqrtf((float)dh)*1.4426950408889634f);
+    status=cudaGetLastError(); if(status!=cudaSuccess) return status;
+    vision::unpack_attention_kernel<<<((size_t)n*heads*dh+255)/256,256,0,(cudaStream_t)stream>>>(po,(bf16*)out,(size_t)n*heads*dh,dh);
+    return cudaGetLastError();
 }

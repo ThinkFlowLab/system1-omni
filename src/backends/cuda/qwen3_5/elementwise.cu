@@ -86,6 +86,13 @@ __global__ void silu_mul_packed_kernel(const Pack8* __restrict__ gate_up, int ld
     out[i] = result;
 }
 
+__global__ void bf16_finite_kernel(const uint16_t* x, size_t n, uint32_t* flag) {
+    for (size_t i = blockIdx.x * blockDim.x + threadIdx.x; i < n;
+         i += static_cast<size_t>(blockDim.x) * gridDim.x) {
+        if ((x[i] & 0x7f80u) == 0x7f80u) atomicExch(flag, 1u);
+    }
+}
+
 unsigned blocks(size_t n) { return (unsigned)((n + THREADS - 1) / THREADS); }
 
 }  // namespace
@@ -142,5 +149,14 @@ extern "C" int cs1_silu_mul(const void* gate_up, int ld, void* out, int T, int I
         silu_mul_kernel<<<blocks(n), THREADS, 0, static_cast<cudaStream_t>(stream)>>>(
             static_cast<const bf16*>(gate_up), ld, static_cast<bf16*>(out), I, n);
     }
+    return cudaGetLastError();
+}
+
+extern "C" int cs1_bf16_finite(const void* x, size_t n, uint32_t* flag, void* stream) {
+    auto st = static_cast<cudaStream_t>(stream);
+    cudaError_t e = cudaMemsetAsync(flag, 0, sizeof(uint32_t), st);
+    if (e != cudaSuccess) return e;
+    if (n) bf16_finite_kernel<<<static_cast<unsigned int>(((n - 1) / 256 + 1) < 65535 ? ((n - 1) / 256 + 1) : 65535), 256, 0, st>>>(
+        static_cast<const uint16_t*>(x), n, flag);
     return cudaGetLastError();
 }
