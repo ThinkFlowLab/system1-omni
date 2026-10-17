@@ -1,7 +1,8 @@
 # JEV-27B-VL experimental native recipe
 
 This recipe serves `autotrust/JEV-27B-VL` System-1 decisions with Rust/CUDA.
-Text runs natively; images must first be encoded offline by Transformers.
+Text runs natively. Images can use the shared native vision backend or assets
+encoded offline by Transformers.
 The [model contract](../../src/models/jev_vl/README.md) explains the single-question
 API, verbalizer head and cache ownership. The reviewed candidate passed a
 [bounded H800 validation](validation.md#historical-h800-validation);
@@ -52,7 +53,8 @@ JEV_VL_MODEL=weights/jev-vl-merged \
 `JEV_VL_HOST` defaults to `127.0.0.1`, `JEV_VL_PORT` to `8001`, and the CUDA
 library defaults to the file beside the executable. The worker uses visible
 CUDA device 0. `/health` becomes available after model loading and a successful
-text warmup; that health check does not validate image assets.
+text warmup. With `JEV_VL_VISION`, readiness also requires a successful inline-image
+warmup; it does not validate every user image or offline-preencoded asset.
 
 In separate terminals, start the frontend and send the same request directly and
 through it:
@@ -81,10 +83,66 @@ checks. The frontend routes `/health` and `/v1/systemone`; it does not proxy
 generation routes such as `/v1/chat/completions`. An unknown route returns the
 frontend's own 404 rather than this worker's error envelope.
 
-## Prepare images before serving
+## Online images
 
-The worker does not decode images, fetch URLs or invoke a vision tower on cache
-miss. First prepare a JSONL manifest with one object per line containing a
+Export the vision tower separately from the same pinned source checkpoint.
+The CPU exporter preserves BF16 vision weights and pins the processor and source
+files. It does not rewrite the language export:
+
+```sh
+CUDA_VISIBLE_DEVICES='' .venv-jev-vl/bin/python recipe/jev_vl/export_vision.py \
+  --model weights/JEV-27B-VL --out weights/jev-vl-vision
+JEV_VL_MODEL=weights/jev-vl-merged JEV_VL_VISION=weights/jev-vl-vision \
+  JEV_VL_CUDA_LIB=$PWD/target/release/libqwen3_5_cuda.so \
+  JEV_VL_CACHE=1 CUA_S1_VISION_GRAPH=0 target/release/omni-jev-vl-native
+```
+
+With `JEV_VL_VISION` set, startup runs an online vision warmup after the text
+warmup: one full inline-image decision, a 1×1 PNG through decode, preprocessing
+and the vision forward. The worker does not bind its port unless that warmup
+succeeds, so in online mode `/health` implies the inline image path executed
+end to end once at startup. It does not validate future user images. New image
+inputs are decoded and checked when prepared; cache hits may reuse validated
+assets or retained image-prefix state.
+
+Online mode accepts single-frame inline PNG/JPEG data URIs. Each image is bounded
+to 4 MiB of decoded file bytes, 2048 pixels per side, 1,048,576 source pixels,
+and 4608 vision patches. The full HTTP body is limited to 8 MiB, including base64
+and text, so at least one maximum-size image fits; requests beyond the body
+limit are rejected with status 413 in the same error envelope. Remote URLs,
+animations and video are unsupported. Oversized inputs are rejected; resource
+limits do not change the model's resize policy.
+
+No per-request image-count limit applies beyond the body and token budgets.
+A minimum-size image uses 1.5 MiB of FP32 processed pixels and produces
+0.625 MiB of BF16 embeddings. Pixel buffers are released as image inputs are
+consumed during vision resolution; embeddings remain for language execution.
+Cache budgets exclude in-flight inputs. Hundreds of tiny images can therefore
+require hundreds of MiB of host memory, plus temporary copies, weights, scratch
+and caches. These array sizes are not a measured peak-memory bound.
+
+The shared vision backend also reads `CUA_S1_VISION_GRAPH` and
+`CUA_S1_GRAPH_TRACE`, including when called by JEV. They enable capture and
+capture diagnostics respectively only when set to `1`; both default to off.
+Set `CUA_S1_VISION_GRAPH=0` explicitly as above to prevent an inherited Cua
+setting from changing the JEV execution path. Current JEV validation uses
+eager vision and does not cover the opt-in graph path.
+
+`JEV_VL_VISION` and `JEV_VL_IMGCACHE` are mutually exclusive. Online mode also
+ignores the default `imgcache/` directory. The source and processor stay fixed
+for the worker lifetime. A new image runs decode, preprocessing and vision
+inside the request; repeated images reuse the bounded L2 cache. Vision and
+language execution share the existing serial scheduler. Rebuild the CUDA library
+to include the shared 27B vision entry points.
+
+Historical prepared-image measurements below do not validate this online path
+or include its vision cost. Compare fresh images and repeated-image questions
+separately against the official model before reporting online performance.
+
+## Prepared images
+
+Without `JEV_VL_VISION`, the worker reads prepared assets on cache miss.
+First prepare a JSONL manifest with one object per line containing a
 `request` whose `state` includes `{"image":"data:image/png;base64,..."}`. The
 preencoder accepts base64 data URIs; a fresh URL or changed image needs a new
 asset. It runs on a GPU and should finish before starting the language worker
@@ -111,7 +169,7 @@ not an end-to-end live screenshot service.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `JEV_VL_CACHE` | `1` | Master enable; `0` uses a full language forward and rereads prepared image assets. |
+| `JEV_VL_CACHE` | `1` | Master enable; `0` uses a full language forward and recomputes online vision or rereads prepared assets. |
 | `JEV_VL_L1`, `JEV_VL_L2`, `JEV_VL_L3` | `1` | Processor records, parsed image assets, and language-prefix state. |
 | `JEV_VL_L1_MAX` | `256` | Maximum resident processor records. |
 | `JEV_VL_L2_BYTES` | `1073741824` | Parsed image-asset cache budget. |
@@ -119,8 +177,12 @@ not an end-to-end live screenshot service.
 
 Cache budgets do not include weights, model scratch, in-flight request inputs or
 total process memory. `GET /v1/cache/stats` exposes counters and resident cache
-accounting. Use those counters to assess L2 hits; `x-jev-cache` does not report
-an L2 hit field. `POST /v1/cache/reset` resets counters only; restart the worker for
+accounting. `l2_hit` and `l2_miss` count lookups, not unique images or requests.
+Cold online images are checked during preparation and again after queueing;
+prepared mode normally checks once. Retained-prefix continuations may skip L2
+entirely. Compare these counters within the same execution path rather than as
+cross-mode per-image hit rates. `x-jev-cache` does not report an L2 hit field.
+`POST /v1/cache/reset` resets counters only; restart the worker for
 a cold cache. Request preparation may overlap, while GPU execution stays serial.
 Use cache modes as experimental controls within the documented validation scope.
 

@@ -10,6 +10,7 @@ use serde_json::Value;
 use crate::caches::{CacheCfg, Caches};
 use crate::executor::{Executor, LabelHead};
 use crate::processing::Processor;
+use crate::vision::{self, ImageSource};
 
 pub struct Engine {
     pub manifest: Value,
@@ -24,6 +25,11 @@ pub struct Engine {
 
 impl Engine {
     pub async fn load(dir: &Path, library: &Path) -> Result<Self> {
+        let source = ImageSource::from_paths(
+            dir,
+            std::env::var_os("JEV_VL_VISION").map(Into::into),
+            std::env::var_os("JEV_VL_IMGCACHE"),
+        )?;
         let manifest: Value = serde_json::from_slice(
             &std::fs::read(dir.join("jev_vl_export.json"))
                 .context("export the merged checkpoint; see recipe/jev_vl/export_merged.py")?,
@@ -64,14 +70,38 @@ impl Engine {
             (1..=32768).contains(&max_length),
             "max_length must be within 1..=32768"
         );
+        let vision_dir = match &source {
+            ImageSource::Online(vision_dir) => {
+                // Pin-checking streams the full vision.safetensors through
+                // sha256; keep that GB-scale pass off the async runtime.
+                let language_dir = dir.to_owned();
+                let vision_dir_owned = vision_dir.clone();
+                let manifest_owned = manifest.clone();
+                tokio::task::spawn_blocking(move || {
+                    vision::validate_export(&vision_dir_owned, &language_dir, &manifest_owned)
+                })
+                .await
+                .context("vision export pin check failed to run")??;
+                Some(vision_dir.clone())
+            }
+            ImageSource::Prepared(_) => None,
+        };
         let head = Arc::new(LabelHead::load(dir, &manifest)?);
         let caches = Caches::new(CacheCfg::from_env());
         let model_index_hash = manifest["pins"]["model_index_sha256"]
             .as_str()
             .context("model_index_sha256")?
             .to_owned();
-        let processor = Processor::load(dir, labels, max_length, model_index_hash, caches.clone())?;
-        let executor = Executor::load(dir, library, head.clone(), caches.clone()).await?;
+        let processor = Processor::load(
+            dir,
+            labels,
+            max_length,
+            model_index_hash,
+            caches.clone(),
+            source,
+        )?;
+        let executor =
+            Executor::load(dir, library, head.clone(), caches.clone(), vision_dir).await?;
         Ok(Self {
             manifest,
             head,

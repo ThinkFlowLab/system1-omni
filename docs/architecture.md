@@ -63,10 +63,11 @@ warmup before readiness remain model-specific and unchanged.
 
 The experimental [JEV-VL worker](../recipe/jev_vl/README.md) also uses the shared
 Qwen executor. It admits one official single-decision request at a time, reads
-selected LM-head rows, and can retain image-prefix state across requests. Image
-features must be prepared offline. Its `{kind, state, question, options}` contract
-is distinct from the existing `{model, state, questions}` envelope; frontend
-transport alone does not adapt those schemas.
+selected LM-head rows, and can retain image-prefix state across requests. Images
+are either prepared offline by Transformers or supplied inline and encoded
+inside the worker by the shared native vision backend. Its `{kind, state,
+question, options}` contract is distinct from the existing `{model, state,
+questions}` envelope; frontend transport alone does not adapt those schemas.
 
 ## Layer ownership and implementation language
 

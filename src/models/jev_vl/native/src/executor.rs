@@ -8,7 +8,7 @@
 //! dot product per candidate token instead of a vocabulary GEMM.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use omni_qwen3_5_native::inputs::MultimodalInput;
@@ -18,7 +18,8 @@ use omni_qwen3_5_native::model::{Config, Model};
 use omni_runtime::SerialScheduler;
 use serde_json::Value;
 
-use crate::images::ImageAsset;
+use crate::images::{ImageAsset, ImageInput};
+use omni_qwen3_5_native::vision::VisionModel;
 
 /// Per-request readout setup: which label tokens, with which bias, divided by
 /// which temperature, matching decision_head.json's slots + calibration.json.
@@ -179,38 +180,38 @@ impl LabelHead {
     }
 }
 
-/// One image block in the expanded request (adapted rows borrowed from L2).
-pub struct ImgBlock {
+/// One image block, with CPU input or resolved adapted rows borrowed from L2.
+pub struct ImgBlock<T = Arc<ImageAsset>> {
     /// Global expanded-id row of the first pad.
     pub start: usize,
     /// Global expanded-id row one past the last pad.
     pub end: usize,
-    /// Parsed adapter output (grid + rows), shared with the L2 cache.
-    pub asset: Arc<ImageAsset>,
+    /// Image input before resolution, or the completed grid + adapted rows.
+    pub asset: T,
 }
 
 /// Full expanded ids + absolute positions + image blocks (global coordinates).
-pub struct PreparedMm {
+pub struct PreparedMm<T = Arc<ImageAsset>> {
     pub ids: Vec<u32>,
     pub positions: [Vec<i64>; 3],
-    pub blocks: Vec<ImgBlock>,
+    pub blocks: Vec<ImgBlock<T>>,
 }
 
 /// The cached-prefix continuation slice of one request.
-pub struct ContinueMm {
+pub struct ContinueMm<T = Arc<ImageAsset>> {
     /// Rows [p, T): (pads_end - p) pads, <|vision_end|>, fresh tail tokens.
     pub ids: Vec<u32>,
     /// Absolute positions for those rows.
     pub positions: [Vec<i64>; 3],
     /// The image rows within the slice (the last block's tail), if any.
-    pub block: Option<SuffixBlock>,
+    pub block: Option<SuffixBlock<T>>,
     /// L3 device state of the prefix.
     pub state: Arc<omni_qwen3_5_native::model::PrefixState>,
 }
 
 /// The image rows of one continuation slice: an offset range of one asset's rows.
-pub struct SuffixBlock {
-    pub asset: Arc<ImageAsset>,
+pub struct SuffixBlock<T = Arc<ImageAsset>> {
+    pub asset: T,
     /// First adapted-row index feeding the slice (= p - pads_start).
     pub row_offset: usize,
     /// Number of rows = number of pads leading the slice.
@@ -218,24 +219,29 @@ pub struct SuffixBlock {
 }
 
 /// The inputs and cached state needed to execute one request.
-pub enum MmPlan {
+pub enum MmPlan<T = Arc<ImageAsset>> {
     /// Text-only prompt.
     Text { ids: Vec<u32> },
     /// Full multimodal prefill.
-    Full(PreparedMm),
+    Full(PreparedMm<T>),
     /// Structure recorded but its device state is not built yet: run the capture
     /// phase over rows [0, p) followed by the continuation over [p, T), then
     /// publish the state so later requests go straight to `Continue`.
     Populate {
-        mm: PreparedMm,
+        mm: PreparedMm<T>,
         record: Arc<crate::caches::PrefixRecord>,
     },
     /// Cached-prefix hit: only the continuation slice runs.
-    Continue(ContinueMm),
+    Continue(ContinueMm<T>),
+}
+
+struct Models {
+    language: Model,
+    vision: Option<VisionModel>,
 }
 
 pub struct Executor {
-    model: Arc<Mutex<Model>>,
+    model: Arc<Mutex<Models>>,
     head: Arc<LabelHead>,
     caches: Arc<crate::caches::Caches>,
 }
@@ -246,9 +252,17 @@ impl Executor {
         library: &Path,
         head: Arc<LabelHead>,
         caches: Arc<crate::caches::Caches>,
+        vision_dir: Option<PathBuf>,
     ) -> Result<Self> {
         let (d, lib) = (dir.to_path_buf(), library.to_path_buf());
-        let model = tokio::task::spawn_blocking(move || Model::load(&d, &lib)).await??;
+        let model = tokio::task::spawn_blocking(move || -> Result<Models> {
+            let vision = vision_dir
+                .map(|dir| VisionModel::load(dir, &lib))
+                .transpose()?;
+            let language = Model::load(&d, &lib)?;
+            Ok(Models { language, vision })
+        })
+        .await??;
         Ok(Self {
             model: Arc::new(Mutex::new(model)),
             head,
@@ -261,7 +275,7 @@ impl Executor {
     pub async fn execute(
         &self,
         scheduler: &SerialScheduler,
-        plan: MmPlan,
+        plan: MmPlan<ImageInput>,
         readout: Readout,
     ) -> Result<Vec<f64>> {
         let model = self.model.clone();
@@ -269,11 +283,49 @@ impl Executor {
         let caches = self.caches.clone();
         scheduler
             .run(move || {
-                let mut model = model
+                let mut models = model
                     .lock()
                     .map_err(|_| anyhow::anyhow!("poisoned model"))?;
+                let Models {
+                    language: model,
+                    vision,
+                } = &mut *models;
+                let mut pending_images: Vec<(String, Arc<ImageAsset>)> = Vec::new();
+                let mut pending_prefix = None;
+                let mut resolved_plan = None;
                 let result = (|| {
-                    let last = match &plan {
+                    // Requests may have waited behind another request for this image.
+                    // The L2 recheck counts a lookup hit/miss independently of preparation.
+                    // Pending assets also share duplicate references within this request
+                    // when L2 retention is disabled or the asset exceeds its budget.
+                    resolved_plan = Some(resolve_images(plan, |input| match input {
+                        ImageInput::Ready(asset) => Ok(asset),
+                        ImageInput::Inline { key, pixels } => {
+                            if let Some(hit) = caches.l2_get(&key) {
+                                return Ok(hit);
+                            }
+                            if let Some((_, asset)) = pending_images.iter().find(|(k, _)| k == &key)
+                            {
+                                return Ok(asset.clone());
+                            }
+                            let embeddings = vision
+                                .as_mut()
+                                .context("online vision is not loaded")?
+                                .forward(&pixels)?;
+                            ensure!(
+                                embeddings.len() == pixels.image_tokens() * 5120
+                                    && embeddings.iter().all(|value| value.is_finite()),
+                                "vision output does not match the processed image"
+                            );
+                            let asset = Arc::new(ImageAsset {
+                                grid_thw: pixels.image_grid_thw.map(|n| n as i64),
+                                embeddings,
+                            });
+                            pending_images.push((key, asset.clone()));
+                            Ok(asset)
+                        }
+                    })?);
+                    let last = match resolved_plan.as_ref().unwrap() {
                         MmPlan::Text { ids } => model.forward(ids)?,
                         MmPlan::Full(mm) => {
                             let one = slice_mm(mm, 0, mm.ids.len());
@@ -300,8 +352,7 @@ impl Executor {
                             };
                             match populated {
                                 Ok(last) => {
-                                    caches.record_publish_state(record.key, state.unwrap());
-                                    caches.l3_populate();
+                                    pending_prefix = Some((record.key, state.unwrap()));
                                     last
                                 }
                                 Err(e) => {
@@ -343,11 +394,86 @@ impl Executor {
                     head.probabilities(&last, &readout)
                 })();
                 // Keep admission until all queued device work has drained, including errors.
-                model.synchronize()?;
-                result
+                let language_drain = model.synchronize();
+                let vision_drain = vision.as_ref().map(VisionModel::synchronize).transpose();
+                // Both drain attempts must happen even if either one fails. The
+                // request's own error names the failing stage, so surface it ahead
+                // of sticky drain failures; a drain error only fails an otherwise
+                // successful request.
+                let mut probabilities = result;
+                if let Err(drain) = language_drain {
+                    if probabilities.is_ok() {
+                        probabilities = Err(drain).context("language drain");
+                    } else {
+                        eprintln!("language drain also failed after the request error: {drain:#}");
+                    }
+                }
+                if let Err(drain) = vision_drain {
+                    if probabilities.is_ok() {
+                        probabilities = Err(drain).context("vision drain");
+                    } else {
+                        eprintln!("vision drain also failed after the request error: {drain:#}");
+                    }
+                }
+                let probabilities = probabilities?;
+                for (key, asset) in pending_images {
+                    caches.l2_insert(key, asset);
+                }
+                if let Some((key, state)) = pending_prefix {
+                    caches.record_publish_state(key, state);
+                    caches.l3_populate();
+                }
+                Ok(probabilities)
             })
             .await
     }
+}
+
+/// Resolve typed image inputs once, then use the existing language slicing path.
+fn resolve_images(
+    plan: MmPlan<ImageInput>,
+    mut resolve: impl FnMut(ImageInput) -> Result<Arc<ImageAsset>>,
+) -> Result<MmPlan> {
+    let mut full = |mm: PreparedMm<ImageInput>| -> Result<PreparedMm> {
+        Ok(PreparedMm {
+            ids: mm.ids,
+            positions: mm.positions,
+            blocks: mm
+                .blocks
+                .into_iter()
+                .map(|b| {
+                    Ok(ImgBlock {
+                        start: b.start,
+                        end: b.end,
+                        asset: resolve(b.asset)?,
+                    })
+                })
+                .collect::<Result<_>>()?,
+        })
+    };
+    Ok(match plan {
+        MmPlan::Text { ids } => MmPlan::Text { ids },
+        MmPlan::Full(mm) => MmPlan::Full(full(mm)?),
+        MmPlan::Populate { mm, record } => MmPlan::Populate {
+            mm: full(mm)?,
+            record,
+        },
+        MmPlan::Continue(c) => MmPlan::Continue(ContinueMm {
+            ids: c.ids,
+            positions: c.positions,
+            state: c.state,
+            block: c
+                .block
+                .map(|b| {
+                    Ok::<_, anyhow::Error>(SuffixBlock {
+                        asset: resolve(b.asset)?,
+                        row_offset: b.row_offset,
+                        rows: b.rows,
+                    })
+                })
+                .transpose()?,
+        }),
+    })
 }
 
 /// A slice of one request's expanded data for rows [from, to) in slice-local

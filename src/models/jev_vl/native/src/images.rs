@@ -6,6 +6,33 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, ensure};
+use omni_qwen3_5_native::image_preprocess::ProcessedImage;
+
+/// CPU preparation retains pixels until the serialized executor runs vision.
+#[derive(Clone)]
+pub enum ImageInput {
+    Ready(Arc<ImageAsset>),
+    Inline {
+        key: String,
+        pixels: Arc<ProcessedImage>,
+    },
+}
+
+impl ImageInput {
+    pub(crate) fn n_tokens(&self) -> usize {
+        match self {
+            Self::Ready(asset) => asset.n_tokens(),
+            Self::Inline { pixels, .. } => pixels.image_tokens(),
+        }
+    }
+
+    pub fn grid_thw(&self) -> [i64; 3] {
+        match self {
+            Self::Ready(asset) => asset.grid_thw,
+            Self::Inline { pixels, .. } => pixels.image_grid_thw.map(|n| n as i64),
+        }
+    }
+}
 
 /// One adapted image: merger output rows in placeholder order + the patch grid.
 pub struct ImageAsset {
@@ -121,16 +148,25 @@ pub fn meshgrid_positions(grid: [i64; 3], base: i64, from: usize, rows: usize) -
 /// running start position; the next text token continues at
 /// start + max(grid_h, grid_w) / merge.
 pub fn expand(text_ids: &[u32], image_pad: u32, assets: &[Arc<ImageAsset>]) -> Result<Expanded> {
+    expand_grids(
+        text_ids,
+        image_pad,
+        &assets.iter().map(|a| a.grid_thw).collect::<Vec<_>>(),
+    )
+}
+
+/// Expand from CPU-validated geometry, before any online vision forward.
+pub fn expand_grids(text_ids: &[u32], image_pad: u32, grids: &[[i64; 3]]) -> Result<Expanded> {
     let marks: Vec<usize> = text_ids
         .iter()
         .enumerate()
         .filter_map(|(i, &id)| (id == image_pad).then_some(i))
         .collect();
     ensure!(
-        marks.len() == assets.len(),
+        marks.len() == grids.len(),
         "prompt has {} image placeholders but the request carries {} images",
         marks.len(),
-        assets.len()
+        grids.len()
     );
     let mut ids: Vec<u32> = Vec::new();
     let mut positions: [Vec<i64>; 3] = [Vec::new(), Vec::new(), Vec::new()];
@@ -146,17 +182,20 @@ pub fn expand(text_ids: &[u32], image_pad: u32, assets: &[Arc<ImageAsset>]) -> R
         ids.extend_from_slice(&text_ids[cursor..mark]);
         current += (mark - cursor) as i64;
         cursor = mark + 1;
-        let [gt, gh, gw] = assets[k].grid_thw;
+        let [gt, gh, gw] = grids[k];
+        let tokens = gh.checked_mul(gw).and_then(|n| n.checked_div(4));
         ensure!(
-            gt >= 1
+            gt == 1
+                && gh > 0
+                && gw > 0
                 && gh % 2 == 0
                 && gw % 2 == 0
-                && gt * gh * gw / 4 == assets[k].n_tokens() as i64,
-            "grid does not match the adapted rows"
+                && tokens.is_some_and(|n| n <= 32768),
+            "expected one image with a bounded, even, positive spatial grid"
         );
         let (lg_t, lg_h, lg_w) = (gt, gh / 2, gw / 2); // temp_merge=1, spatial_merge=2
         let start = ids.len();
-        for _ in 0..assets[k].n_tokens() {
+        for _ in 0..tokens.unwrap() {
             ids.push(image_pad);
         }
         blocks.push(ImageBlock {

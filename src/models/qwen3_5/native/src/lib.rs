@@ -5,3 +5,7 @@ pub mod json;
 pub mod model;
 
 pub mod inputs;
+
+pub mod image_decode;
+pub mod image_preprocess;
+pub mod vision;

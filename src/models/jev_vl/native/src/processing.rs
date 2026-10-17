@@ -1,6 +1,7 @@
 //! Request validation, tokenization, and response assembly.
 
-use std::path::{Path, PathBuf};
+use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -11,13 +12,15 @@ use tokenizers::Tokenizer;
 use crate::caches::{Caches, L1Meta, structure_key};
 use crate::contract::{self, Compiled, Kind, Reject};
 use crate::executor::{ContinueMm, ImgBlock, MmPlan, PreparedMm, Readout, SuffixBlock};
-use crate::images::{self, ImageAsset};
+use crate::images::{self, ImageAsset, ImageInput};
+use crate::vision::ImageSource;
+use omni_qwen3_5_native::{image_decode::decode_data_url, image_preprocess::preprocess_rgb8};
 
 pub struct Processor {
     tokenizer: Tokenizer,
     labels: Vec<String>,
     max_length: usize,
-    imgcache: Option<PathBuf>,
+    source: ImageSource,
     model_index_hash: String,
     image_pad: u32,
     vision_end: u32,
@@ -25,7 +28,7 @@ pub struct Processor {
 }
 
 pub struct PreparedRequest {
-    pub plan: MmPlan,
+    pub plan: MmPlan<ImageInput>,
     pub readout: Readout,
     pub context: ResponseContext,
     /// x-jev-cache response-header marker: l1/l2/l3 hit flags + prefix length.
@@ -47,6 +50,7 @@ impl Processor {
         max_length: usize,
         model_index_hash: String,
         caches: Arc<Caches>,
+        source: ImageSource,
     ) -> Result<Self> {
         let tokenizer =
             Tokenizer::from_file(dir.join("tokenizer.json")).map_err(anyhow::Error::msg)?;
@@ -56,16 +60,11 @@ impl Processor {
         let vision_end = tokenizer
             .token_to_id("<|vision_end|>")
             .context("tokenizer has no <|vision_end|>")?;
-        let hub = std::env::var("JEV_VL_IMGCACHE")
-            .ok()
-            .map(PathBuf::from)
-            .or_else(|| Some(dir.join("imgcache")))
-            .filter(|p| p.is_dir());
         Ok(Self {
             tokenizer,
             labels,
             max_length,
-            imgcache: hub,
+            source,
             model_index_hash,
             image_pad,
             vision_end,
@@ -75,31 +74,42 @@ impl Processor {
 
     fn url_key(url: &str) -> String {
         use sha2::Digest;
-        sha2::Sha256::digest(url.as_bytes())
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect()
+        crate::contract::hex_digest(&sha2::Sha256::digest(url.as_bytes()))
     }
 
-    /// Load a prepared image asset, reusing the bounded L2 cache when enabled.
-    /// With caches disabled, each request reads and parses the asset again.
-    fn load_asset(&self, url: &str) -> Result<Arc<ImageAsset>, Reject> {
+    /// CPU image preparation checks the full prompt budget before GPU admission.
+    fn load_image(&self, url: &str) -> Result<ImageInput, Reject> {
         let key = Self::url_key(url);
         if let Some(hit) = self.caches.l2_get(&key) {
-            return Ok(hit);
+            return Ok(ImageInput::Ready(hit));
         }
-        let dir = match &self.imgcache {
-            Some(d) => d.join(&key),
-            None => {
-                return Err(Reject::bad_request(
-                    "image input: no imgcache is configured for this worker",
-                ));
+        match &self.source {
+            ImageSource::Online(_) => {
+                let decoded = decode_data_url(url)
+                    .map_err(|e| Reject::bad_request(format!("invalid image: {e:#}")))?;
+                let pixels = preprocess_rgb8(decoded.width, decoded.height, &decoded.rgb)
+                    .map_err(|e| Reject::bad_request(format!("invalid image: {e:#}")))?;
+                Ok(ImageInput::Inline {
+                    key,
+                    pixels: Arc::new(pixels),
+                })
             }
-        };
-        let asset = ImageAsset::load(&dir, &key, &self.model_index_hash)
-            .map_err(|e| Reject::bad_request(format!("image input is not preencoded: {e}")))?;
-        self.caches.l2_insert(key, asset.clone());
-        Ok(asset)
+            ImageSource::Prepared(hub) => {
+                let dir = hub
+                    .as_ref()
+                    .ok_or_else(|| {
+                        Reject::bad_request(
+                            "image input: no imgcache is configured for this worker",
+                        )
+                    })?
+                    .join(&key);
+                let asset = ImageAsset::load(&dir, &key, &self.model_index_hash).map_err(|e| {
+                    Reject::bad_request(format!("image input is not preencoded: {e}"))
+                })?;
+                self.caches.l2_insert(key, asset.clone());
+                Ok(ImageInput::Ready(asset))
+            }
+        }
     }
 
     fn tokenize(&self, text: &str) -> Result<Vec<u32>, Reject> {
@@ -109,6 +119,26 @@ impl Processor {
             .map_err(|e| Reject::bad_request(format!("tokenization failed: {e}")))?
             .get_ids()
             .to_vec())
+    }
+
+    fn load_images(&self, text_tokens: usize, urls: &[String]) -> Result<Vec<ImageInput>, Reject> {
+        let mut input_tokens = text_tokens;
+        self.check_length(input_tokens)?;
+        let mut seen: HashMap<&str, ImageInput> = HashMap::new();
+        let mut assets = Vec::new();
+        for url in urls {
+            let asset = match seen.get(url.as_str()) {
+                Some(asset) => asset.clone(),
+                None => self.load_image(url)?,
+            };
+            // Each image replaces one placeholder. Count every reference, even
+            // when its pixels are shared, and stop before preparing another image.
+            input_tokens += asset.n_tokens() - 1;
+            self.check_length(input_tokens)?;
+            seen.entry(url).or_insert_with(|| asset.clone());
+            assets.push(asset);
+        }
+        Ok(assets)
     }
 
     /// Validate, compile the raw prompt, and tokenize; add_special_tokens=false,
@@ -136,13 +166,13 @@ impl Processor {
                     "l1=-,l3=-,p=-".to_string(),
                 )
             } else {
-                let assets: Vec<Arc<ImageAsset>> = compiled
-                    .images
-                    .iter()
-                    .map(|url| self.load_asset(url))
-                    .collect::<Result<Vec<_>, Reject>>()?;
-                let e = images::expand(&text_ids, self.image_pad, &assets)
-                    .map_err(|e| Reject::bad_request(format!("invalid image prompt: {e:#}")))?;
+                let assets = self.load_images(text_ids.len(), &compiled.images)?;
+                let e = images::expand_grids(
+                    &text_ids,
+                    self.image_pad,
+                    &assets.iter().map(ImageInput::grid_thw).collect::<Vec<_>>(),
+                )
+                .map_err(|e| Reject::bad_request(format!("invalid image prompt: {e:#}")))?;
                 let n = e.ids.len();
                 (
                     MmPlan::Full(expanded_mm(e, &assets)),
@@ -184,7 +214,6 @@ impl Processor {
                 meta.base_pad,
                 meta.advance,
             );
-            let asset = self.load_asset(&compiled.images[0])?;
             // Suffix piece: pads(E-P) + <|vision_end|> + fresh tail tokenization.
             let tail = tail.unwrap();
             let tail_ids = self.tokenize(&tail)?;
@@ -194,23 +223,36 @@ impl Processor {
                 ));
             }
             let suffix_pads = pads_end - p;
+            let input_tokens = p + suffix_pads + 1 + tail_ids.len();
+            self.check_length(input_tokens)?;
             let mut ids = Vec::with_capacity(suffix_pads + 1 + tail_ids.len());
             ids.extend(std::iter::repeat_n(self.image_pad, suffix_pads));
             ids.push(self.vision_end);
             ids.extend_from_slice(&tail_ids);
-            let mut pos =
-                images::meshgrid_positions(asset.grid_thw, base_pad, p - pads_start, suffix_pads);
+            let suffix_asset = if suffix_pads > 0 {
+                Some(self.load_image(&compiled.images[0])?)
+            } else {
+                None
+            };
+            let mut pos = match &suffix_asset {
+                Some(asset) => images::meshgrid_positions(
+                    asset.grid_thw(),
+                    base_pad,
+                    p - pads_start,
+                    suffix_pads,
+                ),
+                None => [Vec::new(), Vec::new(), Vec::new()],
+            };
             let after = base_pad + advance;
             for k in 0..(ids.len() - suffix_pads) as i64 {
                 pos[0].push(after + k);
                 pos[1].push(after + k);
                 pos[2].push(after + k);
             }
-            let input_tokens = p + ids.len();
             match (cfg.l3, record.state()) {
                 (true, Some(state)) => {
                     self.caches.l3_hit();
-                    let block = Some(SuffixBlock {
+                    let block = suffix_asset.map(|asset| SuffixBlock {
                         asset,
                         row_offset: p - pads_start,
                         rows: suffix_pads,
@@ -229,40 +271,37 @@ impl Processor {
                         format!("l1=hit,l3=hit,p={p}"),
                     );
                 }
-                (true, None) => {
-                    self.caches.l3_miss();
+                (l3, _) => {
+                    if l3 {
+                        self.caches.l3_miss();
+                    }
+                    let asset = match suffix_asset {
+                        Some(asset) => asset,
+                        None => self.load_image(&compiled.images[0])?,
+                    };
                     let mm = rebuild_full(&ids, &pos, &record.meta, &asset);
-                    return self.finish_c(
-                        mm.ids.len(),
-                        MmPlan::Populate { mm, record },
-                        readout,
-                        compiled,
-                        start,
-                        format!("l1=hit,l3=miss,p={p}"),
-                    );
-                }
-                (false, _) => {
-                    let mm = rebuild_full(&ids, &pos, &record.meta, &asset);
-                    return self.finish_c(
-                        mm.ids.len(),
-                        MmPlan::Full(mm),
-                        readout,
-                        compiled,
-                        start,
-                        "l1=hit,l3=off,p=-".to_string(),
-                    );
+                    let input_tokens = mm.ids.len();
+                    let (plan, note) = if l3 {
+                        (
+                            MmPlan::Populate { mm, record },
+                            format!("l1=hit,l3=miss,p={p}"),
+                        )
+                    } else {
+                        (MmPlan::Full(mm), "l1=hit,l3=off,p=-".to_string())
+                    };
+                    return self.finish_c(input_tokens, plan, readout, compiled, start, note);
                 }
             }
         }
         // L1 miss: full expansion (and the cache record when the shape qualifies).
         let text_ids = self.tokenize(&compiled.prompt)?;
-        let assets: Vec<Arc<ImageAsset>> = compiled
-            .images
-            .iter()
-            .map(|url| self.load_asset(url))
-            .collect::<Result<Vec<_>, Reject>>()?;
-        let e = images::expand(&text_ids, self.image_pad, &assets)
-            .map_err(|e| Reject::bad_request(format!("invalid image prompt: {e:#}")))?;
+        let assets = self.load_images(text_ids.len(), &compiled.images)?;
+        let e = images::expand_grids(
+            &text_ids,
+            self.image_pad,
+            &assets.iter().map(ImageInput::grid_thw).collect::<Vec<_>>(),
+        )
+        .map_err(|e| Reject::bad_request(format!("invalid image prompt: {e:#}")))?;
         let input_tokens = e.ids.len();
         let meta = (single_image && tail.is_some() && cfg.l1)
             .then(|| prefix_meta(&e, input_tokens))
@@ -303,16 +342,7 @@ impl Processor {
         )
     }
 
-    fn finish_c(
-        &self,
-        input_tokens: usize,
-        plan: MmPlan,
-        readout: Readout,
-        compiled: &Compiled,
-        start: Instant,
-        cache_note: String,
-    ) -> Result<PreparedRequest, Reject> {
-        let t = input_tokens;
+    fn check_length(&self, t: usize) -> Result<(), Reject> {
         if t > self.max_length {
             return Err(Reject::bad_request(format!(
                 "This model's maximum context length is {} tokens. However, you requested 1 output tokens and your prompt contains at least {t} input tokens, for a total of at least {} tokens. Please reduce the length of the input prompt or the number of requested output tokens. (parameter=input_tokens, value={t})",
@@ -320,6 +350,19 @@ impl Processor {
                 t + 1
             )));
         }
+        Ok(())
+    }
+
+    fn finish_c(
+        &self,
+        input_tokens: usize,
+        plan: MmPlan<ImageInput>,
+        readout: Readout,
+        compiled: &Compiled,
+        start: Instant,
+        cache_note: String,
+    ) -> Result<PreparedRequest, Reject> {
+        self.check_length(input_tokens)?;
         Ok(PreparedRequest {
             plan,
             readout,
@@ -327,7 +370,7 @@ impl Processor {
             context: ResponseContext {
                 kind: compiled.kind,
                 options: compiled.options.clone(),
-                input_tokens: t,
+                input_tokens,
                 start,
             },
         })
@@ -359,7 +402,7 @@ fn prefix_meta(e: &images::Expanded, input_tokens: usize) -> Option<L1Meta> {
 }
 
 /// Full expanded ids/positions with image blocks borrowed from their assets.
-fn expanded_mm(e: images::Expanded, assets: &[Arc<ImageAsset>]) -> PreparedMm {
+fn expanded_mm(e: images::Expanded, assets: &[ImageInput]) -> PreparedMm<ImageInput> {
     let blocks = e
         .blocks
         .iter()
@@ -382,8 +425,8 @@ fn rebuild_full(
     ids_suffix: &[u32],
     pos_suffix: &[Vec<i64>; 3],
     meta: &L1Meta,
-    asset: &Arc<ImageAsset>,
-) -> PreparedMm {
+    asset: &ImageInput,
+) -> PreparedMm<ImageInput> {
     let mut ids = meta.ids_prefix.clone();
     ids.extend_from_slice(ids_suffix);
     let mut positions = meta.positions_prefix.clone();

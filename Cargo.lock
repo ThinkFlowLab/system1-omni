@@ -1274,7 +1274,9 @@ name = "omni-qwen3-5-native"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "half",
+ "image",
  "libloading",
  "memmap2",
  "safetensors 0.8.0",

@@ -1,7 +1,8 @@
 # JEV-27B-VL experimental native worker
 
 This integration targets **autotrust/JEV-27B-VL**, with a native Rust/CUDA
-language backbone and an offline Hugging Face vision encoder. The reviewed
+language backbone and the shared native Qwen vision encoder. Prepared embeddings
+from the offline Hugging Face encoder remain available as a separate mode. The reviewed
 integrated candidate passed the frozen-corpus H800 checks; it remains experimental
 and has not completed broad quality or clean-install validation. See the [recipe](../../../recipe/jev_vl/README.md)
 and [evidence and limitations](../../../recipe/jev_vl/validation.md).
@@ -23,8 +24,8 @@ This checkpoint's verbalizer head and prompt differ from
 ZefanCai/Open-Jev-27B-v1.1's independent-candidate scalar head. It is also distinct
 from [openjev/openjev issue #95](https://github.com/ThinkFlowLab/system1-omni/issues/95).
 [Cua-S1 PR #64](https://github.com/ThinkFlowLab/system1-omni/pull/64) supplies
-upstream native vision infrastructure; this JEV worker currently consumes
-preencoded embeddings and does not call that native vision tower.
+upstream native vision infrastructure. [Shared vision PR #117](https://github.com/ThinkFlowLab/system1-omni/pull/117)
+provides the Qwen vision backend used by this worker's online mode.
 [Shared-observation RFC #85](https://github.com/ThinkFlowLab/system1-omni/issues/85)
 is related design context, not this model's acceptance specification.
 
@@ -60,9 +61,10 @@ list parts concatenate without an inserted separator. Each image part inserts
 `<|vision_start|><|image_pad|><|vision_end|>` before image-token expansion.
 
 The default exported limit is 16,384 expanded tokens. Export permits 1–32,768;
-larger limits have not been benchmarked. HTTP bodies are limited to 4 MiB.
+larger limits have not been benchmarked. HTTP bodies are limited to 8 MiB.
 `thinking=auto/on`, tournament and permutation strategies, generation, audio,
-video, dynamic batching and unprepared images are unsupported. `strategy=auto`
+video and dynamic batching are unsupported. Online mode accepts inline PNG/JPEG
+images; prepared mode requires exported image assets. `strategy=auto`
 uses the single-pass path in this worker. The historical corpus covers only
 2–16 choice options and one image, so the wider accepted range and multiple
 images do not have full-checkpoint parity evidence.
@@ -70,7 +72,9 @@ images do not have full-checkpoint parity evidence.
 ## Execution, layouts and lifetimes
 
 `processing.rs` validates and tokenizes one question and prepares either text
-IDs, full multimodal inputs, or a cached-prefix continuation. Image assets hold
+IDs, full multimodal inputs, or a cached-prefix continuation. Online image pixels
+are encoded by the vision model under the same scheduler admission as the language
+forward. Image assets hold
 BF16 `[image_tokens, 5120]` adapted embeddings and their patch grid. The
 processor constructs expanded token IDs and three position axes; image rows
 replace placeholder-token embeddings. All vectors describe one unpadded prompt,
@@ -92,11 +96,14 @@ finishes. Restart the worker and use a fresh asset directory when changing
 weights, tokenizer or preprocessing; caches are scoped to a loaded worker.
 
 Three configurable caches retain processor prefix geometry (L1), parsed
-preencoded image assets (L2), and language-prefix device state (L3). The current
+image embeddings (L2), and language-prefix device state (L3). The current
 L3 path targets a compatible single-image prefix aligned to a 64-token chunk;
 other inputs use a full forward. L2 avoids file parsing and copying of prepared
-assets; it does not run or cache a live vision encoder. Cache sizes and controls
+assets in prepared mode and vision encoding in online mode. Cache sizes and controls
 are listed in the [recipe](../../../recipe/jev_vl/README.md#cache-controls).
+The shared vision backend's `CUA_S1_VISION_GRAPH` and `CUA_S1_GRAPH_TRACE` controls
+also apply here; see [online images](../../../recipe/jev_vl/README.md#online-images)
+for explicit eager settings and their validation scope.
 
 Tests are registered under [`tests/jev_vl/`](../../../tests/jev_vl/) and
 [`tests/qwen3_5/`](../../../tests/qwen3_5/). CPU tests establish contract and

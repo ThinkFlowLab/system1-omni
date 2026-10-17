@@ -6,21 +6,14 @@
 //! verify upstream hashes or tensor values.
 
 use anyhow::{Context, Result, ensure};
-use memmap2::Mmap;
-use safetensors::{
-    Dtype, SafeTensors,
-    tensor::{TensorInfo, TensorView},
-};
-use serde::{
-    Deserialize,
-    de::{self, MapAccess, Visitor},
-};
+use omni_qwen3_5_native::vision::{TensorStore, UniqueMap, inside, is_visual};
+use safetensors::{Dtype, tensor::TensorView};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fmt,
-    fs::{self, File},
-    path::{Component, Path, PathBuf},
+    fs,
+    path::Path,
 };
 
 const BASE: &str = "model.visual.";
@@ -28,7 +21,7 @@ const ADAPTER: &str = "base_model.model.model.visual.";
 type Inventory = BTreeMap<String, Vec<usize>>;
 
 /// The supported Qwen3.5-4B vision architecture; all fields are validated at load.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct VisionConfig {
     pub depth: usize,
     pub hidden_size: usize,
@@ -307,10 +300,10 @@ impl VisionCheckpoint {
         &self.adapter
     }
     pub fn base_names(&self) -> impl Iterator<Item = &str> {
-        self.base.tensors.keys().map(String::as_str)
+        self.base.names()
     }
     pub fn adapter_names(&self) -> impl Iterator<Item = &str> {
-        self.lora.tensors.keys().map(String::as_str)
+        self.lora.names()
     }
     pub fn base_tensor(&self, name: &str) -> Result<TensorView<'_>> {
         self.base.tensor(name)
@@ -320,163 +313,9 @@ impl VisionCheckpoint {
     }
 }
 
-struct TensorStore {
-    maps: Vec<Mmap>,
-    tensors: BTreeMap<String, (usize, TensorInfo)>,
-}
-impl TensorStore {
-    fn load(
-        dir: &Path,
-        files: BTreeSet<String>,
-        expected: &Inventory,
-        dtype: Dtype,
-        index: Option<&BTreeMap<String, String>>,
-    ) -> Result<Self> {
-        let mut store = Self {
-            maps: Vec::new(),
-            tensors: BTreeMap::new(),
-        };
-        for filename in files {
-            let path = inside(dir, &filename)?;
-            let file = File::open(&path).with_context(|| format!("open {}", path.display()))?;
-            // SAFETY: callers must not mutate or truncate checkpoint files while mapped.
-            let map = unsafe { Mmap::map(&file) }
-                .with_context(|| format!("mmap safetensors {}", path.display()))?;
-            validate_header(&map)
-                .with_context(|| format!("safetensors header {}", path.display()))?;
-            let (header_len, metadata) = SafeTensors::read_metadata(&map)
-                .with_context(|| format!("safetensors {}", path.display()))?;
-            for (name, info) in metadata.tensors() {
-                if !is_visual(&name) {
-                    continue;
-                }
-                let shape = expected
-                    .get(&name)
-                    .with_context(|| format!("unexpected visual tensor {name} in {filename}"))?;
-                if let Some(index) = index {
-                    ensure!(
-                        index.get(&name) == Some(&filename),
-                        "index mismatch for {name} in {filename}"
-                    );
-                }
-                ensure!(
-                    &info.shape == shape,
-                    "shape mismatch for {name}: {:?}, expected {shape:?}",
-                    info.shape
-                );
-                ensure!(
-                    info.dtype == dtype,
-                    "dtype mismatch for {name}: {:?}, expected {dtype:?}",
-                    info.dtype
-                );
-                let mut info = info.clone();
-                info.data_offsets.0 += 8 + header_len;
-                info.data_offsets.1 += 8 + header_len;
-                ensure!(
-                    store
-                        .tensors
-                        .insert(name.clone(), (store.maps.len(), info))
-                        .is_none(),
-                    "duplicate visual tensor {name}"
-                );
-            }
-            store.maps.push(map);
-        }
-        for name in expected.keys() {
-            ensure!(
-                store.tensors.contains_key(name),
-                "missing visual tensor {name}"
-            );
-        }
-        Ok(store)
-    }
-    fn tensor(&self, name: &str) -> Result<TensorView<'_>> {
-        let (shard, info) = self
-            .tensors
-            .get(name)
-            .with_context(|| format!("unknown visual tensor {name}"))?;
-        Ok(TensorView::new(
-            info.dtype,
-            info.shape.clone(),
-            &self.maps[*shard][info.data_offsets.0..info.data_offsets.1],
-        )?)
-    }
-}
-// Bound all offsets before safetensors 0.8 adds payload size to header size:
-// its final length check uses unchecked addition, even for ignored language tensors.
-fn validate_header(bytes: &[u8]) -> Result<()> {
-    let length_bytes = bytes.get(..8).context("missing header length")?;
-    let header_len = usize::try_from(u64::from_le_bytes(length_bytes.try_into()?))?;
-    // Match safetensors 0.8's header allocation limit.
-    ensure!(header_len <= 100_000_000, "header too large");
-    let data_start = header_len
-        .checked_add(8)
-        .context("header length overflow")?;
-    let header = bytes.get(8..data_start).context("truncated header")?;
-    let payload_len = bytes.len() - data_start;
-    let entries: UniqueMap<Value> = serde_json::from_slice(header)?;
-    for (name, entry) in entries.0 {
-        if name == "__metadata__" {
-            continue;
-        }
-        let (start, end): (usize, usize) = serde_json::from_value(entry["data_offsets"].clone())
-            .with_context(|| format!("invalid offsets for {name}"))?;
-        ensure!(
-            start <= end && end <= payload_len,
-            "tensor offsets exceed payload for {name}"
-        );
-    }
-    Ok(())
-}
-fn is_visual(name: &str) -> bool {
-    name.split('.').any(|part| part == "visual")
-}
-fn inside(dir: &Path, name: &str) -> Result<PathBuf> {
-    ensure!(
-        !name.is_empty()
-            && Path::new(name)
-                .components()
-                .all(|c| matches!(c, Component::Normal(_))),
-        "path must remain inside checkpoint directory: {name}"
-    );
-    let resolved =
-        fs::canonicalize(dir.join(name)).with_context(|| format!("checkpoint file {name}"))?;
-    ensure!(
-        resolved.starts_with(dir),
-        "path escapes checkpoint directory: {name}"
-    );
-    Ok(resolved)
-}
-
-// serde_json's ordinary maps overwrite repeated keys. Reject ambiguous headers/indexes.
-struct UniqueMap<T>(BTreeMap<String, T>);
-impl<'de, T: Deserialize<'de>> Deserialize<'de> for UniqueMap<T> {
-    fn deserialize<D: de::Deserializer<'de>>(
-        deserializer: D,
-    ) -> std::result::Result<Self, D::Error> {
-        struct UniqueVisitor<T>(std::marker::PhantomData<T>);
-        impl<'de, T: Deserialize<'de>> Visitor<'de> for UniqueVisitor<T> {
-            type Value = UniqueMap<T>;
-            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str("an object with unique names")
-            }
-            fn visit_map<M: MapAccess<'de>>(
-                self,
-                mut map: M,
-            ) -> std::result::Result<Self::Value, M::Error> {
-                let mut entries = BTreeMap::new();
-                while let Some((key, value)) = map.next_entry::<String, T>()? {
-                    if entries.insert(key.clone(), value).is_some() {
-                        return Err(de::Error::custom(format!("duplicate JSON key: {key}")));
-                    }
-                }
-                Ok(UniqueMap(entries))
-            }
-        }
-        deserializer.deserialize_map(UniqueVisitor(std::marker::PhantomData))
-    }
-}
-
-mod geometry;
 mod model;
 pub use model::VisionModel;
+
+#[cfg(test)]
+#[path = "../../../../../../tests/cua_s1/vision_checkpoint.rs"]
+mod tests;

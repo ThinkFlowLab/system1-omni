@@ -132,40 +132,46 @@ impl serde_json::ser::Formatter for PyFormatter {
     }
 }
 
-/// Python's `repr(float)`: the shortest digits that round-trip, in fixed notation
-/// for exponents from -5 to 15 and scientific notation otherwise. (Python breaks the
-/// rare exact ties between two shortest candidates to even; this does not.)
+/// Python's `repr(float)`: shortest round-trip digits with ties to even, in fixed
+/// notation for exponents from -4 to 15 and scientific notation otherwise.
 pub fn float_repr(x: f64) -> String {
     if x == 0.0 {
         return if x.is_sign_negative() { "-0.0" } else { "0.0" }.into();
     }
-    let sci = format!("{x:e}");
-    let (mantissa, exp) = sci.split_once('e').expect("{:e} has an exponent");
-    let exp: i32 = exp.parse().expect("integer exponent");
-    let (neg, mantissa) = match mantissa.strip_prefix('-') {
+    // The default JSON formatter chooses correctly rounded shortest digits.
+    // Rust's {:e} chooses the upper digit at some exact shortest-decimal ties.
+    // Use the default serializer here, not dumps(), which calls this formatter.
+    let decimal = serde_json::to_string(&x).expect("a finite float serializes");
+    let (neg, decimal) = match decimal.strip_prefix('-') {
         Some(m) => (true, m),
-        None => (false, mantissa),
+        None => (false, decimal.as_str()),
     };
-    let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
+    let (mantissa, exp) = decimal.split_once('e').unwrap_or((decimal, "0"));
+    let exp: i32 = exp.parse().expect("integer exponent");
+    let whole = mantissa.split('.').next().expect("decimal mantissa");
+    let digits = mantissa.replace('.', "");
+    let leading = digits.find(|c| c != '0').expect("nonzero float");
+    let decpt = whole.len() as i32 + exp - leading as i32;
+    let digits = digits[leading..].trim_end_matches('0');
     let mut out = String::new();
     if neg {
         out.push('-');
     }
-    let decpt = exp + 1;
     if decpt <= -4 || decpt > 16 {
         out.push_str(&digits[..1]);
         if digits.len() > 1 {
             out.push('.');
             out.push_str(&digits[1..]);
         }
+        let exp = decpt - 1;
         let sign = if exp < 0 { '-' } else { '+' };
         write!(out, "e{sign}{:02}", exp.unsigned_abs()).unwrap();
     } else if decpt <= 0 {
         out.push_str("0.");
         out.extend(std::iter::repeat_n('0', (-decpt) as usize));
-        out.push_str(&digits);
+        out.push_str(digits);
     } else if decpt as usize >= digits.len() {
-        out.push_str(&digits);
+        out.push_str(digits);
         out.extend(std::iter::repeat_n('0', decpt as usize - digits.len()));
         out.push_str(".0");
     } else {

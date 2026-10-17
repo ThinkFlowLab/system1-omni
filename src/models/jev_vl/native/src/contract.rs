@@ -62,6 +62,29 @@ impl Reject {
             Some("model"),
         )
     }
+
+    /// Transport-level 413: keeps the envelope instead of axum's plain text.
+    pub fn payload_too_large() -> Self {
+        Self::new(
+            413,
+            format!(
+                "The request body exceeds the {} MiB transport limit; send fewer or smaller inline images.",
+                MAX_BODY_BYTES >> 20
+            ),
+            "BadRequestError",
+            Some("body"),
+        )
+    }
+}
+
+/// Transport cap for one POST body. It must hold at least one maximum-size
+/// image (4 MiB raw ≈ 5.33 MiB base64) plus JSON framing and text; together
+/// with the token budget it is the only per-request image-count limiter.
+pub const MAX_BODY_BYTES: usize = 8 << 20;
+
+/// Lowercase hex rendering shared by cache keys and export pin checks.
+pub(crate) fn hex_digest(digest: &[u8]) -> String {
+    digest.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]

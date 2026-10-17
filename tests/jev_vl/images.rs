@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use omni_jev_vl_native::images::{ImageAsset, expand, meshgrid_positions};
+use omni_jev_vl_native::images::{ImageAsset, expand, expand_grids, meshgrid_positions};
 
 const PAD: u32 = 248056;
 
@@ -61,7 +61,7 @@ fn meshgrid_helper_matches_expand_rows() {
     let text_ids: Vec<u32> = vec![300, 301, PAD, 302];
     let e = expand(&text_ids, PAD, &[asset([1, 4, 6])]).unwrap();
     let b = &e.blocks[0];
-    for from in 0..6usize {
+    for from in 0..=6usize {
         let got = meshgrid_positions([1, 4, 6], b.base, from, 6 - from);
         for (want, have) in e.positions.iter().zip(&got) {
             assert_eq!(&want[b.start + from..b.end], &have[..], "slice from {from}");
@@ -73,6 +73,30 @@ fn meshgrid_helper_matches_expand_rows() {
 fn placeholder_count_must_match_images() {
     let e = expand(&[PAD], PAD, &[]);
     assert!(e.is_err());
+}
+
+#[test]
+fn grid_only_expansion_matches_prepared_assets() {
+    let text_ids = [300, PAD, 301, PAD, 302];
+    let grids = [[1, 4, 6], [1, 6, 4]];
+    let ready = expand(&text_ids, PAD, &grids.map(asset)).unwrap();
+    let inline = expand_grids(&text_ids, PAD, &grids).unwrap();
+    assert_eq!(ready.ids, inline.ids);
+    assert_eq!(ready.positions, inline.positions);
+    assert_eq!(ready.blocks.len(), inline.blocks.len());
+}
+
+#[test]
+fn grid_only_expansion_rejects_invalid_and_overflowing_shapes() {
+    for grid in [
+        [1, 0, 2],
+        [1, -2, 2],
+        [2, 2, 2],
+        [1, 3, 2],
+        [1, i64::MAX - 1, 4],
+    ] {
+        assert!(expand_grids(&[PAD], PAD, &[grid]).is_err());
+    }
 }
 
 #[test]

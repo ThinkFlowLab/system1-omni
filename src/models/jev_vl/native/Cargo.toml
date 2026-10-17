@@ -29,5 +29,9 @@ path = "../../../../tests/jev_vl/images.rs"
 name = "jev_vl_prefix"
 path = "../../../../tests/jev_vl/prefix.rs"
 
+[[test]]
+name = "jev_vl_caches"
+path = "../../../../tests/jev_vl/caches.rs"
+
 [dev-dependencies]
 tempfile = "3"

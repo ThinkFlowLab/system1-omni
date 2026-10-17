@@ -7,11 +7,13 @@ description = "Shared Qwen3.5/3.8 prefill implementation for native decision wor
 
 [dependencies]
 anyhow = "1.0.100"
+base64 = "0.22.1"
 half = "2.7.1"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 libloading = "0.8"
 memmap2 = "0.9.9"
 safetensors = "0.8.0"
-serde = "1"
+serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1.0.149", features = ["float_roundtrip", "preserve_order", "raw_value"] }
 
 [[test]]
@@ -21,3 +23,11 @@ path = "../../../../tests/qwen3_5/config.rs"
 [[test]]
 name = "kernels"
 path = "../../../../tests/qwen3_5/kernels.rs"
+
+[[test]]
+name = "image_decode"
+path = "../../../../tests/qwen3_5/image_decode.rs"
+
+[[test]]
+name = "device_buffer"
+path = "../../../../tests/qwen3_5/device_buffer.rs"

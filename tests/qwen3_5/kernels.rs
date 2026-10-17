@@ -473,6 +473,240 @@ fn flash_attention_matches_float64_reference() {
     }
 }
 
+#[test]
+#[ignore = "needs a GPU and CUA_S1_CUDA_LIB with vision v2 symbols"]
+fn vision_v2_head_dim72_position_and_rope_match_rounded_reference() {
+    let st = setup();
+    let v2 = api().vision_v2().unwrap();
+    let (hidden, dh) = (1152usize, 72usize);
+    let table = random(32 * hidden, 11, 0.5);
+    let table_device = to_device(&table, st);
+    for n in [1usize, 3, 65] {
+        let input = random(n * hidden, 12, 1.0);
+        let indices: Vec<i32> = (0..n * 4).map(|i| ((i * 7 + 3) % 32) as i32).collect();
+        let weights: Vec<f32> = [0.125, 0.375, 0.25, 0.25].repeat(n);
+        let index_bytes: Vec<u8> = indices.iter().flat_map(|v| v.to_le_bytes()).collect();
+        let index_device = DeviceBuffer::new(index_bytes.len()).unwrap();
+        let weight_device = f32_to_device(&weights, st);
+        let positioned = to_device(&input, st);
+        // SAFETY: n complete hidden-width rows, four in-range table indices and
+        // weights per token, and immutable table/index buffers on this stream.
+        unsafe {
+            cuda::upload(index_device.at(0), &index_bytes, st).unwrap();
+            check(
+                (v2.position)(
+                    positioned.at(0),
+                    table_device.at(0),
+                    index_device.at(0).cast(),
+                    weight_device.at(0).cast(),
+                    n as i32,
+                    hidden as i32,
+                    st,
+                ),
+                "vision v2 positions",
+            )
+            .unwrap();
+        }
+        let actual = from_device(&positioned, n * hidden, st);
+        for token in 0..n {
+            for channel in 0..hidden {
+                let mut position = 0f32;
+                for corner in 0..4 {
+                    let index = token * 4 + corner;
+                    position +=
+                        table[indices[index] as usize * hidden + channel].to_f32() * weights[index];
+                }
+                let expected = bf16::from_f32(
+                    input[token * hidden + channel].to_f32() + bf16::from_f32(position).to_f32(),
+                );
+                assert_eq!(
+                    actual[token * hidden + channel].to_bits(),
+                    expected.to_f32().to_bits(),
+                    "position n={n}, token={token}, channel={channel}"
+                );
+            }
+        }
+
+        let qkv = random(n * hidden * 3, 13, 2.0);
+        let angles: Vec<f32> = (0..n * dh / 2).map(|i| i as f32 * 0.03125).collect();
+        let cos: Vec<f32> = angles.iter().map(|v| v.cos()).collect();
+        let sin: Vec<f32> = angles.iter().map(|v| v.sin()).collect();
+        let qkv_device = to_device(&qkv, st);
+        let cos_device = f32_to_device(&cos, st);
+        let sin_device = f32_to_device(&sin, st);
+        let q = DeviceBuffer::new(n * hidden * 2).unwrap();
+        let k = DeviceBuffer::new(n * hidden * 2).unwrap();
+        // SAFETY: QKV has n interleaved 3*hidden rows, the FP32 tables have
+        // n*(dh/2) entries, and Q/K have n*hidden disjoint BF16 entries.
+        unsafe {
+            check(
+                (v2.rope)(
+                    qkv_device.at(0),
+                    cos_device.at(0).cast(),
+                    sin_device.at(0).cast(),
+                    q.at(0),
+                    k.at(0),
+                    n as i32,
+                    hidden as i32,
+                    dh as i32,
+                    st,
+                ),
+                "vision v2 rotary",
+            )
+            .unwrap();
+        }
+        for (part, buffer) in [(0, &q), (1, &k)] {
+            let actual = from_device(buffer, n * hidden, st);
+            for token in 0..n {
+                for channel in 0..hidden {
+                    let d = channel % dh;
+                    let half = dh / 2;
+                    let partner = if d < half {
+                        channel + half
+                    } else {
+                        channel - half
+                    };
+                    let sign = if d < half { -1.0 } else { 1.0 };
+                    let offset = token * hidden * 3 + part * hidden;
+                    let angle = token * half + d % half;
+                    let expected = bf16::from_f32(
+                        qkv[offset + channel].to_f32() * cos[angle]
+                            + sign * qkv[offset + partner].to_f32() * sin[angle],
+                    );
+                    assert_eq!(
+                        actual[token * hidden + channel].to_bits(),
+                        expected.to_f32().to_bits(),
+                        "rope n={n}, part={part}, token={token}, channel={channel}"
+                    );
+                }
+            }
+        }
+    }
+    // SAFETY: every operation/download above completed before stream retirement.
+    check(
+        unsafe { (api().cs1_stream_destroy)(st) },
+        "destroy vision test stream",
+    )
+    .unwrap();
+}
+
+#[test]
+#[ignore = "needs a GPU and CUA_S1_CUDA_LIB with vision v2 symbols"]
+fn vision_v2_head_dim72_padding_attention_and_unpack() {
+    let st = setup();
+    let v2 = api().vision_v2().unwrap();
+    let (heads, dh, padded_dh) = (16usize, 72usize, 80usize);
+    let hidden = heads * dh;
+    for (n, amplitude) in [(1usize, 8.0), (63, 2.0), (64, 0.5), (65, 0.5), (139, 2.0)] {
+        let q = random(n * hidden, 21, amplitude);
+        let k = random(n * hidden, 22, amplitude);
+        let qkv = random(n * hidden * 3, 23, 1.0);
+        let q_device = to_device(&q, st);
+        let k_device = to_device(&k, st);
+        let qkv_device = to_device(&qkv, st);
+        let output = DeviceBuffer::new(n * hidden * 2).unwrap();
+        let count = n * heads * padded_dh;
+        // Nonzero initial contents expose missing zero writes to padded columns.
+        let workspace = to_device(&vec![bf16::from_f32(9.0); count * 4], st);
+        // SAFETY: Q/K are compact, V starts at the third slice of each 3*hidden
+        // QKV row, and workspace contains four n*heads*80 BF16 buffers.
+        unsafe {
+            check(
+                (v2.attention)(
+                    q_device.at(0),
+                    k_device.at(0),
+                    qkv_device.at(hidden * 2 * 2),
+                    output.at(0),
+                    n as i32,
+                    heads as i32,
+                    dh as i32,
+                    workspace.at(0),
+                    st,
+                ),
+                "vision v2 attention",
+            )
+            .unwrap();
+        }
+        let actual = from_device(&output, n * hidden, st);
+        let padded = from_device(&workspace, count * 4, st);
+        assert!(actual.iter().all(|v| v.is_finite()));
+        for token in 0..n {
+            for head in 0..heads {
+                for d in 0..padded_dh {
+                    let offset = (token * heads + head) * padded_dh + d;
+                    for (part, source) in [(0, &q), (1, &k), (2, &qkv)] {
+                        let expected = if d < dh {
+                            let index = if part == 2 {
+                                token * hidden * 3 + hidden * 2 + head * dh + d
+                            } else {
+                                (token * heads + head) * dh + d
+                            };
+                            source[index].to_f32()
+                        } else {
+                            0.0
+                        };
+                        assert_eq!(padded[part * count + offset].to_bits(), expected.to_bits());
+                    }
+                    if d < dh {
+                        assert_eq!(
+                            actual[(token * heads + head) * dh + d].to_bits(),
+                            padded[3 * count + offset].to_bits(),
+                            "unpack n={n}, token={token}, head={head}, d={d}"
+                        );
+                    }
+                }
+            }
+        }
+        let mut worst = 0f64;
+        // Vision attention is noncausal. Keep the existing FlashAttention test's
+        // per-row relative error metric and 1.6e-2 budget, including tail rows.
+        for row in (0..n).step_by(n.div_ceil(64)).chain([n - 1]) {
+            for head in 0..heads {
+                let query = &q[(row * heads + head) * dh..][..dh];
+                let scores: Vec<f64> = (0..n)
+                    .map(|token| {
+                        query
+                            .iter()
+                            .zip(&k[(token * heads + head) * dh..][..dh])
+                            .map(|(q, k)| q.to_f64() * k.to_f64())
+                            .sum::<f64>()
+                            / (dh as f64).sqrt()
+                    })
+                    .collect();
+                let max = scores.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+                let weights: Vec<f64> = scores.iter().map(|v| (v - max).exp()).collect();
+                let sum: f64 = weights.iter().sum();
+                let reference: Vec<f64> = (0..dh)
+                    .map(|d| {
+                        (0..n)
+                            .map(|token| {
+                                weights[token]
+                                    * qkv[token * hidden * 3 + hidden * 2 + head * dh + d].to_f64()
+                            })
+                            .sum::<f64>()
+                            / sum
+                    })
+                    .collect();
+                let difference = actual[(row * heads + head) * dh..][..dh]
+                    .iter()
+                    .zip(&reference)
+                    .map(|(got, want)| (*got as f64 - want).abs())
+                    .fold(0f64, f64::max);
+                let scale = reference.iter().map(|v| v.abs()).fold(1e-3, f64::max);
+                worst = worst.max(difference / scale);
+            }
+        }
+        eprintln!("vision v2 dh=72 n={n}: largest relative difference {worst:.2e}");
+        assert!(worst < 1.6e-2, "n={n}: {worst}");
+    }
+    // SAFETY: every operation/download above completed before stream retirement.
+    check(
+        unsafe { (api().cs1_stream_destroy)(st) },
+        "destroy vision test stream",
+    )
+    .unwrap();
+}
+
 /// Transformers' torch_recurrent_gated_delta_rule in float64, one token at a time,
 /// with the L2 norms of q and k and q scaled by K^-1/2.
 #[allow(clippy::too_many_arguments)]

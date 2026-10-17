@@ -9,3 +9,4 @@ pub mod engine;
 pub mod executor;
 pub mod images;
 pub mod processing;
+mod vision;

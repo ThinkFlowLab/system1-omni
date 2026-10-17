@@ -1,4 +1,4 @@
-//! Process-local caches for prepared images and reusable language prefixes.
+//! Process-local caches for image embeddings and reusable language prefixes.
 //!
 //! - L1 processor: a per-prefix-structure record. Key = sha256 over the exact
 //!   request structure (kind + every state part: text verbatim / image url).
@@ -8,8 +8,7 @@
 //!   (`<|vision_end|>` onward) is always tokenized fresh per question.
 //! - L2 vision: parsed image assets (adapter output rows + grid) keyed by
 //!   sha256(url) — the same key form as the offline imgcache directory. A hit
-//!   skips the disk read, safetensors parsing and validation. Vision encoding
-//!   runs offline and is not part of this cache lookup.
+//!   skips disk loading in prepared mode or vision encoding in online mode.
 //! - L3 KV prefix: the device-side prefix state (per-full-attention-layer
 //!   post-prep K and raw V rows; per-GDN-layer float32 recurrent state + conv
 //!   tail). Holders are `Arc<PrefixState>`; a continuation reads it while the
@@ -68,7 +67,10 @@ impl CacheCfg {
 pub struct CacheStats {
     pub l1_hit: u64,
     pub l1_miss: u64,
+    /// L2 lookup hits, including online executor rechecks after admission.
     pub l2_hit: u64,
+    /// L2 lookup misses, not unique images or encoding attempts. A cold single-image
+    /// request checks once in prepared mode and twice online.
     pub l2_miss: u64,
     pub l3_hit: u64,
     pub l3_miss: u64,
@@ -195,6 +197,7 @@ impl Caches {
 
     // ---- L2: parsed image assets ----
 
+    /// Count every lookup, including disabled-cache misses, and refresh hit LRU.
     pub fn l2_get(&self, key: &str) -> Option<Arc<ImageAsset>> {
         if !(self.cfg.enabled && self.cfg.l2) {
             self.bump(|s| s.l2_miss += 1);

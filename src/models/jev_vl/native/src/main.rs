@@ -6,17 +6,18 @@ use anyhow::{Context, Result, ensure};
 use axum::{
     Json, Router,
     body::Bytes,
-    extract::{DefaultBodyLimit, State},
+    extract::{DefaultBodyLimit, State, rejection::BytesRejection},
     http::{HeaderMap, StatusCode, Uri},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
-use omni_jev_vl_native::contract::{MODEL_ID, Reject};
+use omni_jev_vl_native::contract::{MAX_BODY_BYTES, MODEL_ID, Reject};
 use omni_jev_vl_native::engine::Engine;
 use omni_qwen3_5_native::cuda;
 use serde_json::{Value, json};
 
 const WARMUP: &[u8] = br#"{"kind":"choice","state":"Dialog: Update installed.","question":"Close it?","options":["OK","Wait"]}"#;
+const ONLINE_VISION_WARMUP: &[u8] = br#"{"kind":"choice","state":[{"image":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"}],"question":"Is the image loaded?","options":["OK","Wait"]}"#;
 
 fn reject(r: Reject) -> Response {
     (
@@ -67,7 +68,31 @@ async fn decide(engine: &Engine, raw: &[u8]) -> Response {
     }
 }
 
-async fn systemone(State(engine): State<Arc<Engine>>, headers: HeaderMap, body: Bytes) -> Response {
+/// Body buffering happens before routing, so transport-level rejections would
+/// bypass the worker's error envelope unless the handlers map them explicitly.
+/// Status codes mirror axum's: 413 over the cap, 400 for other buffer errors.
+fn body_bytes(body: Result<Bytes, BytesRejection>) -> Result<Bytes, Reject> {
+    match body {
+        Ok(bytes) => Ok(bytes),
+        Err(rejection) if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE => {
+            Err(Reject::payload_too_large())
+        }
+        Err(rejection) => Err(Reject::bad_request(format!(
+            "could not buffer the request body: {}",
+            rejection.body_text()
+        ))),
+    }
+}
+
+async fn systemone(
+    State(engine): State<Arc<Engine>>,
+    headers: HeaderMap,
+    body: Result<Bytes, BytesRejection>,
+) -> Response {
+    let body = match body_bytes(body) {
+        Ok(body) => body,
+        Err(rejection) => return reject(rejection),
+    };
     // Upstream pydantic validates the raw body even for a non-JSON content type;
     // mirroring it keeps the wrong-content-type probe's 400 (not 415) semantics.
     let ctype = headers
@@ -90,7 +115,11 @@ async fn systemone(State(engine): State<Arc<Engine>>, headers: HeaderMap, body: 
     decide(&engine, &body).await
 }
 
-async fn fallback(uri: Uri, body: Bytes) -> Response {
+async fn fallback(uri: Uri, body: Result<Bytes, BytesRejection>) -> Response {
+    let body = match body_bytes(body) {
+        Ok(body) => body,
+        Err(rejection) => return reject(rejection),
+    };
     let model = serde_json::from_slice::<Value>(&body)
         .ok()
         .and_then(|v| v.get("model").and_then(Value::as_str).map(str::to_owned));
@@ -141,6 +170,12 @@ async fn main() -> Result<()> {
         decide(&engine, WARMUP).await.status() == StatusCode::OK,
         "warmup failed"
     );
+    if std::env::var_os("JEV_VL_VISION").is_some() {
+        ensure!(
+            decide(&engine, ONLINE_VISION_WARMUP).await.status() == StatusCode::OK,
+            "online vision warmup failed"
+        );
+    }
     let host = std::env::var("JEV_VL_HOST").unwrap_or_else(|_| "127.0.0.1".into());
     let port: u16 = std::env::var("JEV_VL_PORT")
         .map_or(Ok(8001), |v| v.parse())
@@ -154,7 +189,7 @@ async fn main() -> Result<()> {
         .route("/v1/cache/stats", get(cache_stats))
         .route("/v1/cache/reset", post(cache_reset))
         .fallback(fallback)
-        .layer(DefaultBodyLimit::max(4 << 20))
+        .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .with_state(engine);
     let listener = tokio::net::TcpListener::bind((host.as_str(), port)).await?;
     println!("listening on {host}:{port}");
