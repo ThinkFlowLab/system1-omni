@@ -1,0 +1,20 @@
+[package]
+name = "omni-openjev-native"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "openjev/openjev letter-readout contract: prompts, candidate token ids and calibrated typed answers"
+
+[dependencies]
+anyhow = "1.0.100"
+omni-qwen3-5-native = { path = "../../qwen3_5/native" }
+serde_json = { version = "1.0.149", features = ["float_roundtrip", "preserve_order"] }
+tokenizers = { version = "=0.22.2", default-features = false, features = ["onig"] }
+
+[[test]]
+name = "contract"
+path = "../../../../tests/openjev/contract.rs"
+
+[[test]]
+name = "tokenization"
+path = "../../../../tests/openjev/tokenization.rs"
